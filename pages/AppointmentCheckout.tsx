@@ -3,46 +3,42 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { 
   ChevronLeft, ShoppingBag, ClipboardList, Plus, Trash2, 
   DollarSign, CheckCircle2, User, Clock, Calendar, Scissors, Box,
-  ArrowRightLeft, AlertTriangle, X
+  ArrowRightLeft, AlertTriangle, X, Loader2
 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { getAppointments, updateAppointment, Appointment, deleteAppointment } from '../data/agendaData';
 import { addTransaction } from '../data/transactions';
-
-const mockServices = [
-  { id: 's1', name: 'Corte na Máquina', duration: 45, price: 40 },
-  { id: 's2', name: 'Barba', duration: 30, price: 30 },
-  { id: 's3', name: 'Sobrancelha', duration: 15, price: 15 },
-  { id: 's4', name: 'Corte na Tesoura', duration: 60, price: 55 },
-];
-
-const mockProducts = [
-  { id: 'p1', name: 'Pomada Matte 100g', price: 35 },
-  { id: 'p2', name: 'Óleo para Barba 30ml', price: 25 },
-  { id: 'p3', name: 'Shampoo Barba 200ml', price: 45 },
-];
-
-const professionals = [
-  { id: '1', name: 'Diego' },
-  { id: '2', name: 'Felipe' },
-  { id: '3', name: 'Ricardo' },
-];
+import { db } from '../supabase';
 
 const AppointmentCheckout: React.FC = () => {
   const navigate = useNavigate();
   const { id } = useParams();
-  const [appointment, setAppointment] = useState<Appointment | null>(null);
   
-  const [selectedServices, setSelectedServices] = useState<typeof mockServices>([]);
+  // Dados do Agendamento
+  const [appointment, setAppointment] = useState<Appointment | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [processing, setProcessing] = useState(false);
+
+  // Listas do Banco de Dados
+  const [dbServices, setDbServices] = useState<any[]>([]);
+  const [dbProducts, setDbProducts] = useState<any[]>([]);
+  const [dbProfessionals, setDbProfessionals] = useState<any[]>([]);
+  const [dbPaymentMethods, setDbPaymentMethods] = useState<any[]>([]);
+
+  // Itens Selecionados
+  const [selectedServices, setSelectedServices] = useState<any[]>([]);
   const [selectedProducts, setSelectedProducts] = useState<{id: string, name: string, price: number, quantity: number}[]>([]);
   
+  // Controle de Pagamento
   const [paymentValue, setPaymentValue] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState('Pix');
+  const [paymentMethod, setPaymentMethod] = useState('');
+
+  // Modais e UI
   const [showAddService, setShowAddService] = useState(false);
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [showTransferModal, setShowTransferModal] = useState(false);
 
-  // Estados para Modal de Confirmação customizado
+  // Estado para Modal de Confirmação customizado
   const [confirmConfig, setConfirmConfig] = useState<{
     show: boolean,
     title: string,
@@ -51,28 +47,58 @@ const AppointmentCheckout: React.FC = () => {
     type: 'danger' | 'info' | 'success'
   }>({ show: false, title: '', message: '', action: () => {}, type: 'info' });
 
-  // Fix: Fetch appointments asynchronously
+  // 1. Carregar Dados Iniciais
   useEffect(() => {
-    const fetchApt = async () => {
-        const appointments = await getAppointments();
-        const apt = appointments.find(a => a.id === id);
-        if (apt) {
-          setAppointment(apt);
-          const initialServices = apt.services.map(sName => 
-            mockServices.find(ms => ms.name === sName) || { id: Math.random().toString(), name: sName, duration: 30, price: 40 }
-          );
-          setSelectedServices(initialServices);
+    const fetchAllData = async () => {
+        setLoading(true);
+        try {
+            // Carregar Listas Auxiliares
+            const [servicesRes, productsRes, prosRes, payMethodsRes] = await Promise.all([
+                db.services().select('*').order('name'),
+                db.products().select('*').gt('current_stock', 0).order('name'),
+                db.professionals().select('*').eq('status', 'Ativo'),
+                db.paymentMethods().select('*').order('name')
+            ]);
+
+            setDbServices(servicesRes.data || []);
+            setDbProducts(productsRes.data || []);
+            setDbProfessionals(prosRes.data || []);
+            
+            const methods = payMethodsRes.data || [];
+            setDbPaymentMethods(methods);
+            if (methods.length > 0) setPaymentMethod(methods[0].name);
+
+            // Carregar Agendamento
+            const appointments = await getAppointments();
+            const apt = appointments.find(a => a.id === id);
+            
+            if (apt) {
+                setAppointment(apt);
+                
+                // Mapear serviços do agendamento com dados reais do banco (preço atualizado)
+                const initialServices = apt.services.map(sName => {
+                    const found = servicesRes.data?.find(s => s.name === sName);
+                    return found || { id: Math.random().toString(), name: sName, duration: 30, price: 0 }; // Fallback
+                });
+                setSelectedServices(initialServices);
+            }
+        } catch (err) {
+            console.error(err);
+        } finally {
+            setLoading(false);
         }
     };
-    fetchApt();
+    fetchAllData();
   }, [id]);
 
+  // Cálculos de Totais
   const totals = useMemo(() => {
     const sTotal = selectedServices.reduce((sum, s) => sum + s.price, 0);
     const pTotal = selectedProducts.reduce((sum, p) => sum + (p.price * p.quantity), 0);
     return { services: sTotal, products: pTotal, total: sTotal + pTotal };
   }, [selectedServices, selectedProducts]);
 
+  // Atualiza valor sugerido de pagamento quando total muda
   useEffect(() => {
     if (totals.total > 0) {
       setPaymentValue(totals.total.toFixed(2).replace('.', ','));
@@ -83,50 +109,69 @@ const AppointmentCheckout: React.FC = () => {
     setConfirmConfig({ show: true, title, message, action, type });
   };
 
-  const handleAddService = (service: typeof mockServices[0]) => {
+  // --- Handlers de Adição ---
+  const handleAddService = (service: any) => {
+    // Verificação de Duplicidade
+    const alreadyExists = selectedServices.some(s => s.id === service.id);
+    
+    if (alreadyExists) {
+        alert(`O serviço "${service.name}" já foi adicionado a este atendimento.`);
+        return;
+    }
+
     setSelectedServices(prev => [...prev, service]);
     setShowAddService(false);
   };
 
-  const handleAddProduct = (product: typeof mockProducts[0]) => {
+  const handleAddProduct = (product: any) => {
     setSelectedProducts(prev => {
       const exists = prev.find(p => p.id === product.id);
       if (exists) {
         return prev.map(p => p.id === product.id ? { ...p, quantity: p.quantity + 1 } : p);
       }
-      return [...prev, { ...product, quantity: 1 }];
+      return [...prev, { id: product.id, name: product.name, price: product.sale_price || 0, quantity: 1 }];
     });
     setShowAddProduct(false);
   };
 
+  // --- Ações do Agendamento ---
   const handleChangeStatus = (newStatus: Appointment['status']) => {
     if (!appointment) return;
     triggerConfirm(
         'Alterar Status',
         `Deseja realmente alterar o status para "${newStatus}"?`,
-        () => {
-            updateAppointment(appointment.id, { status: newStatus });
+        async () => {
+            await updateAppointment(appointment.id, { status: newStatus });
             setAppointment({ ...appointment, status: newStatus });
             setConfirmConfig({ ...confirmConfig, show: false });
-            alert('Status atualizado!');
         }
     );
   };
 
-  const handleTransfer = (pro: typeof professionals[0]) => {
+  const handleTransfer = (pro: any) => {
     if (!appointment) return;
     triggerConfirm(
         'Transferir Agendamento',
-        `Deseja transferir este agendamento para o profissional ${pro.name}?`,
-        () => {
-            updateAppointment(appointment.id, { 
-                professionalId: pro.id, 
-                professionalName: pro.name 
-            });
-            setShowTransferModal(false);
-            setConfirmConfig({ ...confirmConfig, show: false });
-            alert('Transferência realizada!');
-            navigate('/agenda');
+        `Deseja transferir este agendamento para ${pro.name}?`,
+        async () => {
+            try {
+                // CORREÇÃO: Usando camelCase (professionalId e professionalName) conforme esquema do banco mostrado no print
+                const { error } = await db.appointments().update({ 
+                    professionalId: pro.id, 
+                    professionalName: pro.name 
+                }).eq('id', appointment.id);
+
+                if (error) throw error;
+                
+                setShowTransferModal(false);
+                setConfirmConfig({ ...confirmConfig, show: false });
+                
+                alert('Transferência realizada com sucesso!');
+                navigate('/agenda');
+            } catch (err) {
+                console.error(err);
+                alert('Erro ao transferir agendamento. Verifique se o banco está acessível.');
+            }
         }
     );
   }
@@ -135,52 +180,101 @@ const AppointmentCheckout: React.FC = () => {
     if (!appointment) return;
     triggerConfirm(
         'Apagar Agendamento',
-        'Deseja apagar este agendamento? Um aviso será enviado para o administrador.',
-        () => {
-            deleteAppointment(appointment.id);
+        'Deseja apagar este agendamento permanentemente?',
+        async () => {
+            await deleteAppointment(appointment.id);
             setConfirmConfig({ ...confirmConfig, show: false });
-            alert('Agendamento removido. O administrador foi notificado.');
             navigate('/agenda');
         },
         'danger'
     );
   };
 
+  // --- Finalização ---
   const handleFinalize = () => {
     if (!appointment) return;
 
     triggerConfirm(
         'Finalizar Atendimento',
-        'Confirmar recebimento e finalizar atendimento realizado?',
-        () => {
-            const finalValue = parseFloat(paymentValue.replace(',', '.'));
-            
-            updateAppointment(appointment.id, {
-              status: 'Atendimento Realizado',
-              services: selectedServices.map(s => s.name),
-              totalValue: finalValue
-            });
+        'Confirmar recebimento e finalizar atendimento?',
+        async () => {
+            setProcessing(true);
+            try {
+                const finalValue = parseFloat(paymentValue.replace(',', '.'));
+                
+                // 1. Atualizar Agendamento (Status e Valor Total)
+                const aptUpdate: any = {
+                  status: 'Atendimento Realizado',
+                  services: selectedServices.map(s => s.name),
+                  total_value: finalValue
+                };
+                
+                await db.appointments().update(aptUpdate).eq('id', appointment.id);
 
-            addTransaction({
-              type: 'income',
-              category: 'Serviço',
-              item: `Atendimento: ${appointment.clientName}`,
-              val: finalValue,
-              method: paymentMethod as any,
-              pro: appointment.professionalName,
-              date: appointment.date,
-              status: 'Pago'
-            });
+                // 2. Atualizar Cliente (Última Visita)
+                if (appointment.clientId) {
+                    await db.clients().update({ last_visit: new Date() }).eq('id', appointment.clientId);
+                }
 
-            setConfirmConfig({ ...confirmConfig, show: false });
-            alert('Atendimento finalizado com sucesso!');
-            navigate('/agenda');
+                // 3. Gerar Transações Financeiras (Separadas para cálculo de comissão correto)
+                // Se houver serviços
+                if (totals.services > 0) {
+                    await addTransaction({
+                        type: 'income',
+                        category: 'Serviço',
+                        item: `Serviços: ${appointment.clientName}`,
+                        val: totals.services, // Valor proporcional dos serviços
+                        method: paymentMethod,
+                        pro: appointment.professionalName,
+                        professional_id: appointment.professionalId, // Importante para vínculo
+                        date: appointment.date,
+                        status: 'Pago'
+                    });
+                }
+
+                // Se houver produtos
+                if (totals.products > 0) {
+                    await addTransaction({
+                        type: 'income',
+                        category: 'Produto',
+                        item: `Produtos: ${appointment.clientName}`,
+                        val: totals.products, // Valor proporcional dos produtos
+                        method: paymentMethod,
+                        pro: appointment.professionalName,
+                        professional_id: appointment.professionalId,
+                        date: appointment.date,
+                        status: 'Pago'
+                    });
+
+                    // 4. Baixar Estoque
+                    for (const p of selectedProducts) {
+                        // Busca estoque atual para garantir integridade
+                        const { data: currentProd } = await db.products().select('current_stock').eq('id', p.id).single();
+                        if (currentProd) {
+                            await db.products()
+                                .update({ current_stock: currentProd.current_stock - p.quantity })
+                                .eq('id', p.id);
+                        }
+                    }
+                }
+
+                setConfirmConfig({ ...confirmConfig, show: false });
+                alert('Atendimento finalizado com sucesso!');
+                navigate('/agenda');
+
+            } catch (err) {
+                console.error(err);
+                alert('Erro ao finalizar atendimento. Verifique os logs.');
+            } finally {
+                setProcessing(false);
+            }
         },
         'success'
     );
   };
 
-  if (!appointment) return null;
+  if (loading) return <div className="flex h-screen items-center justify-center"><Loader2 className="animate-spin text-blue-900" size={40} /></div>;
+  if (!appointment) return <div className="p-8 text-center">Agendamento não encontrado.</div>;
 
   return (
     <div className="flex flex-col h-full bg-[#fcfaff] relative">
@@ -224,9 +318,11 @@ const AppointmentCheckout: React.FC = () => {
                 }`}>
                     {appointment.status}
                 </span>
+                <p className="text-[9px] text-gray-400 font-bold mt-1 uppercase">{appointment.professionalName}</p>
             </div>
           </div>
 
+          {/* Ações Rápidas */}
           <div className="grid grid-cols-2 gap-3 pt-4 border-t border-gray-50">
             <button 
                 onClick={() => handleChangeStatus('Desmarcou')}
@@ -283,6 +379,9 @@ const AppointmentCheckout: React.FC = () => {
                 </div>
               </div>
             ))}
+            {selectedServices.length === 0 && (
+                <p className="text-center text-xs text-gray-400 italic py-2">Nenhum serviço selecionado.</p>
+            )}
           </div>
         </div>
 
@@ -318,6 +417,9 @@ const AppointmentCheckout: React.FC = () => {
                 </div>
               </div>
             ))}
+             {selectedProducts.length === 0 && (
+                <p className="text-center text-xs text-gray-400 italic py-2">Nenhum produto adicionado.</p>
+            )}
           </div>
         </div>
 
@@ -351,10 +453,9 @@ const AppointmentCheckout: React.FC = () => {
                 onChange={e => setPaymentMethod(e.target.value)}
                 className="w-full bg-white border border-gray-100 rounded-2xl py-4 px-4 outline-none appearance-none font-bold text-gray-700"
               >
-                <option>Pix</option>
-                <option>Cartão de Crédito</option>
-                <option>Cartão de Débito</option>
-                <option>Dinheiro</option>
+                {dbPaymentMethods.map(pm => (
+                    <option key={pm.id} value={pm.name}>{pm.name}</option>
+                ))}
               </select>
             </div>
           </div>
@@ -362,23 +463,24 @@ const AppointmentCheckout: React.FC = () => {
 
         <button 
           onClick={handleFinalize}
-          className="w-full bg-green-600 text-white font-black py-5 rounded-[2.5rem] shadow-xl active:scale-95 transition-transform uppercase tracking-[0.2em] text-sm flex items-center justify-center gap-3 mt-6 mb-12"
+          disabled={processing}
+          className="w-full bg-green-600 text-white font-black py-5 rounded-[2.5rem] shadow-xl active:scale-95 transition-transform uppercase tracking-[0.2em] text-sm flex items-center justify-center gap-3 mt-6 mb-12 disabled:opacity-70"
         >
-          <CheckCircle2 size={24} />
-          Finalizar Atendimento
+          {processing ? <Loader2 className="animate-spin" /> : <CheckCircle2 size={24} />}
+          {processing ? 'Processando...' : 'Finalizar Atendimento'}
         </button>
       </div>
 
       {/* MODAL DE TRANSFERÊNCIA */}
       {showTransferModal && (
         <div className="fixed inset-0 bg-black/60 z-[300] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-white w-full max-sm rounded-[2.5rem] p-6 shadow-2xl space-y-4">
+          <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-6 shadow-2xl space-y-4">
             <div className="flex justify-between items-center px-1">
               <h3 className="text-[#1e3a8a] font-black uppercase tracking-widest text-xs">Transferir para:</h3>
               <button onClick={() => setShowTransferModal(false)} className="text-gray-400 p-1"><X size={24} /></button>
             </div>
             <div className="space-y-2">
-              {professionals.filter(p => p.id !== appointment.professionalId).map(pro => (
+              {dbProfessionals.filter(p => p.id !== appointment.professionalId).map(pro => (
                 <button 
                   key={pro.id}
                   onClick={() => handleTransfer(pro)}
@@ -437,7 +539,7 @@ const AppointmentCheckout: React.FC = () => {
               <button onClick={() => setShowAddService(false)} className="text-gray-400 p-1"><X size={24} /></button>
             </div>
             <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-              {mockServices.map(s => (
+              {dbServices.map(s => (
                 <button 
                   key={s.id}
                   onClick={() => handleAddService(s)}
@@ -461,14 +563,17 @@ const AppointmentCheckout: React.FC = () => {
               <button onClick={() => setShowAddProduct(false)} className="text-gray-400 p-1"><X size={24} /></button>
             </div>
             <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-              {mockProducts.map(p => (
+              {dbProducts.map(p => (
                 <button 
                   key={p.id}
                   onClick={() => handleAddProduct(p)}
                   className="w-full p-4 rounded-2xl border border-gray-50 flex items-center justify-between hover:bg-orange-50 transition-all text-left"
                 >
-                  <span className="text-sm font-bold text-gray-800">{p.name}</span>
-                  <span className="text-xs font-black text-orange-600">R$ {p.price.toFixed(2)}</span>
+                  <div>
+                    <span className="text-sm font-bold text-gray-800 block">{p.name}</span>
+                    <span className="text-[9px] font-bold text-gray-400 uppercase">Estoque: {p.current_stock}</span>
+                  </div>
+                  <span className="text-xs font-black text-orange-600">R$ {p.sale_price?.toFixed(2)}</span>
                 </button>
               ))}
             </div>

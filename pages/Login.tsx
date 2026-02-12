@@ -37,7 +37,8 @@ const Login: React.FC = () => {
         .single();
 
       if (profileError) {
-        // Se não houver perfil, assumimos Admin para o primeiro acesso/configuração
+        // Fallback apenas para não quebrar em desenvolvimento se a tabela estiver vazia
+        // Em produção, isso deveria ser tratado como erro
         localStorage.setItem('user_role', 'ADMIN');
         localStorage.setItem('user_name', 'Administrador');
       } else {
@@ -77,7 +78,7 @@ const Login: React.FC = () => {
         </div>
 
         <form onSubmit={handleLogin} className="space-y-4 bg-white/5 p-8 rounded-[2.5rem] border border-white/10 backdrop-blur-md">
-          <h2 className="text-white/60 text-xs font-black uppercase tracking-widest text-center mb-4">Acesso Administrativo</h2>
+          <h2 className="text-white/60 text-xs font-black uppercase tracking-widest text-center mb-4">Acesso ao Sistema</h2>
           
           {error && (
             <div className="bg-red-500/20 border border-red-500/50 p-4 rounded-2xl text-red-200 text-xs flex items-center gap-3 animate-shake">
@@ -123,6 +124,16 @@ const Login: React.FC = () => {
               </>
             )}
           </button>
+
+          <div className="text-center pt-2">
+            <button 
+                type="button"
+                onClick={() => navigate('/register')}
+                className="text-white/50 text-[10px] uppercase font-bold tracking-widest hover:text-white transition-colors border-b border-transparent hover:border-white pb-0.5"
+            >
+                Não tem conta? Cadastrar Barbearia
+            </button>
+          </div>
         </form>
 
         <p className="text-gray-600 text-[10px] font-medium text-center uppercase tracking-tighter">

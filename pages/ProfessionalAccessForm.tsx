@@ -1,7 +1,9 @@
 
-import React, { useState, useEffect } from 'react';
-import { ChevronLeft } from 'lucide-react';
+import React, { useState } from 'react';
+import { ChevronLeft, Loader2, ShieldCheck, AlertCircle } from 'lucide-react';
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
+import { createClient } from '@supabase/supabase-js';
+import { db, supabaseUrl, supabaseAnonKey } from '../supabase';
 
 const ProfessionalAccessForm: React.FC = () => {
   const navigate = useNavigate();
@@ -14,78 +16,149 @@ const ProfessionalAccessForm: React.FC = () => {
     password: '',
     confirmPassword: ''
   });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    setError(null);
     if (!formData.email || !formData.password) {
-      alert('Por favor, preencha o e-mail e a senha.');
+      setError('Por favor, preencha o e-mail e a senha.');
       return;
     }
     if (formData.password !== formData.confirmPassword) {
-      alert('As senhas não coincidem!');
+      setError('As senhas não coincidem!');
       return;
     }
-    
-    // Simulação de salvamento
-    alert(`Acesso configurado com sucesso para ${proData?.name || 'o colaborador'}!`);
-    navigate('/professionals');
+    if (formData.password.length < 6) {
+      setError('A senha deve ter no mínimo 6 caracteres.');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      // Cliente temporário para criar usuário sem deslogar o admin
+      const tempSupabase = createClient(supabaseUrl, supabaseAnonKey);
+
+      // 1. Criar o usuário no Auth COM METADADOS
+      // A role COLLABORATOR fica salva no user_metadata
+      const { data: authData, error: authError } = await tempSupabase.auth.signUp({
+        email: formData.email,
+        password: formData.password,
+        options: {
+          data: {
+            full_name: proData?.name || 'Colaborador',
+            role: 'COLLABORATOR',
+            professional_id: id // Vincula ao ID da tabela professionals
+          }
+        }
+      });
+
+      if (authError) throw authError;
+
+      if (authData.user) {
+        // 2. Criar o perfil na tabela 'profiles' vinculado ao ID do profissional
+        const { error: profileError } = await db.profiles().insert({
+          id: authData.user.id,
+          full_name: proData?.name,
+          email: formData.email,
+          role: 'COLLABORATOR',
+          professional_id: id 
+        });
+
+        if (profileError) {
+          console.error(profileError);
+          throw new Error('Usuário de autenticação criado, mas falha ao vincular perfil de colaborador.');
+        }
+
+        // 3. Atualizar o email na tabela professionals
+        if (proData && proData.email !== formData.email) {
+            await db.professionals().update({ email: formData.email }).eq('id', id);
+        }
+
+        alert(`Acesso configurado com sucesso para ${proData?.name || 'o colaborador'}!`);
+        navigate('/professionals');
+      }
+
+    } catch (err: any) {
+      setError(err.message || 'Erro ao criar acesso.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <div className="flex flex-col h-screen bg-white">
-      {/* Header seguindo o estilo da imagem */}
       <header className="bg-[#1e3a8a] text-white px-4 py-4 flex items-center sticky top-0 z-50 shadow-md">
         <button onClick={() => navigate(-1)} className="p-1 active:scale-90 transition-transform">
           <ChevronLeft size={28} />
         </button>
         <h1 className="flex-1 text-center text-lg font-medium tracking-tight pr-8">
-          Dados de Acesso
+          Criar Acesso Barbeiro
         </h1>
       </header>
 
       <div className="p-4 space-y-6 flex-1 overflow-y-auto pt-8">
+        <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 flex items-start gap-3">
+           <ShieldCheck className="text-blue-900 shrink-0 mt-0.5" size={20} />
+           <div>
+             <h3 className="text-blue-900 font-bold text-sm">Acesso Restrito (Colaborador)</h3>
+             <p className="text-blue-700 text-xs mt-1">
+               Este usuário terá acesso limitado (Agenda Própria, Meus Clientes e Meu Financeiro). Ele não verá dados administrativos.
+             </p>
+           </div>
+        </div>
+
+        {error && (
+            <div className="bg-red-50 p-4 rounded-xl border border-red-100 flex items-center gap-3 text-red-600 text-sm font-bold">
+                <AlertCircle size={20} />
+                {error}
+            </div>
+        )}
+
         {/* E-mail de acesso */}
         <div>
-          <label className="text-sm font-medium text-gray-800 block mb-2 px-1">E-mail de acesso</label>
+          <label className="text-sm font-medium text-gray-800 block mb-2 px-1">E-mail de Login</label>
           <input 
             type="email" 
             value={formData.email}
             onChange={(e) => setFormData({...formData, email: e.target.value})}
-            placeholder="Ex: seu@email.com" 
+            placeholder="Ex: barbeiro@nord.com" 
             className="w-full bg-white border border-gray-300 rounded-lg py-3.5 px-4 outline-none focus:ring-1 focus:ring-blue-900 text-gray-700 shadow-sm"
           />
         </div>
 
         {/* Senha de acesso */}
         <div>
-          <label className="text-sm font-medium text-gray-800 block mb-2 px-1">Senha de acesso</label>
+          <label className="text-sm font-medium text-gray-800 block mb-2 px-1">Senha Provisória</label>
           <input 
             type="password" 
             value={formData.password}
             onChange={(e) => setFormData({...formData, password: e.target.value})}
-            placeholder="Digitar..." 
+            placeholder="Mínimo 6 caracteres" 
             className="w-full bg-white border border-gray-300 rounded-lg py-3.5 px-4 outline-none focus:ring-1 focus:ring-blue-900 text-gray-700 shadow-sm"
           />
         </div>
 
         {/* Confirme sua nova senha */}
         <div>
-          <label className="text-sm font-medium text-gray-800 block mb-2 px-1">Confirme sua nova senha</label>
+          <label className="text-sm font-medium text-gray-800 block mb-2 px-1">Confirme a Senha</label>
           <input 
             type="password" 
             value={formData.confirmPassword}
             onChange={(e) => setFormData({...formData, confirmPassword: e.target.value})}
-            placeholder="Digitar..." 
+            placeholder="Repita a senha" 
             className="w-full bg-white border border-gray-300 rounded-lg py-3.5 px-4 outline-none focus:ring-1 focus:ring-blue-900 text-gray-700 shadow-sm"
           />
         </div>
 
-        {/* Botão Salvar estilizado como na imagem */}
         <div className="pt-4">
           <button 
             onClick={handleSave}
-            className="w-full bg-[#1e3a8a] text-white font-bold py-4 rounded-lg shadow-md active:scale-[0.98] transition-all uppercase tracking-widest text-sm"
+            disabled={loading}
+            className="w-full bg-[#1e3a8a] text-white font-bold py-4 rounded-lg shadow-md active:scale-[0.98] transition-all uppercase tracking-widest text-sm flex items-center justify-center gap-2 disabled:opacity-70"
           >
-            Salvar
+            {loading ? <Loader2 className="animate-spin" size={20} /> : 'Criar Acesso'}
           </button>
         </div>
       </div>

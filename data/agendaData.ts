@@ -56,6 +56,14 @@ export const saveBlock = async (block: Omit<AgendaBlock, 'id'>) => {
   return data;
 };
 
+export const updateBlock = async (id: string, updates: Partial<AgendaBlock>) => {
+  const { error } = await supabase
+    .from('agenda_blocks')
+    .update(updates)
+    .eq('id', id);
+  if (error) throw error;
+};
+
 export const deleteBlock = async (id: string) => {
   const { error } = await supabase
     .from('agenda_blocks')
@@ -67,7 +75,8 @@ export const deleteBlock = async (id: string) => {
 export const getAppointments = async (filters?: { proId?: string, date?: string }): Promise<Appointment[]> => {
   let query = supabase.from('appointments').select('*');
   
-  if (filters?.proId) query = query.eq('professional_id', filters.proId);
+  // CORREÇÃO: Usando 'professionalId' (camelCase)
+  if (filters?.proId) query = query.eq('professionalId', filters.proId);
   if (filters?.date) query = query.eq('date', filters.date);
 
   const { data, error } = await query;
@@ -134,10 +143,11 @@ export const getAvailableSlotsForPro = async (proId: string, date: string, servi
     const interval = settings.slotInterval || 15;
     
     // Obter agendamentos e bloqueios do dia para este pro no banco
+    // CORREÇÃO: Usando 'professionalId' (camelCase)
     const { data: appointments } = await supabase
       .from('appointments')
       .select('time, duration')
-      .eq('professional_id', proId)
+      .eq('professionalId', proId)
       .eq('date', date)
       .not('status', 'in', '("Desmarcou", "Cancelaram")');
 

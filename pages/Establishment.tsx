@@ -6,13 +6,21 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getSettings, saveSettings } from '../data/agendaData';
+import { EstablishmentSettings } from '../types';
 
 const Establishment: React.FC = () => {
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
   
-  // Estados Principais
-  const [settings, setSettings] = useState(getSettings());
+  // Estados Principais - Inicializa com valores padrão para evitar crash
+  const [settings, setSettings] = useState<EstablishmentSettings>({
+      primaryColor: '#1e3a8a',
+      secondaryColor: '#000000',
+      name: 'Nord Barbershop',
+      logoUrl: '',
+      slotInterval: 15
+  });
+  
   const [copied, setCopied] = useState(false);
   const [slug, setSlug] = useState('nord-barbershop');
   
@@ -27,8 +35,14 @@ const Establishment: React.FC = () => {
     state: 'RJ'
   });
 
+  // Carrega as configurações do banco ao montar o componente
   useEffect(() => {
-    const generated = settings.name
+    getSettings().then(setSettings);
+  }, []);
+
+  useEffect(() => {
+    const safeName = settings.name || 'Nord Barbershop';
+    const generated = safeName
       .toLowerCase()
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')

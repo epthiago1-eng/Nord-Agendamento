@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   ChevronLeft, Wallet, TrendingUp, ShoppingBag, ClipboardList, 
-  Star, User, Calendar, PlusCircle, ArrowRight
+  Star, User, Calendar, PlusCircle, ArrowRight, Lock, CheckCircle2
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getTransactions, Transaction } from '../data/transactions';
@@ -11,10 +11,16 @@ const CollaboratorFinancial: React.FC = () => {
   const navigate = useNavigate();
   // Busca o nome real do usuário salvo no login
   const proName = localStorage.getItem('user_name') || 'Colaborador';
-  const [transactions, setTransactions] = useState<Transaction[]>(getTransactions());
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
 
   useEffect(() => {
-    const handleUpdate = () => setTransactions(getTransactions());
+    // Busca inicial
+    getTransactions().then(setTransactions);
+
+    // Listener para atualizações
+    const handleUpdate = () => {
+        getTransactions().then(setTransactions);
+    };
     window.addEventListener('transaction_added', handleUpdate);
     return () => window.removeEventListener('transaction_added', handleUpdate);
   }, []);
@@ -22,21 +28,33 @@ const CollaboratorFinancial: React.FC = () => {
   const myStats = useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
     let daily = 0, dailyCount = 0, monthServ = 0, monthProd = 0;
+    let pendingCommission = 0;
+    let receivedCommission = 0;
     
     // Filtra transações onde o campo 'pro' bate exatamente com o nome logado
-    transactions.filter(t => t.pro === proName).forEach(t => {
-      if (t.type === 'income') {
+    // Considera apenas 'income' (vendas geradas pelo pro)
+    transactions.filter(t => t.pro === proName && t.type === 'income').forEach(t => {
+        // Cálculo do Bruto
         if (t.date === today) {
           daily += t.val;
           dailyCount++;
         }
         if (t.category === 'Serviço') monthServ += t.val;
         if (t.category === 'Produto') monthProd += t.val;
-      }
+
+        // Cálculo da Comissão Individual
+        const rate = t.category === 'Serviço' ? 0.4 : 0.1;
+        const commValue = t.val * rate;
+
+        if (t.commission_paid) {
+            receivedCommission += commValue;
+        } else {
+            pendingCommission += commValue;
+        }
     });
 
-    const comm = (monthServ * 0.4) + (monthProd * 0.1);
-    return { daily, dailyCount, monthServ, monthProd, commission: comm };
+    const totalCommission = pendingCommission + receivedCommission;
+    return { daily, dailyCount, monthServ, monthProd, totalCommission, pendingCommission, receivedCommission };
   }, [transactions, proName]);
 
   return (
@@ -64,11 +82,31 @@ const CollaboratorFinancial: React.FC = () => {
           <ArrowRight size={20} className="text-blue-200" />
         </button>
 
+        {/* Card Principal de Saldo */}
         <div className="bg-gradient-to-br from-[#1e3a8a] to-[#2563eb] p-6 rounded-[2rem] text-white shadow-xl relative overflow-hidden">
             <div className="absolute -right-4 -top-4 opacity-10 rotate-12"><Wallet size={120} /></div>
-            <p className="text-blue-100 text-[10px] font-black uppercase tracking-[0.2em] mb-4">Minha Comissão Estimada</p>
-            <h2 className="text-3xl font-black mb-2">R$ {myStats.commission.toFixed(2).replace('.', ',')}</h2>
-            <p className="text-[10px] text-blue-200 font-bold uppercase">Baseado em 40% serv. / 10% prod.</p>
+            
+            <div className="relative z-10">
+                <p className="text-blue-100 text-[10px] font-black uppercase tracking-[0.2em] mb-4">Saldo a Receber</p>
+                <div className="flex items-baseline gap-2 mb-4">
+                    <h2 className="text-4xl font-black">R$ {myStats.pendingCommission.toFixed(2).replace('.', ',')}</h2>
+                    <span className="bg-blue-800 text-blue-200 text-[9px] px-2 py-1 rounded-lg font-bold uppercase">Pendente</span>
+                </div>
+
+                <div className="pt-4 border-t border-blue-400/30 flex items-center justify-between">
+                    <div>
+                        <p className="text-[9px] font-bold text-blue-300 uppercase tracking-widest mb-0.5">Total Recebido</p>
+                        <p className="text-lg font-bold flex items-center gap-1.5">
+                            <CheckCircle2 size={16} className="text-green-400" />
+                            R$ {myStats.receivedCommission.toFixed(2).replace('.', ',')}
+                        </p>
+                    </div>
+                    <div className="text-right">
+                        <p className="text-[9px] font-bold text-blue-300 uppercase tracking-widest mb-0.5">Produção Total</p>
+                        <p className="text-lg font-bold">R$ {myStats.totalCommission.toFixed(2).replace('.', ',')}</p>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <div className="grid grid-cols-2 gap-4">
@@ -83,7 +121,7 @@ const CollaboratorFinancial: React.FC = () => {
             <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm flex flex-col justify-center">
                 <div className="flex items-center gap-2 text-blue-900 mb-2">
                     <Calendar size={16} />
-                    <span className="text-[10px] font-black uppercase tracking-widest">Produção Total</span>
+                    <span className="text-[10px] font-black uppercase tracking-widest">Venda Bruta</span>
                 </div>
                 <p className="text-xl font-black text-gray-900">R$ {(myStats.monthServ + myStats.monthProd).toFixed(2).replace('.', ',')}</p>
             </div>
@@ -91,7 +129,7 @@ const CollaboratorFinancial: React.FC = () => {
 
         <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-4">
             <h3 className="text-gray-900 font-black text-xs uppercase tracking-[0.2em] mb-2 flex items-center gap-2">
-                <Star size={14} className="text-yellow-500" /> Detalhes de {proName}
+                <Star size={14} className="text-yellow-500" /> Detalhes de Produção
             </h3>
             <div className="space-y-3">
                 <div className="flex items-center justify-between">

@@ -2,23 +2,28 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
   ChevronLeft, ChevronDown, ChevronUp, Wallet, DollarSign, 
-  Users, ArrowUpRight, ArrowDownRight, History, ArrowRight, RefreshCw
+  Users, ArrowUpRight, ArrowDownRight, History, ArrowRight, RefreshCw, ChevronRight
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getTransactions, Transaction } from '../data/transactions';
 
 const FinancialAdmin: React.FC = () => {
   const navigate = useNavigate();
-  const [transactions, setTransactions] = useState<Transaction[]>(getTransactions());
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [expandPayments, setExpandPayments] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
 
   // Listener para atualizações em tempo real
   useEffect(() => {
+    // Busca inicial
+    getTransactions().then(setTransactions);
+
     const handleUpdate = () => {
       setIsUpdating(true);
-      setTransactions(getTransactions());
-      setTimeout(() => setIsUpdating(false), 1000);
+      getTransactions().then((data) => {
+        setTransactions(data);
+        setTimeout(() => setIsUpdating(false), 1000);
+      });
     };
     window.addEventListener('transaction_added', handleUpdate);
     return () => window.removeEventListener('transaction_added', handleUpdate);
@@ -133,8 +138,14 @@ const FinancialAdmin: React.FC = () => {
                 </div>
                 <div className="divide-y divide-gray-50">
                     {commissionsByPro.map((c, i) => (
-                        <div key={i} className="grid grid-cols-3 px-5 py-4 items-center">
-                            <span className="text-xs font-black text-gray-900">{c.name}</span>
+                        <div 
+                            key={i} 
+                            onClick={() => navigate(`/financial/commissions/${c.name}`)}
+                            className="grid grid-cols-3 px-5 py-4 items-center active:bg-blue-50 cursor-pointer transition-colors group"
+                        >
+                            <span className="text-xs font-black text-gray-900 flex items-center gap-1">
+                                {c.name} <ChevronRight size={12} className="text-gray-300 group-hover:text-blue-500" />
+                            </span>
                             <span className="text-center text-[11px] font-bold text-gray-400 italic">40% Serv / 10% Prod</span>
                             <span className="text-right text-xs font-black text-blue-900">R${c.total.toFixed(2).replace('.', ',')}</span>
                         </div>

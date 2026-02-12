@@ -1,42 +1,71 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { 
-  ChevronLeft, ChevronRight, Calendar as CalendarIcon, Plus, X, 
-  Clock, Lock, CalendarPlus, Loader2
+  ChevronLeft, ChevronRight, Calendar as CalendarIcon, Plus, 
+  CalendarPlus, Loader2, RotateCcw, Users, User, Trash2, Edit2, X, Clock
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { getBlocks, getAppointments, AgendaBlock, Appointment, deleteBlock } from '../data/agendaData';
-import { supabase } from '../supabase';
-
-const professionals = [
-  { id: '1', name: 'Diego', avatar: 'https://picsum.photos/seed/diego/100' },
-  { id: '2', name: 'Felipe', avatar: 'https://picsum.photos/seed/felipe/100' },
-  { id: '3', name: 'Ricardo', avatar: 'https://picsum.photos/seed/ricardo/100' },
-];
+import { getBlocks, getAppointments, AgendaBlock, Appointment, deleteBlock, updateBlock } from '../data/agendaData';
+import { supabase, db } from '../supabase';
 
 const Agenda: React.FC = () => {
   const navigate = useNavigate();
   const userRole = localStorage.getItem('user_role') || 'ADMIN';
-  const userProId = localStorage.getItem('user_pro_id') || '1';
+  const userProId = localStorage.getItem('user_pro_id') || '';
+  const dateInputRef = useRef<HTMLInputElement>(null);
 
   const [loading, setLoading] = useState(true);
-  const [selectedPro, setSelectedPro] = useState(userRole === 'COLLABORATOR' ? userProId : professionals[0].id);
+  
+  // Lista de Profissionais do Banco
+  const [professionalsList, setProfessionalsList] = useState<any[]>([]);
+  
+  // Seleção de Profissionais (Array de IDs para suportar múltiplos)
+  const [selectedPros, setSelectedPros] = useState<string[]>([]);
+
   const [selectedDate, setSelectedDate] = useState(new Date()); 
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [blocks, setBlocks] = useState<AgendaBlock[]>([]);
   const [isFabOpen, setIsFabOpen] = useState(false);
-  const [activeModal, setActiveModal] = useState<null | 'blockDetails' | 'calendarPicker'>(null);
-  const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
 
+  // Estados para Modal de Edição de Bloqueio
+  const [selectedBlock, setSelectedBlock] = useState<AgendaBlock | null>(null);
+  const [editBlockDesc, setEditBlockDesc] = useState('');
+  
+  // Configurações da Grid
+  const HOUR_HEIGHT = 80;
+  const START_HOUR = 8;
+  const hours = Array.from({ length: 14 }, (_, i) => START_HOUR + i);
+
+  // 1. Carregar Profissionais
+  useEffect(() => {
+    const fetchPros = async () => {
+        const { data } = await db.professionals().select('*').eq('status', 'Ativo').order('name');
+        if (data && data.length > 0) {
+            setProfessionalsList(data);
+            
+            // Se for colaborador, seleciona só ele. Se for Admin, seleciona o primeiro.
+            if (userRole === 'COLLABORATOR' && userProId) {
+                setSelectedPros([userProId]);
+            } else {
+                setSelectedPros([data[0].id]);
+            }
+        }
+    };
+    fetchPros();
+  }, [userRole, userProId]);
+
+  // 2. Carregar Agenda (Agendamentos e Bloqueios)
   const fetchData = async () => {
     setLoading(true);
     try {
+      // Busca TODOS os agendamentos do dia (filtramos visualmente depois)
+      const dateStr = selectedDate.toISOString().split('T')[0];
       const [apts, blks] = await Promise.all([
-        getAppointments({ date: selectedDate.toISOString().split('T')[0] }),
+        getAppointments({ date: dateStr }),
         getBlocks()
       ]);
-      setAppointments(apts);
-      setBlocks(blks);
+      setAppointments(apts || []);
+      setBlocks(blks || []);
     } catch (err) {
       console.error('Erro ao buscar dados:', err);
     } finally {
@@ -47,7 +76,6 @@ const Agenda: React.FC = () => {
   useEffect(() => {
     fetchData();
     
-    // Realtime subscription (Supabase Magic)
     const channel = supabase.channel('agenda_changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' }, fetchData)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'agenda_blocks' }, fetchData)
@@ -56,10 +84,62 @@ const Agenda: React.FC = () => {
     return () => { supabase.removeChannel(channel); };
   }, [selectedDate]);
 
-  const HOUR_HEIGHT = 80;
-  const START_HOUR = 8;
-  const hours = Array.from({ length: 14 }, (_, i) => START_HOUR + i);
+  // Lógica de Seleção de Profissionais (Máximo 2)
+  const togglePro = (proId: string) => {
+    if (selectedPros.includes(proId)) {
+        // Se já estiver selecionado e for o único, não faz nada (ou poderia desmarcar tudo)
+        if (selectedPros.length > 1) {
+            setSelectedPros(prev => prev.filter(id => id !== proId));
+        }
+    } else {
+        // Adicionar novo
+        if (selectedPros.length < 2) {
+            setSelectedPros(prev => [...prev, proId]);
+        } else {
+            // Se já tem 2, substitui o segundo (mantém o primeiro e adiciona o novo)
+            // Ou substitui o mais antigo. Aqui substitui o último do array.
+            setSelectedPros(prev => [prev[1], proId]); 
+        }
+    }
+  };
 
+  const handleBlockClick = (block: AgendaBlock) => {
+    setSelectedBlock(block);
+    setEditBlockDesc(block.description || '');
+  };
+
+  const handleDeleteBlock = async () => {
+    if (!selectedBlock) return;
+    try {
+        await deleteBlock(selectedBlock.id);
+        setSelectedBlock(null);
+        fetchData();
+    } catch (e) {
+        alert('Erro ao excluir bloqueio.');
+    }
+  };
+
+  const handleUpdateBlock = async () => {
+    if (!selectedBlock) return;
+    try {
+        await updateBlock(selectedBlock.id, { description: editBlockDesc });
+        setSelectedBlock(null);
+        fetchData();
+    } catch (e) {
+        alert('Erro ao atualizar bloqueio.');
+    }
+  };
+
+  // Cálculos de Layout
+  const getPosition = (timeStr: string) => {
+    const [h, m] = timeStr.split(':').map(Number);
+    const totalMinutesSinceStart = (h - START_HOUR) * 60 + m;
+    return (totalMinutesSinceStart / 60) * HOUR_HEIGHT;
+  };
+
+  const getHeight = (durationMin: number) => (durationMin / 60) * HOUR_HEIGHT;
+
+  // Renderização da Faixa de Dias
   const dayStripItems = useMemo(() => {
     const items = [];
     for (let i = -15; i <= 15; i++) {
@@ -70,29 +150,63 @@ const Agenda: React.FC = () => {
     return items;
   }, [selectedDate]);
 
-  const getPosition = (timeStr: string) => {
-    const [h, m] = timeStr.split(':').map(Number);
-    const totalMinutesSinceStart = (h - START_HOUR) * 60 + m;
-    return (totalMinutesSinceStart / 60) * HOUR_HEIGHT;
+  // Funções de Navegação
+  const handlePrevMonth = () => {
+    const d = new Date(selectedDate);
+    const currentMonth = d.getMonth();
+    d.setMonth(currentMonth - 1);
+    if (d.getMonth() !== (currentMonth - 1 + 12) % 12) d.setDate(0);
+    setSelectedDate(d);
   };
 
-  const getHeight = (durationMin: number) => (durationMin / 60) * HOUR_HEIGHT;
+  const handleNextMonth = () => {
+    const d = new Date(selectedDate);
+    const currentMonth = d.getMonth();
+    d.setMonth(currentMonth + 1);
+    if (d.getMonth() !== (currentMonth + 1) % 12) d.setDate(0);
+    setSelectedDate(d);
+  };
+
+  const handleDatePick = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.value) {
+        const [year, month, day] = e.target.value.split('-').map(Number);
+        setSelectedDate(new Date(year, month - 1, day));
+    }
+  };
 
   return (
     <div className="flex flex-col h-full bg-[#fcfaff] relative overflow-hidden">
-      <header className="bg-[#1e3a8a] text-white px-4 py-3 flex items-center justify-between z-[60] shadow-md">
-        <button onClick={() => { const d = new Date(selectedDate); d.setDate(d.getDate()-1); setSelectedDate(d); }} className="p-1"><ChevronLeft size={24} /></button>
-        <div className="flex flex-col items-center">
-            <h1 className="text-base font-bold uppercase tracking-widest">
+      {/* 1. Header (Mês e Ações) */}
+      <header className="bg-[#1e3a8a] text-white px-4 py-3 flex items-center justify-between z-[60] shadow-md shrink-0">
+        <div className="flex items-center gap-2">
+            <button onClick={handlePrevMonth} className="p-1 active:scale-90 transition-transform hover:bg-white/10 rounded-full">
+                <ChevronLeft size={24} />
+            </button>
+            <h1 className="text-base font-bold uppercase tracking-widest min-w-[140px] text-center">
                 {selectedDate.toLocaleString('pt-BR', { month: 'long', year: 'numeric' })}
             </h1>
+            <button onClick={handleNextMonth} className="p-1 active:scale-90 transition-transform hover:bg-white/10 rounded-full">
+                <ChevronRight size={24} />
+            </button>
         </div>
-        <button onClick={() => { const d = new Date(selectedDate); d.setDate(d.getDate()+1); setSelectedDate(d); }} className="p-1"><ChevronRight size={24} /></button>
+
+        <div className="flex items-center gap-3">
+            <button onClick={() => setSelectedDate(new Date())} className="p-2 bg-blue-800 rounded-xl active:scale-90 transition-transform border border-blue-700 shadow-sm">
+                <RotateCcw size={18} />
+            </button>
+            <div className="relative w-10 h-10">
+                <input type="date" onChange={handleDatePick} value={selectedDate.toISOString().split('T')[0]} className="absolute inset-0 opacity-0 cursor-pointer z-20 w-full h-full" />
+                <button className="absolute inset-0 flex items-center justify-center bg-blue-800 rounded-xl border border-blue-700 shadow-sm z-10 pointer-events-none">
+                    <CalendarIcon size={18} />
+                </button>
+            </div>
+        </div>
       </header>
 
-      <div className="bg-white border-b border-gray-100 overflow-hidden flex py-3 px-4 gap-4 no-scrollbar overflow-x-auto">
+      {/* 2. Faixa de Dias */}
+      <div className="bg-white border-b border-gray-100 overflow-hidden flex py-3 px-4 gap-4 no-scrollbar overflow-x-auto shrink-0">
         {dayStripItems.map((date, idx) => (
-          <button key={idx} onClick={() => setSelectedDate(date)} className={`flex flex-col items-center min-w-[45px] ${date.toDateString() === selectedDate.toDateString() ? 'text-blue-900' : 'text-gray-400'}`}>
+          <button key={idx} onClick={() => setSelectedDate(date)} className={`flex flex-col items-center min-w-[45px] active:scale-95 transition-transform ${date.toDateString() === selectedDate.toDateString() ? 'text-blue-900' : 'text-gray-400'}`}>
             <span className="text-[10px] font-bold uppercase">{date.toLocaleString('pt-BR', { weekday: 'short' })}</span>
             <div className={`w-9 h-9 flex items-center justify-center rounded-full mt-1 ${date.toDateString() === selectedDate.toDateString() ? 'bg-blue-900 text-white shadow-lg' : ''}`}>
               <span className="text-sm font-black">{date.getDate()}</span>
@@ -101,6 +215,43 @@ const Agenda: React.FC = () => {
         ))}
       </div>
 
+      {/* 3. Seção de Colaboradores (Nova) */}
+      {userRole === 'ADMIN' && (
+        <div className="bg-gray-50 border-b border-gray-200 py-3 px-4 flex gap-4 overflow-x-auto no-scrollbar shrink-0 items-center">
+            <div className="flex items-center gap-2 text-gray-400 mr-2 shrink-0">
+                <Users size={16} />
+                <span className="text-[10px] font-black uppercase tracking-widest">Equipe</span>
+            </div>
+            {professionalsList.map(pro => {
+                const isSelected = selectedPros.includes(pro.id);
+                return (
+                    <button 
+                        key={pro.id}
+                        onClick={() => togglePro(pro.id)}
+                        className={`flex items-center gap-2 pr-4 pl-1 py-1 rounded-full border transition-all active:scale-95 shrink-0 ${
+                            isSelected 
+                            ? 'bg-white border-blue-900 shadow-sm ring-1 ring-blue-900' 
+                            : 'bg-white border-gray-200 opacity-60 hover:opacity-100'
+                        }`}
+                    >
+                        <div className="w-8 h-8 rounded-full bg-gray-200 overflow-hidden">
+                            {pro.avatar ? (
+                                <img src={pro.avatar} alt={pro.name} className="w-full h-full object-cover" />
+                            ) : (
+                                <div className="w-full h-full flex items-center justify-center bg-blue-100 text-blue-900"><User size={14} /></div>
+                            )}
+                        </div>
+                        <span className={`text-[11px] font-bold uppercase tracking-tight ${isSelected ? 'text-blue-900' : 'text-gray-500'}`}>
+                            {pro.name.split(' ')[0]}
+                        </span>
+                        {isSelected && <div className="w-2 h-2 rounded-full bg-blue-500 ml-1" />}
+                    </button>
+                )
+            })}
+        </div>
+      )}
+
+      {/* 4. Grid de Agenda (Multi-Coluna) */}
       <div className="flex-1 overflow-y-auto relative bg-[#fcfaff]">
         {loading ? (
             <div className="absolute inset-0 flex items-center justify-center bg-white/50 z-50">
@@ -108,45 +259,181 @@ const Agenda: React.FC = () => {
             </div>
         ) : (
           <div className="flex min-h-full">
-            <div className="w-14 border-r border-gray-100 sticky left-0 bg-[#fcfaff]">
+            {/* Coluna de Horários (Fixa à esquerda) */}
+            <div className="w-14 border-r border-gray-100 sticky left-0 bg-[#fcfaff] z-20 shrink-0">
               {hours.map((hour) => (
-                <div key={hour} style={{ height: `${HOUR_HEIGHT}px` }} className="text-[10px] text-gray-400 font-medium text-center pt-2">
-                  <span>{hour.toString().padStart(2, '0')}:00</span>
+                <div key={hour} style={{ height: `${HOUR_HEIGHT}px` }} className="text-[10px] text-gray-400 font-medium text-center pt-2 relative">
+                  <span className="bg-[#fcfaff] px-1 relative z-10">{hour.toString().padStart(2, '0')}:00</span>
+                  <div className="absolute top-0 right-0 w-2 border-t border-gray-200"></div>
                 </div>
               ))}
             </div>
-            <div className="flex-1 relative">
-              {hours.map((_, i) => <div key={i} className="absolute left-0 right-0 border-b border-gray-50" style={{ top: `${i * HOUR_HEIGHT}px`, height: '1px' }} />)}
-              
-              <div className="absolute inset-0 px-2">
-                {appointments.filter(a => a.professionalId === selectedPro).map((apt) => (
-                  <div
-                    key={apt.id}
-                    onClick={() => navigate(`/appointment-checkout/${apt.id}`)}
-                    className="absolute left-1 right-1 rounded-xl p-3 bg-white border-l-4 border-blue-500 shadow-sm transition-all active:scale-[0.98] cursor-pointer"
-                    style={{ top: `${getPosition(apt.time)}px`, height: `${getHeight(apt.duration)}px`, zIndex: 20 }}
-                  >
-                    <h4 className="font-bold text-xs truncate text-gray-900">{apt.clientName}</h4>
-                    <p className="text-[9px] font-black uppercase text-blue-600">{apt.time}</p>
-                  </div>
-                ))}
-              </div>
+
+            {/* Container das Colunas de Profissionais */}
+            <div className="flex flex-1 relative min-w-0">
+                {/* Linhas de fundo (Grid) */}
+                <div className="absolute inset-0 z-0 pointer-events-none">
+                    {hours.map((_, i) => (
+                        <div key={i} className="absolute left-0 right-0 border-b border-gray-50" style={{ top: `${i * HOUR_HEIGHT}px`, height: '1px' }} />
+                    ))}
+                </div>
+
+                {/* Colunas Dinâmicas */}
+                {selectedPros.map((proId, index) => {
+                    const proDetails = professionalsList.find(p => p.id === proId);
+                    const isLast = index === selectedPros.length - 1;
+                    
+                    // Filtrar agendamentos e bloqueios deste profissional
+                    const proAppointments = appointments.filter(a => a.professionalId === proId);
+                    const proBlocks = blocks.filter(b => b.professional_id === proId);
+
+                    return (
+                        <div key={proId} className={`flex-1 relative ${!isLast ? 'border-r border-gray-200' : ''}`}>
+                            {/* Cabeçalho da Coluna (Só aparece se tiver > 1 selecionado) */}
+                            {selectedPros.length > 1 && (
+                                <div className="sticky top-0 z-30 bg-white/95 backdrop-blur-sm border-b border-gray-100 py-2 text-center shadow-sm">
+                                    <span className="text-[10px] font-black text-blue-900 uppercase tracking-widest block truncate px-2">
+                                        {proDetails?.name || 'Profissional'}
+                                    </span>
+                                </div>
+                            )}
+
+                            {/* Agendamentos */}
+                            <div className="relative h-full">
+                                {proAppointments.map((apt) => (
+                                    <div
+                                        key={apt.id}
+                                        onClick={() => navigate(`/appointment-checkout/${apt.id}`)}
+                                        className={`absolute left-1 right-1 rounded-xl p-2 border-l-4 shadow-sm transition-all active:scale-[0.98] cursor-pointer z-10 overflow-hidden flex flex-col justify-center ${
+                                            apt.status === 'Confirmado' ? 'bg-blue-50 border-blue-500' : 
+                                            apt.status === 'Atendimento Realizado' ? 'bg-green-50 border-green-500' :
+                                            'bg-gray-50 border-gray-400'
+                                        }`}
+                                        style={{ 
+                                            top: `${getPosition(apt.time)}px`, 
+                                            height: `${Math.max(getHeight(apt.duration), 30)}px` 
+                                        }}
+                                    >
+                                        <h4 className="font-bold text-[11px] truncate text-gray-900 leading-tight">{apt.clientName}</h4>
+                                        <div className="flex items-center gap-1 mt-0.5">
+                                            <p className="text-[9px] font-black uppercase opacity-70">{apt.time}</p>
+                                            <span className="text-[8px] opacity-50">• {apt.services[0]}</span>
+                                        </div>
+                                    </div>
+                                ))}
+
+                                {/* Bloqueios */}
+                                {proBlocks.map((blk) => {
+                                    const startTime = blk.start_at.split('T')[1].substring(0, 5);
+                                    const endTime = blk.end_at.split('T')[1].substring(0, 5);
+                                    
+                                    const startPos = getPosition(startTime);
+                                    const endPos = getPosition(endTime);
+                                    const height = endPos - startPos;
+
+                                    return (
+                                        <div
+                                            key={blk.id}
+                                            onClick={() => handleBlockClick(blk)}
+                                            className="absolute left-0 right-0 bg-gray-100/80 border-y border-gray-200 z-10 flex items-center justify-center cursor-pointer hover:bg-red-50/80 hover:border-red-200 transition-colors group"
+                                            style={{ 
+                                                top: `${startPos}px`, 
+                                                height: `${Math.max(height, 20)}px`,
+                                                backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 5px, rgba(0,0,0,0.03) 5px, rgba(0,0,0,0.03) 10px)'
+                                            }}
+                                        >
+                                            <div className="flex items-center gap-2">
+                                                <span className="bg-white px-2 py-1 rounded-full text-[9px] font-bold text-gray-400 shadow-sm uppercase tracking-widest border border-gray-200 group-hover:text-red-500 group-hover:border-red-200 transition-colors">
+                                                    {blk.description || 'Bloqueado'}
+                                                </span>
+                                                <Edit2 size={12} className="text-gray-400 group-hover:text-red-500 transition-colors" />
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    );
+                })}
+                
+                {selectedPros.length === 0 && (
+                    <div className="flex-1 flex flex-col items-center justify-center text-gray-300">
+                        <Users size={48} className="mb-2 opacity-20" />
+                        <p className="text-xs font-bold uppercase tracking-widest">Selecione um profissional</p>
+                    </div>
+                )}
             </div>
           </div>
         )}
       </div>
 
-      {/* FAB */}
-      <div className="fixed bottom-24 right-6 z-[100] flex flex-col items-end gap-3">
+      {/* FAB (Botão Flutuante) */}
+      <div className="fixed bottom-24 right-6 z-[50] flex flex-col items-end gap-3">
           {isFabOpen && (
-              <button onClick={() => navigate('/new-appointment')} className="bg-[#1e3a8a] text-white p-4 rounded-2xl shadow-xl animate-in slide-in-from-bottom-4">
-                <CalendarPlus size={24} />
-              </button>
+              <div className="flex flex-col gap-3 animate-in slide-in-from-bottom-4 fade-in duration-200">
+                  <button onClick={() => navigate('/agenda/block')} className="flex items-center gap-3 bg-white text-gray-700 px-4 py-3 rounded-2xl shadow-xl border border-gray-100">
+                    <span className="text-[10px] font-bold uppercase tracking-widest">Bloquear Horário</span>
+                    <div className="bg-red-100 text-red-600 p-1.5 rounded-lg"><CalendarPlus size={18} /></div>
+                  </button>
+                  <button onClick={() => navigate('/new-appointment')} className="flex items-center gap-3 bg-[#1e3a8a] text-white px-4 py-3 rounded-2xl shadow-xl">
+                    <span className="text-[10px] font-bold uppercase tracking-widest">Novo Agendamento</span>
+                    <div className="bg-white/20 p-1.5 rounded-lg"><Plus size={18} /></div>
+                  </button>
+              </div>
           )}
-          <button onClick={() => setIsFabOpen(!isFabOpen)} className={`bg-gray-400 text-white p-4.5 rounded-[2rem] shadow-2xl transition-all ${isFabOpen ? 'rotate-45' : ''}`}>
+          <button onClick={() => setIsFabOpen(!isFabOpen)} className={`bg-gray-900 text-white p-4.5 rounded-[2rem] shadow-2xl transition-all active:scale-90 ${isFabOpen ? 'rotate-45 bg-red-600' : ''}`}>
             <Plus size={32} />
           </button>
       </div>
+
+      {/* MODAL DE EDIÇÃO DE BLOQUEIO */}
+      {selectedBlock && (
+        <div className="fixed inset-0 bg-black/60 z-[300] flex items-center justify-center p-6 backdrop-blur-sm animate-in fade-in">
+            <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-6 shadow-2xl space-y-5 animate-in zoom-in-95">
+                <div className="flex justify-between items-center px-1">
+                    <div className="flex items-center gap-2">
+                        <Clock size={18} className="text-red-500" />
+                        <h3 className="text-red-600 font-black uppercase tracking-widest text-xs">Gerenciar Bloqueio</h3>
+                    </div>
+                    <button onClick={() => setSelectedBlock(null)} className="text-gray-400 p-1"><X size={20} /></button>
+                </div>
+
+                <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Horário</p>
+                    <p className="text-sm font-black text-gray-800">
+                        {new Date(selectedBlock.start_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} 
+                        {' - '} 
+                        {new Date(selectedBlock.end_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                    </p>
+                </div>
+
+                <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-2 px-1">Descrição</label>
+                    <input 
+                        type="text" 
+                        value={editBlockDesc}
+                        onChange={(e) => setEditBlockDesc(e.target.value)}
+                        className="w-full bg-white border border-gray-200 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-red-500 font-bold text-gray-700"
+                    />
+                </div>
+
+                <div className="flex flex-col gap-3 pt-2">
+                    <button 
+                        onClick={handleUpdateBlock}
+                        className="w-full bg-blue-900 text-white font-black py-4 rounded-2xl uppercase tracking-widest text-xs shadow-lg active:scale-95 transition-all"
+                    >
+                        Salvar Alterações
+                    </button>
+                    <button 
+                        onClick={handleDeleteBlock}
+                        className="w-full bg-red-50 text-red-600 font-black py-4 rounded-2xl uppercase tracking-widest text-xs active:scale-95 transition-all flex items-center justify-center gap-2"
+                    >
+                        <Trash2 size={16} /> Excluir Bloqueio
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
     </div>
   );
 };

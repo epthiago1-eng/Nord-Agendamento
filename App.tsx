@@ -1,5 +1,5 @@
 
-import React, { useEffect } from 'react';
+import React from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -12,6 +12,7 @@ import Notifications from './pages/Notifications';
 import Financial from './pages/Financial'; 
 import FinancialForm from './pages/FinancialForm';
 import FinancialLog from './pages/FinancialLog';
+import CommissionAudit from './pages/CommissionAudit'; // Nova Página
 import BillManagement from './pages/BillManagement';
 import BillForm from './pages/BillForm';
 import ProfessionalList from './pages/ProfessionalList';
@@ -48,6 +49,7 @@ import ReportFinancialSummary from './pages/ReportFinancialSummary';
 import ReportExpenseDetails from './pages/ReportExpenseDetails';
 import CollaboratorFinancial from './pages/CollaboratorFinancial';
 import Login from './pages/Login';
+import Register from './pages/Register';
 
 // Public Booking Pages
 import BookingServices from './pages/public/BookingServices';
@@ -58,16 +60,15 @@ import BookingLocation from './pages/public/BookingLocation';
 import BookingConfirmation from './pages/public/BookingConfirmation';
 
 const App: React.FC = () => {
-  const isLoggedIn = localStorage.getItem('is_logged_in') === 'true';
-
   return (
     <HashRouter>
       <Routes>
-        {/* Rota raiz: Se logado vai pra agenda, se não vai pra login */}
-        <Route index element={<Navigate to={isLoggedIn ? "/agenda" : "/login"} replace />} />
+        {/* Rota raiz: Força o redirecionamento para o Login */}
+        <Route path="/" element={<Navigate to="/login" replace />} />
         
-        {/* Rota de Login */}
+        {/* Rotas Públicas de Autenticação */}
         <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
 
         {/* Rotas Privadas (Protegidas) */}
         <Route element={<ProtectedRoute />}>
@@ -82,6 +83,7 @@ const App: React.FC = () => {
             <Route path="financial" element={<Financial />} />
             <Route path="financial/colaborador" element={<CollaboratorFinancial />} />
             <Route path="financial/log" element={<FinancialLog />} />
+            <Route path="financial/commissions/:proName" element={<CommissionAudit />} />
             <Route path="financial/new" element={<FinancialForm />} />
             <Route path="financial/edit/:id" element={<FinancialForm />} />
             
@@ -135,7 +137,7 @@ const App: React.FC = () => {
           </Route>
         </Route>
 
-        {/* Public Booking Routes (No Protection needed here) */}
+        {/* Public Booking Routes */}
         <Route path="/booking" element={<BookingServices />} />
         <Route path="/booking/schedule" element={<BookingSchedule />} />
         <Route path="/booking/form" element={<BookingForm />} />
@@ -143,8 +145,8 @@ const App: React.FC = () => {
         <Route path="/booking/location" element={<BookingLocation />} />
         <Route path="/booking/confirmation" element={<BookingConfirmation />} />
 
-        {/* Fallback para 404/Inexistente */}
-        <Route path="*" element={<Navigate to="/" replace />} />
+        {/* Fallback para 404/Inexistente redireciona para Login */}
+        <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     </HashRouter>
   );

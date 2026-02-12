@@ -100,4 +100,8 @@ export interface Transaction {
   recurrenceMonths: number;
   professionalId?: string;
   clientId?: string;
+  
+  // Novos campos para controle de comissão
+  commission_paid?: boolean; // Indica se a comissão dessa transação já foi paga ao pro
+  pro?: string; // Nome do profissional (legado ou redundante com professionalId, mantendo compatibilidade)
 }

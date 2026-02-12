@@ -1,7 +1,8 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronLeft, Package, AlertTriangle, Info, Camera, X, ChevronRight } from 'lucide-react';
+import { ChevronLeft, Package, AlertTriangle, Info, Camera, X, ChevronRight, Loader2 } from 'lucide-react';
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
+import { db } from '../supabase';
 
 const ProductForm: React.FC = () => {
   const navigate = useNavigate();
@@ -10,18 +11,17 @@ const ProductForm: React.FC = () => {
   const editData = location.state?.product;
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
   const [formData, setFormData] = useState({
     name: '',
     brand: '',
     reference: '',
-    averageCost: '0,00',
-    saleValue: '0,00',
-    saleId: '',
-    currentStock: 0,
-    minStock: 0
+    cost_price: '',
+    sale_price: '',
+    current_stock: 0,
+    min_stock: 0
   });
 
   useEffect(() => {
@@ -30,20 +30,18 @@ const ProductForm: React.FC = () => {
         name: editData.name || '',
         brand: editData.brand || '',
         reference: editData.reference || '',
-        averageCost: editData.cost?.toFixed(2).replace('.', ',') || '0,00',
-        saleValue: editData.price?.toFixed(2).replace('.', ',') || '0,00',
-        saleId: editData.saleId || '',
-        currentStock: editData.currentStock || 0,
-        minStock: editData.minStock || 0
+        cost_price: editData.cost_price?.toString() || '0',
+        sale_price: editData.sale_price?.toString() || '0',
+        current_stock: editData.current_stock || 0,
+        min_stock: editData.min_stock || 0
       });
-      if (editData.imageUrl) setImagePreview(editData.imageUrl);
+      if (editData.image_url) setImagePreview(editData.image_url);
     }
   }, [editData]);
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      setImageFile(file);
       const reader = new FileReader();
       reader.onloadend = () => {
         setImagePreview(reader.result as string);
@@ -52,16 +50,43 @@ const ProductForm: React.FC = () => {
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!formData.name) {
       alert('O nome do produto é obrigatório.');
       return;
     }
-    alert('Produto salvo com sucesso (incluindo imagem)!');
-    navigate('/products');
+
+    setLoading(true);
+    try {
+        const payload = {
+            name: formData.name,
+            brand: formData.brand,
+            reference: formData.reference,
+            cost_price: parseFloat(formData.cost_price.replace(',', '.')) || 0,
+            sale_price: parseFloat(formData.sale_price.replace(',', '.')) || 0,
+            current_stock: formData.current_stock,
+            min_stock: formData.min_stock,
+            image_url: imagePreview
+        };
+
+        if (id) {
+            const { error } = await db.products().update(payload).eq('id', id);
+            if (error) throw error;
+        } else {
+            const { error } = await db.products().insert(payload);
+            if (error) throw error;
+        }
+
+        alert('Produto salvo com sucesso!');
+        navigate('/products');
+    } catch (error: any) {
+        alert('Erro ao salvar: ' + error.message);
+    } finally {
+        setLoading(false);
+    }
   };
 
-  const isLowStock = formData.currentStock <= formData.minStock && formData.minStock > 0;
+  const isLowStock = formData.current_stock <= formData.min_stock && formData.min_stock > 0;
 
   return (
     <div className="flex flex-col h-full bg-[#fcfaff]">
@@ -83,17 +108,11 @@ const ProductForm: React.FC = () => {
                 <div className="relative w-full aspect-video rounded-3xl overflow-hidden border border-gray-100 shadow-sm group">
                     <img src={imagePreview} alt="Preview" className="w-full h-full object-cover" />
                     <button 
-                        onClick={() => { setImagePreview(null); setImageFile(null); }}
+                        onClick={() => setImagePreview(null)}
                         className="absolute top-3 right-3 bg-red-500 text-white p-2 rounded-full shadow-lg active:scale-90 transition-all"
                     >
                         <X size={18} />
                     </button>
-                    <div 
-                        onClick={() => fileInputRef.current?.click()}
-                        className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity cursor-pointer"
-                    >
-                        <Camera size={32} className="text-white" />
-                    </div>
                 </div>
             ) : (
                 <button 
@@ -106,13 +125,7 @@ const ProductForm: React.FC = () => {
                     <span className="text-xs font-bold uppercase tracking-widest">Adicionar Foto</span>
                 </button>
             )}
-            <input 
-                type="file" 
-                ref={fileInputRef} 
-                className="hidden" 
-                accept="image/*" 
-                onChange={handleImageChange} 
-            />
+            <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleImageChange} />
         </div>
 
         <div>
@@ -169,8 +182,8 @@ const ProductForm: React.FC = () => {
                     <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block pl-1">Qtd Atual</label>
                     <input 
                         type="number" 
-                        value={formData.currentStock}
-                        onChange={(e) => setFormData({...formData, currentStock: parseInt(e.target.value) || 0})}
+                        value={formData.current_stock}
+                        onChange={(e) => setFormData({...formData, current_stock: parseInt(e.target.value) || 0})}
                         className={`w-full bg-white border rounded-xl py-3 px-4 outline-none font-black text-lg transition-all ${isLowStock ? 'border-red-200 focus:ring-red-100 text-red-600' : 'border-blue-100 focus:ring-blue-100 text-gray-800'}`}
                     />
                 </div>
@@ -178,8 +191,8 @@ const ProductForm: React.FC = () => {
                     <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block pl-1">Mínimo (Alerta)</label>
                     <input 
                         type="number" 
-                        value={formData.minStock}
-                        onChange={(e) => setFormData({...formData, minStock: parseInt(e.target.value) || 0})}
+                        value={formData.min_stock}
+                        onChange={(e) => setFormData({...formData, min_stock: parseInt(e.target.value) || 0})}
                         className="w-full bg-white border border-gray-100 rounded-xl py-3 px-4 outline-none focus:ring-2 focus:ring-blue-100 text-gray-800 font-black text-lg"
                     />
                 </div>
@@ -191,8 +204,8 @@ const ProductForm: React.FC = () => {
               <label className="text-[11px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">Custo Médio (R$)</label>
               <input 
                 type="text" 
-                value={formData.averageCost}
-                onChange={(e) => setFormData({...formData, averageCost: e.target.value})}
+                value={formData.cost_price}
+                onChange={(e) => setFormData({...formData, cost_price: e.target.value})}
                 placeholder="0,00" 
                 className="w-full bg-white border border-gray-200 rounded-xl py-3.5 px-4 outline-none focus:ring-2 focus:ring-blue-100 shadow-sm text-gray-700 font-bold"
               />
@@ -201,8 +214,8 @@ const ProductForm: React.FC = () => {
               <label className="text-[11px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">Venda (R$)</label>
               <input 
                 type="text" 
-                value={formData.saleValue}
-                onChange={(e) => setFormData({...formData, saleValue: e.target.value})}
+                value={formData.sale_price}
+                onChange={(e) => setFormData({...formData, sale_price: e.target.value})}
                 placeholder="0,00" 
                 className="w-full bg-white border border-gray-200 rounded-xl py-3.5 px-4 outline-none focus:ring-2 focus:ring-blue-100 shadow-sm text-blue-900 font-black"
               />
@@ -211,10 +224,11 @@ const ProductForm: React.FC = () => {
 
         <button 
           type="button"
+          disabled={loading}
           onClick={handleSave}
-          className="w-full bg-[#1e3a8a] text-white font-black py-4.5 rounded-2xl shadow-xl active:scale-95 transition-transform uppercase tracking-[0.2em] text-sm mt-8 mb-4"
+          className="w-full bg-[#1e3a8a] text-white font-black py-4.5 rounded-2xl shadow-xl active:scale-95 transition-transform uppercase tracking-[0.2em] text-sm mt-8 mb-4 flex items-center justify-center gap-2"
         >
-            Salvar Produto
+            {loading ? <Loader2 className="animate-spin" /> : 'Salvar Produto'}
         </button>
       </div>
     </div>

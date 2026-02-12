@@ -1,7 +1,8 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronLeft, User, Phone, Mail, FileText, Camera, X, Eye, EyeOff } from 'lucide-react';
+import { ChevronLeft, User, Camera, Eye, EyeOff } from 'lucide-react';
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
+import { db } from '../supabase';
 
 const ProfessionalForm: React.FC = () => {
   const navigate = useNavigate();
@@ -13,24 +14,18 @@ const ProfessionalForm: React.FC = () => {
   const [imagePreview, setImagePreview] = useState<string | null>(editData?.avatar || null);
   const [formData, setFormData] = useState({
     name: '',
-    sex: null as 'M' | 'F' | null,
     phone: '',
     email: '',
-    docType: 'CPF' as 'CPF' | 'CNPJ',
-    docValue: '',
-    showInPublic: true // Novo estado
+    showInPublic: true
   });
 
   useEffect(() => {
     if (editData) {
       setFormData({
         name: editData.name || '',
-        sex: (editData.sex as 'M' | 'F') || null,
         phone: editData.phone || '',
         email: editData.email || '',
-        docType: (editData.docType as 'CPF' | 'CNPJ') || 'CPF',
-        docValue: editData.docValue || '',
-        showInPublic: editData.showInPublic !== undefined ? editData.showInPublic : true
+        showInPublic: editData.show_in_public !== undefined ? editData.show_in_public : true
       });
     }
   }, [editData]);
@@ -46,9 +41,31 @@ const ProfessionalForm: React.FC = () => {
     }
   };
 
-  const handleSave = () => {
-    alert('Dados salvos!');
-    navigate('/professionals');
+  const handleSave = async () => {
+    if (!formData.name) {
+        alert('Nome obrigatório');
+        return;
+    }
+
+    const payload = {
+        name: formData.name,
+        phone: formData.phone,
+        email: formData.email,
+        avatar: imagePreview,
+        show_in_public: formData.showInPublic
+    };
+
+    try {
+        if (id) {
+            await db.professionals().update(payload).eq('id', id);
+        } else {
+            await db.professionals().insert(payload);
+        }
+        alert('Profissional salvo!');
+        navigate('/professionals');
+    } catch (e) {
+        alert('Erro ao salvar profissional');
+    }
   };
 
   return (

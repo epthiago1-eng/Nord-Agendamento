@@ -1,7 +1,8 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronLeft, Search, FolderPlus, Upload, ChevronRight, BellRing, Info, MessageSquare, Camera, X, Eye, EyeOff } from 'lucide-react';
+import { ChevronLeft, Camera, X, ChevronRight, Eye, EyeOff } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { db } from '../supabase';
 
 const ServiceForm: React.FC = () => {
   const navigate = useNavigate();
@@ -13,11 +14,11 @@ const ServiceForm: React.FC = () => {
   const [formData, setFormData] = useState({
     name: '',
     duration: '',
-    value: 'R$ 0,00',
+    value: '0,00',
     reminders: '0',
     group: '',
     observation: '',
-    showInPublic: true // Novo estado
+    showInPublic: true
   });
 
   useEffect(() => {
@@ -25,13 +26,14 @@ const ServiceForm: React.FC = () => {
       setFormData({
         name: editData.name || '',
         duration: String(editData.duration || '45'),
-        value: `R$ ${String(editData.price || '0,00').replace('.', ',')}`,
-        reminders: String(editData.reminder || '0'),
-        group: editData.group || 'Barber',
+        value: `${String(editData.price || '0,00').replace('.', ',')}`,
+        // Verifica variações de nome da coluna (reminder_days é o padrão do banco)
+        reminders: String(editData.reminder_days || editData.reminder || '0'),
+        group: editData.group_name || 'Barber',
         observation: editData.observation || '',
-        showInPublic: editData.showInPublic !== undefined ? editData.showInPublic : true
+        showInPublic: editData.show_in_public !== undefined ? editData.show_in_public : true
       });
-      if (editData.imageUrl) setImagePreview(editData.imageUrl);
+      if (editData.image_url) setImagePreview(editData.image_url);
     }
   }, [editData]);
 
@@ -43,6 +45,37 @@ const ServiceForm: React.FC = () => {
         setImagePreview(reader.result as string);
       };
       reader.readAsDataURL(file);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!formData.name) {
+        alert('Nome do serviço é obrigatório');
+        return;
+    }
+
+    const payload = {
+        name: formData.name,
+        duration: parseInt(formData.duration) || 30,
+        price: parseFloat(formData.value.replace('R$ ', '').replace(',', '.')) || 0,
+        show_in_public: formData.showInPublic,
+        image_url: imagePreview,
+        group_name: formData.group,
+        reminder_days: parseInt(formData.reminders) || 0, // Salva na coluna correta
+        observation: formData.observation
+    };
+
+    try {
+        if (editData?.id) {
+            await db.services().update(payload).eq('id', editData.id);
+        } else {
+            await db.services().insert(payload);
+        }
+        alert('Serviço salvo!');
+        navigate('/services');
+    } catch (e) {
+        console.error(e);
+        alert('Erro ao salvar serviço.');
     }
   };
 
@@ -111,7 +144,7 @@ const ServiceForm: React.FC = () => {
             />
           </div>
           <div>
-            <label className="text-sm font-semibold text-gray-700 block mb-1.5">Valor</label>
+            <label className="text-sm font-semibold text-gray-700 block mb-1.5">Valor (R$)</label>
             <input 
               type="text" 
               value={formData.value}
@@ -147,7 +180,7 @@ const ServiceForm: React.FC = () => {
 
         <button 
           type="button"
-          onClick={() => { alert('Serviço salvo!'); navigate(-1); }}
+          onClick={handleSave}
           className="w-full bg-[#1e3a8a] text-white font-bold py-4 rounded-xl shadow-lg active:scale-95 transition-transform uppercase tracking-widest text-sm mt-8"
         >
             Salvar

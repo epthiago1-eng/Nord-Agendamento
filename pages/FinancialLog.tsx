@@ -11,7 +11,7 @@ const FinancialLog: React.FC = () => {
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [showFilterModal, setShowFilterModal] = useState(false);
-  const [transactions, setTransactions] = useState<Transaction[]>(getTransactions());
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
   
   const [filters, setFilters] = useState({
     type: 'all' as 'all' | 'income' | 'expense',
@@ -20,14 +20,20 @@ const FinancialLog: React.FC = () => {
   });
 
   useEffect(() => {
-    const handleUpdate = () => setTransactions(getTransactions());
+    // Busca inicial
+    getTransactions().then(setTransactions);
+
+    const handleUpdate = () => {
+        getTransactions().then(setTransactions);
+    };
     window.addEventListener('transaction_added', handleUpdate);
     return () => window.removeEventListener('transaction_added', handleUpdate);
   }, []);
 
   const filteredData = useMemo(() => {
     return transactions.filter(t => {
-      const matchesSearch = t.item.toLowerCase().includes(searchTerm.toLowerCase());
+      // Correção para evitar erro se item for nulo
+      const matchesSearch = (t.item || '').toLowerCase().includes(searchTerm.toLowerCase());
       const matchesType = filters.type === 'all' || t.type === filters.type;
       const matchesCategory = filters.category === 'all' || t.category === filters.category;
       const matchesPro = filters.pro === 'all' || t.pro === filters.pro;

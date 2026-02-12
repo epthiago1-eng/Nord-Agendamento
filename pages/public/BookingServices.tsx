@@ -28,7 +28,7 @@ const BookingServices: React.FC = () => {
 
   // Filtra apenas serviços marcados como públicos pelo administrador
   const availableServices = useMemo(() => {
-    return initialServices.filter(s => s.showInPublic && s.name.toLowerCase().includes(searchTerm.toLowerCase()));
+    return initialServices.filter(s => s.showInPublic && (s.name || '').toLowerCase().includes(searchTerm.toLowerCase()));
   }, [searchTerm]);
 
   const toggleService = (id: string) => {

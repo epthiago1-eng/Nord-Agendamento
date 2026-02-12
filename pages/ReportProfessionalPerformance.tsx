@@ -1,68 +1,118 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
-  ChevronLeft, ChevronDown, ChevronUp, User, ShoppingBag, 
-  ClipboardList, Wallet, Star, TrendingUp, Calendar, Filter, 
-  ArrowUpRight, Target, Users
+  ChevronLeft, Users, ShoppingBag, ClipboardList, Wallet, Star, Calendar, Filter, Target
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { db } from '../supabase';
 
-const mockPerformanceData = [
-  {
-    id: '1',
-    name: 'Felipe',
-    avatar: 'https://picsum.photos/seed/felipe/100',
-    totalAppointments: 42,
-    grossServices: 2100.00,
-    grossProducts: 450.00,
-    commService: 840.00,
-    commProduct: 90.00,
-    sales: [
-      { id: 's1', client: 'Jhonny', date: '05/02', type: 'Serviço', item: 'Corte + Barba', gross: 60.00, comm: 24.00 },
-      { id: 's2', client: 'Lauan', date: '05/02', type: 'Serviço', item: 'Corte Máquina', gross: 40.00, comm: 16.00 },
-      { id: 's3', client: 'Igor', date: '06/02', type: 'Produto', item: 'Pomada Matte', gross: 45.00, comm: 9.00 },
-    ]
-  },
-  {
-    id: '2',
-    name: 'Diego',
-    avatar: 'https://picsum.photos/seed/diego/100',
-    totalAppointments: 38,
-    grossServices: 1950.00,
-    grossProducts: 200.00,
-    commService: 780.00,
-    commProduct: 40.00,
-    sales: [
-      { id: 's4', client: 'Fernando', date: '05/02', type: 'Serviço', item: 'Corte Tesoura', gross: 55.00, comm: 22.00 },
-    ]
-  },
-  {
-    id: '3',
-    name: 'Ricardo',
-    avatar: 'https://picsum.photos/seed/ricardo/100',
-    totalAppointments: 15,
-    grossServices: 750.00,
-    grossProducts: 0,
-    commService: 300.00,
-    commProduct: 0,
-    sales: []
-  }
-];
+// Mapeamento dos IDs Mockados para o exemplo visual funcionar
+// Em produção, isso viria da relação do banco
+const SERVICE_IDS_MAPPING: Record<string, string> = {
+    'Corte + Barba': '6', 
+    'Corte Máquina': '4',
+    'Corte Tesoura': '3',
+    'Barba': '2',
+    'Sobrancelha': '1'
+};
 
 const ReportProfessionalPerformance: React.FC = () => {
   const navigate = useNavigate();
   const [expandedProId, setExpandedProId] = useState<string | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [dateRange, setDateRange] = useState({ start: '2026-02-01', end: '2026-02-28' });
+  
+  const [configs, setConfigs] = useState<any[]>([]);
+  const [calculatedData, setCalculatedData] = useState<any[]>([]);
+
+  // 1. Carrega configs do banco ao montar
+  useEffect(() => {
+    const fetchConfigs = async () => {
+        const { data } = await db.professionalServices().select('*');
+        if (data) setConfigs(data);
+    };
+    fetchConfigs();
+  }, []);
+
+  // 2. Calcula os dados quando configs mudam (ou dados base)
+  useEffect(() => {
+    // Helper para pegar taxa do array carregado do banco
+    const getCommissionRate = (proId: string, itemName: string) => {
+        const serviceId = SERVICE_IDS_MAPPING[itemName];
+        
+        // Tenta achar a config específica
+        const config = configs.find((c: any) => c.professional_id === proId && c.service_id === serviceId);
+        
+        if (config) {
+            return { type: config.commission_type, value: config.commission_value };
+        }
+        
+        return { type: 'percent', value: 40 }; // Padrão se não achar
+    };
+
+    // Dados Mockados para Exemplo (Substituir por query de vendas real depois)
+    const baseData = [
+      {
+        id: '1', // ID do Profissional no Banco (Ex: Diego)
+        name: 'Diego', 
+        avatar: 'https://picsum.photos/seed/diego/100',
+        totalAppointments: 42,
+        grossProducts: 450.00,
+        commProduct: 90.00,
+        sales: [
+          { id: 's1', client: 'Jhonny', date: '05/02', type: 'Serviço', item: 'Corte + Barba', gross: 60.00 },
+          { id: 's2', client: 'Lauan', date: '05/02', type: 'Serviço', item: 'Corte Máquina', gross: 40.00 },
+        ]
+      },
+      {
+        id: '2', // Felipe
+        name: 'Felipe',
+        avatar: 'https://picsum.photos/seed/felipe/100',
+        totalAppointments: 38,
+        grossProducts: 200.00,
+        commProduct: 40.00,
+        sales: [
+          { id: 's4', client: 'Fernando', date: '05/02', type: 'Serviço', item: 'Corte Tesoura', gross: 55.00 },
+        ]
+      }
+    ];
+
+    // Processamento
+    const processed = baseData.map(pro => {
+        let grossServices = 0;
+        let commService = 0;
+        
+        const processedSales = pro.sales.map(sale => {
+            const rate = getCommissionRate(pro.id, sale.item);
+            const commVal = rate.type === 'percent' 
+                ? (sale.gross * (rate.value / 100)) 
+                : rate.value;
+            
+            grossServices += sale.gross;
+            commService += commVal;
+
+            return { ...sale, comm: commVal };
+        });
+
+        return {
+            ...pro,
+            grossServices,
+            commService,
+            sales: processedSales
+        };
+    });
+
+    setCalculatedData(processed);
+  }, [configs]);
 
   // Team Summary calculation
   const teamStats = useMemo(() => {
-    return mockPerformanceData.reduce((acc, curr) => ({
+    return calculatedData.reduce((acc, curr) => ({
       gross: acc.gross + curr.grossServices + curr.grossProducts,
       commission: acc.commission + curr.commService + curr.commProduct,
       appointments: acc.appointments + curr.totalAppointments
     }), { gross: 0, commission: 0, appointments: 0 });
-  }, []);
+  }, [calculatedData]);
 
   return (
     <div className="flex flex-col h-full bg-[#fcfaff]">
@@ -128,7 +178,7 @@ const ReportProfessionalPerformance: React.FC = () => {
                   <h2 className="text-3xl font-black">R$ {teamStats.gross.toFixed(2).replace('.', ',')}</h2>
                 </div>
                 <div className="text-right">
-                  <span className="text-blue-200 text-[10px] font-black block mb-1">COMISSÕES</span>
+                  <span className="text-blue-200 text-[10px] font-black block mb-1">COMISSÕES (Calc.)</span>
                   <span className="text-lg font-bold text-green-300">R$ {teamStats.commission.toFixed(2).replace('.', ',')}</span>
                 </div>
               </div>
@@ -139,7 +189,7 @@ const ReportProfessionalPerformance: React.FC = () => {
                 </div>
                 <div className="flex-1">
                   <p className="text-[9px] font-black text-blue-300 uppercase tracking-widest">Ticket Médio</p>
-                  <p className="text-xl font-black">R$ {(teamStats.gross / teamStats.appointments).toFixed(2).replace('.', ',')}</p>
+                  <p className="text-xl font-black">R$ {teamStats.appointments > 0 ? (teamStats.gross / teamStats.appointments).toFixed(2).replace('.', ',') : '0,00'}</p>
                 </div>
               </div>
             </div>
@@ -152,7 +202,7 @@ const ReportProfessionalPerformance: React.FC = () => {
             <h3 className="text-gray-900 font-black text-xs uppercase tracking-[0.2em]">Ranking de Performance</h3>
           </div>
 
-          {mockPerformanceData.sort((a, b) => (b.grossServices + b.grossProducts) - (a.grossServices + a.grossProducts)).map((pro) => (
+          {calculatedData.sort((a, b) => (b.grossServices + b.grossProducts) - (a.grossServices + a.grossProducts)).map((pro) => (
             <div key={pro.id} className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden transition-all">
               {/* Pro Main Header */}
               <div 
@@ -231,7 +281,7 @@ const ReportProfessionalPerformance: React.FC = () => {
                     {pro.sales.length === 0 ? (
                       <p className="text-center py-4 text-xs italic text-gray-400 bg-white rounded-2xl border border-dashed border-gray-200">Sem registros detalhados.</p>
                     ) : (
-                      pro.sales.map(sale => (
+                      pro.sales.map((sale: any) => (
                         <div key={sale.id} className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex items-center justify-between">
                           <div className="flex items-center gap-3">
                             <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${sale.type === 'Produto' ? 'bg-orange-50 text-orange-500' : 'bg-blue-50 text-blue-600'}`}>
