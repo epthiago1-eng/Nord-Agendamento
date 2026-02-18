@@ -1,8 +1,9 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Lock, Mail, ChevronRight, Loader2, User, AlertCircle, ArrowLeft } from 'lucide-react';
 import { supabase, db } from '../supabase';
+import { getSettings } from '../data/agendaData';
 
 const Register: React.FC = () => {
   const navigate = useNavigate();
@@ -12,6 +13,16 @@ const Register: React.FC = () => {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // Customização
+  const [logoUrl, setLogoUrl] = useState('https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png');
+
+  useEffect(() => {
+    // Carrega logo para manter consistência visual
+    getSettings().then(settings => {
+      if (settings.logoUrl) setLogoUrl(settings.logoUrl);
+    });
+  }, []);
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -84,11 +95,11 @@ const Register: React.FC = () => {
         </button>
 
         <div className="flex flex-col items-center space-y-2">
-          <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-2xl border-4 border-blue-900/30">
+          <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-2xl border-4 border-blue-900/30 overflow-hidden">
              <img 
-              src="https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png" 
-              alt="Nord" 
-              className="w-12 h-12 object-contain"
+              src={logoUrl} 
+              alt="Logo" 
+              className="w-full h-full object-cover p-1"
             />
           </div>
           <h1 className="text-white text-xl font-black uppercase tracking-widest">Nova Conta</h1>
@@ -111,7 +122,7 @@ const Register: React.FC = () => {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 required
-                className="w-full bg-white/10 border border-white/10 rounded-2xl py-4 px-12 text-white outline-none focus:ring-2 focus:ring-blue-500 transition-all text-sm font-medium"
+                className="w-full bg-white/10 border border-white/10 rounded-2xl py-4 px-12 text-white outline-none focus:ring-2 focus:ring-blue-500 transition-all text-sm font-medium placeholder:text-gray-500"
               />
               <User className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
             </div>
@@ -123,7 +134,7 @@ const Register: React.FC = () => {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                className="w-full bg-white/10 border border-white/10 rounded-2xl py-4 px-12 text-white outline-none focus:ring-2 focus:ring-blue-500 transition-all text-sm font-medium"
+                className="w-full bg-white/10 border border-white/10 rounded-2xl py-4 px-12 text-white outline-none focus:ring-2 focus:ring-blue-500 transition-all text-sm font-medium placeholder:text-gray-500"
               />
               <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
             </div>
@@ -135,7 +146,7 @@ const Register: React.FC = () => {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                className="w-full bg-white/10 border border-white/10 rounded-2xl py-4 px-12 text-white outline-none focus:ring-2 focus:ring-blue-500 transition-all text-sm font-medium"
+                className="w-full bg-white/10 border border-white/10 rounded-2xl py-4 px-12 text-white outline-none focus:ring-2 focus:ring-blue-500 transition-all text-sm font-medium placeholder:text-gray-500"
               />
               <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
             </div>
@@ -147,7 +158,7 @@ const Register: React.FC = () => {
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 required
-                className="w-full bg-white/10 border border-white/10 rounded-2xl py-4 px-12 text-white outline-none focus:ring-2 focus:ring-blue-500 transition-all text-sm font-medium"
+                className="w-full bg-white/10 border border-white/10 rounded-2xl py-4 px-12 text-white outline-none focus:ring-2 focus:ring-blue-500 transition-all text-sm font-medium placeholder:text-gray-500"
               />
               <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
             </div>

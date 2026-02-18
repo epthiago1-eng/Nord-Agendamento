@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { ChevronLeft, Phone, Search, Calendar, Clock, Scissors, User } from 'lucide-react';
+import { ChevronLeft, Phone, Search, Calendar, Clock, Scissors, User, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getAppointmentsByPhone, Appointment } from '../../data/agendaData';
 
@@ -9,16 +9,20 @@ const BookingConsult: React.FC = () => {
   const [phone, setPhone] = useState('');
   const [results, setResults] = useState<Appointment[] | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  // Fix: handleSearch must be async to await the getAppointmentsByPhone promise
   const handleSearch = async () => {
     if (!phone) return;
+    setLoading(true);
     try {
         const found = await getAppointmentsByPhone(phone);
         setResults(found);
         setHasSearched(true);
     } catch (err) {
         console.error("Error searching appointments:", err);
+        alert("Erro ao buscar. Verifique sua conexão.");
+    } finally {
+        setLoading(false);
     }
   };
 
@@ -55,9 +59,10 @@ const BookingConsult: React.FC = () => {
 
                 <button 
                     onClick={handleSearch}
+                    disabled={loading}
                     className="w-full bg-black text-white font-black py-4 rounded-2xl uppercase tracking-widest text-xs transition-all active:scale-95 shadow-lg flex items-center justify-center gap-2"
                 >
-                    <Search size={16} />
+                    {loading ? <Loader2 className="animate-spin" size={16} /> : <Search size={16} />}
                     Buscar Agendamentos
                 </button>
             </div>

@@ -14,6 +14,8 @@ export interface AgendaBlock {
   description: string;
 }
 
+// --- CONFIGURAÇÕES ---
+
 export const getSettings = async (): Promise<EstablishmentSettings> => {
   const { data, error } = await supabase
     .from('settings')
@@ -29,100 +31,163 @@ export const getSettings = async (): Promise<EstablishmentSettings> => {
       slotInterval: 15
     };
   }
-  return data;
+
+  return {
+      primaryColor: data.primary_color || '#1e3a8a',
+      secondaryColor: data.secondary_color || '#000000',
+      name: data.name || 'Nord Barbershop',
+      logoUrl: data.logo_url || '',
+      slotInterval: data.slot_interval || 15
+  };
 };
 
 export const saveSettings = async (settings: EstablishmentSettings) => {
-  const { error } = await supabase
-    .from('settings')
-    .upsert({ id: 1, ...settings });
-    
+  const payload = {
+      id: 1, 
+      primary_color: settings.primaryColor,
+      secondary_color: settings.secondaryColor,
+      name: settings.name,
+      logo_url: settings.logoUrl,
+      slot_interval: settings.slotInterval
+  };
+
+  const { error } = await supabase.from('settings').upsert(payload);
   if (error) throw error;
 };
 
+// --- BLOQUEIOS ---
+
 export const getBlocks = async (): Promise<AgendaBlock[]> => {
-  const { data, error } = await supabase
-    .from('agenda_blocks')
-    .select('*');
+  const { data, error } = await supabase.from('agenda_blocks').select('*');
   return data || [];
 };
 
 export const saveBlock = async (block: Omit<AgendaBlock, 'id'>) => {
-  const { data, error } = await supabase
-    .from('agenda_blocks')
-    .insert(block)
-    .select()
-    .single();
-
+  const { data, error } = await supabase.from('agenda_blocks').insert(block).select().single();
   if (error) throw error;
   return data;
 };
 
 export const updateBlock = async (id: string, updates: Partial<AgendaBlock>) => {
-  const { error } = await supabase
-    .from('agenda_blocks')
-    .update(updates)
-    .eq('id', id);
+  const { error } = await supabase.from('agenda_blocks').update(updates).eq('id', id);
   if (error) throw error;
 };
 
 export const deleteBlock = async (id: string) => {
-  const { error } = await supabase
-    .from('agenda_blocks')
-    .delete()
-    .eq('id', id);
+  const { error } = await supabase.from('agenda_blocks').delete().eq('id', id);
   if (error) throw error;
 };
+
+// --- AGENDAMENTOS (CORE) ---
+
+// Helper para converter snake_case (DB) -> camelCase (App)
+const mapAppointmentFromDB = (data: any): Appointment => ({
+    id: data.id,
+    clientId: data.client_id,
+    clientName: data.client_name,
+    clientPhone: data.client_phone,
+    professionalId: data.professional_id,
+    professionalName: data.professional_name,
+    date: data.date,
+    time: data.time,
+    duration: data.duration,
+    status: data.status,
+    services: data.services || [],
+    products: data.products || [],
+    totalValue: data.total_value,
+    observation: data.observation
+});
 
 export const getAppointments = async (filters?: { proId?: string, date?: string }): Promise<Appointment[]> => {
   let query = supabase.from('appointments').select('*');
   
-  if (filters?.proId) query = query.eq('professionalId', filters.proId);
+  if (filters?.proId) query = query.eq('professional_id', filters.proId);
   if (filters?.date) query = query.eq('date', filters.date);
 
   const { data, error } = await query;
-  return data || [];
+  if (error) {
+      console.error('Erro ao buscar agendamentos:', error);
+      return [];
+  }
+  return data ? data.map(mapAppointmentFromDB) : [];
+};
+
+export const getAppointmentsByPhone = async (phone: string): Promise<Appointment[]> => {
+  // Limpa caracteres especiais para busca mais flexível se necessário, 
+  // mas aqui buscamos exato para performance
+  const { data, error } = await supabase
+    .from('appointments')
+    .select('*')
+    .eq('client_phone', phone)
+    .gte('date', new Date().toISOString().split('T')[0]) // Apenas futuros ou hoje
+    .order('date', { ascending: true });
+
+  if (error) throw error;
+  return data ? data.map(mapAppointmentFromDB) : [];
 };
 
 export const saveAppointment = async (apt: Omit<Appointment, 'id'>) => {
-  // Validação Extra antes de salvar
+  // 1. Validação de Disponibilidade
   const availability = await checkAvailability(apt.professionalId, apt.date, apt.time, apt.duration);
   if (!availability.available) {
       throw new Error(availability.reason);
   }
 
+  // 2. Mapeamento camelCase -> snake_case para o Banco
+  const payload = {
+      client_id: apt.clientId,
+      client_name: apt.clientName,
+      client_phone: apt.clientPhone,
+      professional_id: apt.professionalId,
+      professional_name: apt.professionalName,
+      date: apt.date,
+      time: apt.time,
+      duration: apt.duration,
+      status: apt.status,
+      services: apt.services,
+      products: apt.products || [],
+      total_value: apt.totalValue || 0,
+      observation: apt.observation
+  };
+
   const { data, error } = await supabase
     .from('appointments')
-    .insert(apt)
+    .insert(payload)
     .select()
     .single();
 
   if (error) throw error;
-  return data;
+  return mapAppointmentFromDB(data);
 };
 
 export const updateAppointment = async (id: string, data: Partial<Appointment>) => {
+  // Mapeia apenas os campos que vieram
+  const payload: any = {};
+  if (data.status) payload.status = data.status;
+  if (data.professionalId) payload.professional_id = data.professionalId;
+  if (data.professionalName) payload.professional_name = data.professionalName;
+  if (data.totalValue !== undefined) payload.total_value = data.totalValue;
+  if (data.services) payload.services = data.services;
+  if (data.products) payload.products = data.products;
+
   const { error } = await supabase
     .from('appointments')
-    .update(data)
+    .update(payload)
     .eq('id', id);
   if (error) throw error;
 };
 
 export const deleteAppointment = async (id: string, reason: string = 'Exclusão manual') => {
   // Busca dados antes de apagar para o log
-  const { data: apt } = await supabase.from('appointments').select('*').eq('id', id).single();
+  const { data: rawApt } = await supabase.from('appointments').select('*').eq('id', id).single();
   
-  const { error } = await supabase
-    .from('appointments')
-    .delete()
-    .eq('id', id);
-    
-  if (error) throw error;
+  if (rawApt) {
+      const apt = mapAppointmentFromDB(rawApt);
+      
+      const { error } = await supabase.from('appointments').delete().eq('id', id);
+      if (error) throw error;
 
-  if (apt) {
       // Notificar Admin
-      // FIX: Removed 'read' and 'created_at' properties as they are omitted in addNotification type
       await addNotification({
           type: 'SISTEMA',
           title: 'Agendamento Excluído',
@@ -143,9 +208,6 @@ export const deleteAppointment = async (id: string, reason: string = 'Exclusão 
   }
 };
 
-/**
- * Função unificada para verificar disponibilidade (Conflitos e Datas Passadas)
- */
 export const checkAvailability = async (
     proId: string, 
     date: string, 
@@ -169,12 +231,11 @@ export const checkAvailability = async (
         .select('*')
         .eq('professional_id', proId)
         .gte('end_at', `${date}T00:00:00`)
-        .lte('start_at', `${date}T23:59:59`); // Otimização simples
+        .lte('start_at', `${date}T23:59:59`);
 
     const hasBlock = blocks?.some(blk => {
         const bStart = new Date(blk.start_at);
         const bEnd = new Date(blk.end_at);
-        // Interseção: (StartA < EndB) e (EndA > StartB)
         return (proposedStart < bEnd && proposedEnd > bStart);
     });
 
@@ -186,9 +247,9 @@ export const checkAvailability = async (
     let query = supabase
         .from('appointments')
         .select('id, time, duration, status')
-        .eq('professionalId', proId)
+        .eq('professional_id', proId)
         .eq('date', date)
-        .not('status', 'in', '("Cancelaram","Desmarcou")'); // Ignora cancelados
+        .not('status', 'in', '("Cancelaram","Desmarcou")');
 
     if (excludeAptId) {
         query = query.neq('id', excludeAptId);
@@ -212,34 +273,28 @@ export const checkAvailability = async (
     return { available: true };
 };
 
-/**
- * Transfere um agendamento para outro profissional
- */
 export const transferAppointment = async (apt: Appointment, newProId: string, newProName: string) => {
-    // Verifica disponibilidade do novo profissional no mesmo horário
     const check = await checkAvailability(newProId, apt.date, apt.time, apt.duration);
     
     if (!check.available) {
         throw new Error(`O profissional ${newProName} não tem disponibilidade neste horário: ${check.reason}`);
     }
 
-    // Atualiza
-    await updateAppointment(apt.id, {
-        professionalId: newProId,
-        professionalName: newProName
-    });
+    // Atualiza usando as chaves corretas do banco (snake_case) na função updateAppointment interna ou direta
+    const { error } = await supabase.from('appointments').update({
+        professional_id: newProId,
+        professional_name: newProName
+    }).eq('id', apt.id);
 
-    // Log e Notificação
-    // FIX: Removed 'read' and 'created_at' properties as they are omitted in addNotification type
+    if (error) throw error;
+
     await addNotification({
         type: 'SISTEMA',
         title: 'Agendamento Transferido',
         message: `Cliente ${apt.clientName} transferido de ${apt.professionalName} para ${newProName}.`,
-        recipient_pro_id: newProId // Avisa o novo dono
+        recipient_pro_id: newProId 
     });
     
-    // Log para o antigo também (opcional, mas boa prática)
-    // FIX: Removed 'read' and 'created_at' properties as they are omitted in addNotification type
     await addNotification({
         type: 'SISTEMA',
         title: 'Agendamento Transferido',
@@ -248,51 +303,32 @@ export const transferAppointment = async (apt: Appointment, newProId: string, ne
     });
 };
 
-/**
- * Checks if a specific time slot is blocked for a professional.
- */
 export const isSlotBlocked = async (proId: string, date: string, time: string, duration: number): Promise<boolean> => {
   const result = await checkAvailability(proId, date, time, duration);
   return !result.available;
-};
-
-/**
- * Retrieves appointments for a specific client phone number.
- */
-export const getAppointmentsByPhone = async (phone: string): Promise<Appointment[]> => {
-  const { data, error } = await supabase
-    .from('appointments')
-    .select('*')
-    .eq('clientPhone', phone);
-  if (error) throw error;
-  return data || [];
 };
 
 export const getAvailableSlotsForPro = async (proId: string, dateStr: string, serviceDuration: number): Promise<string[]> => {
     const settings = await getSettings();
     const interval = settings.slotInterval || 15;
     
-    // 1. Obter dia da semana da data solicitada
-    const dateObj = new Date(dateStr + 'T12:00:00'); // Meio-dia para evitar problemas de timezone
+    const dateObj = new Date(dateStr + 'T12:00:00');
     const daysMap = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
     const currentDayName = daysMap[dateObj.getDay()];
 
-    // 2. Buscar Horários de Atendimento configurados para este Pro neste dia
     const { data: attendanceHours } = await db.professionalHours()
       .select('start_time, end_time')
       .eq('professional_id', proId)
       .eq('day_of_week', currentDayName);
 
-    // Se não tiver horário de atendimento configurado para este dia, retorna nada (BLOQUEADO)
     if (!attendanceHours || attendanceHours.length === 0) {
       return [];
     }
 
-    // 3. Obter agendamentos e bloqueios do dia
     const { data: appointments } = await supabase
       .from('appointments')
       .select('time, duration')
-      .eq('professionalId', proId)
+      .eq('professional_id', proId)
       .eq('date', dateStr)
       .not('status', 'in', '("Desmarcou", "Cancelaram")');
 
@@ -305,7 +341,6 @@ export const getAvailableSlotsForPro = async (proId: string, dateStr: string, se
 
     const availableSlots: string[] = [];
 
-    // 4. Percorrer cada faixa de horário de atendimento permitida
     attendanceHours.forEach(range => {
         const [startH, startM] = range.start_time.split(':').map(Number);
         const [endH, endM] = range.end_time.split(':').map(Number);
@@ -321,14 +356,11 @@ export const getAvailableSlotsForPro = async (proId: string, dateStr: string, se
             const slotStart = currentMinutes;
             const slotEnd = currentMinutes + serviceDuration;
 
-            // Verificação de Passado na listagem de slots também
             const slotDateTime = new Date(`${dateStr}T${timeStr}`);
             if (slotDateTime < new Date()) continue;
 
-            // Fora da faixa de atendimento deste range?
             if (slotEnd > rangeEndMinutes) continue;
 
-            // Verificar conflito com Agendamentos
             const hasAptConflict = appointments?.some(apt => {
                 const [ah, am] = apt.time.split(':').map(Number);
                 const aptStart = ah * 60 + am;
@@ -336,7 +368,6 @@ export const getAvailableSlotsForPro = async (proId: string, dateStr: string, se
                 return (slotStart < aptEnd && slotEnd > aptStart);
             });
 
-            // Verificar conflito com Bloqueios Manuais
             const hasBlockConflict = blocks?.some(blk => {
                 const bStart = new Date(blk.start_at);
                 const bEnd = new Date(blk.end_at);
@@ -351,6 +382,5 @@ export const getAvailableSlotsForPro = async (proId: string, dateStr: string, se
         }
     });
 
-    // Remove duplicatas e ordena
     return Array.from(new Set(availableSlots)).sort();
 };

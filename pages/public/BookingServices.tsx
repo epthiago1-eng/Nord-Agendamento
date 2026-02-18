@@ -1,17 +1,10 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, CalendarDays, MapPin, ChevronLeft, Clock, Check } from 'lucide-react';
+import { Search, CalendarDays, MapPin, ChevronLeft, Clock, Check, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getSettings } from '../../data/agendaData';
 import { EstablishmentSettings } from '../../types';
-
-// Mock estendido com visibilidade para demonstração
-const initialServices = [
-  { id: '1', name: 'Corte na Máquina', duration: '45 minutos', price: 40.00, image: 'https://picsum.photos/seed/cut1/200', showInPublic: true },
-  { id: '2', name: 'Corte na Tesoura', duration: '55 minutos', price: 55.00, image: 'https://picsum.photos/seed/cut2/200', showInPublic: true },
-  { id: '3', name: 'Barba', duration: '25 minutos', price: 30.00, image: 'https://picsum.photos/seed/beard/200', showInPublic: true },
-  { id: '4', name: 'Sobrancelha', duration: '15 minutos', price: 15.00, image: 'https://picsum.photos/seed/eyebrow/200', showInPublic: false },
-];
+import { db } from '../../supabase';
 
 const BookingServices: React.FC = () => {
   const navigate = useNavigate();
@@ -20,28 +13,52 @@ const BookingServices: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   
   const [settings, setSettings] = useState<EstablishmentSettings | null>(null);
+  const [services, setServices] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // Fix: Fetch settings on mount since getSettings is async
+  // Carregar Configurações e Serviços Reais
   useEffect(() => {
-    getSettings().then(setSettings);
+    const init = async () => {
+      try {
+        const settingsData = await getSettings();
+        setSettings(settingsData);
+
+        // Busca serviços públicos
+        const { data: servicesData } = await db.services()
+            .select('*')
+            .eq('show_in_public', true) // Filtro de visibilidade
+            .order('name');
+        
+        setServices(servicesData || []);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    init();
   }, []);
 
-  // Filtra apenas serviços marcados como públicos pelo administrador
   const availableServices = useMemo(() => {
-    return initialServices.filter(s => s.showInPublic && (s.name || '').toLowerCase().includes(searchTerm.toLowerCase()));
-  }, [searchTerm]);
+    return services.filter(s => (s.name || '').toLowerCase().includes(searchTerm.toLowerCase()));
+  }, [searchTerm, services]);
 
   const toggleService = (id: string) => {
     setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
 
   const handleContinue = () => {
-    const selected = availableServices.filter(s => selectedIds.includes(s.id));
+    const selected = services.filter(s => selectedIds.includes(s.id));
     navigate('/booking/schedule', { state: { selectedServices: selected } });
   };
 
-  // Fix: Handle loading state while settings are being fetched
-  if (!settings) return null;
+  if (loading || !settings) {
+      return (
+          <div className="min-h-screen flex items-center justify-center bg-white">
+              <Loader2 className="animate-spin text-blue-900" size={40} />
+          </div>
+      );
+  }
 
   return (
     <div className="min-h-screen bg-white flex flex-col font-sans">
@@ -59,7 +76,7 @@ const BookingServices: React.FC = () => {
       {/* Header com a cor secundária ou preto padrão */}
       <div className="h-16 w-full relative shrink-0" style={{ backgroundColor: settings.secondaryColor }}>
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-0 w-32 h-32 rounded-full border-4 border-white bg-white overflow-hidden shadow-xl z-10 translate-y-[-20%]">
-          <img src={settings.logoUrl} alt={settings.name} className="w-full h-full object-contain p-1" />
+          <img src={settings.logoUrl || "https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png"} alt={settings.name} className="w-full h-full object-contain p-1" />
         </div>
       </div>
 
@@ -96,10 +113,21 @@ const BookingServices: React.FC = () => {
         </div>
 
         <div className="space-y-4">
-          {availableServices.map(s => (
+          {availableServices.length === 0 ? (
+              <div className="text-center py-10 text-gray-400 text-sm">
+                  Nenhum serviço disponível no momento.
+              </div>
+          ) : availableServices.map(s => (
             <div key={s.id} className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden flex flex-col">
-              <div className="h-44 overflow-hidden relative">
-                <img src={s.image} alt={s.name} className="w-full h-full object-cover" />
+              <div className="h-44 overflow-hidden relative bg-gray-100">
+                {s.image_url ? (
+                    <img src={s.image_url} alt={s.name} className="w-full h-full object-cover" />
+                ) : (
+                    <div className="w-full h-full flex items-center justify-center text-gray-300">
+                        <Clock size={48} />
+                    </div>
+                )}
+                
                 {selectedIds.includes(s.id) && (
                     <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px] flex items-center justify-center animate-in fade-in">
                         <div className="bg-white rounded-full p-2 text-primary shadow-xl">
@@ -112,7 +140,7 @@ const BookingServices: React.FC = () => {
                 <h3 className="font-black text-gray-900 text-base uppercase tracking-tight">{s.name}</h3>
                 <div className="flex items-center justify-center gap-2 text-gray-400 text-xs font-bold uppercase">
                   <Clock size={14} className="text-primary" />
-                  <span>{s.duration}</span>
+                  <span>{s.duration} minutos</span>
                 </div>
               </div>
               <div className="p-5 border-t border-gray-50 flex items-center justify-between">

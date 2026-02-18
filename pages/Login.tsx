@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Lock, Mail, ChevronRight, Loader2, AlertCircle } from 'lucide-react';
 import { supabase } from '../supabase';
+import { getSettings } from '../data/agendaData';
 
 const Login: React.FC = () => {
   const navigate = useNavigate();
@@ -10,10 +11,26 @@ const Login: React.FC = () => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // Estado para customização da marca
+  const [logoUrl, setLogoUrl] = useState('https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png');
+  const [appName, setAppName] = useState('Nord Barbershop');
 
   // Limpa sessão antiga ao abrir a tela de login para garantir teste limpo
   useEffect(() => {
     localStorage.clear();
+    
+    // Carrega configurações de identidade visual
+    const loadIdentity = async () => {
+      try {
+        const settings = await getSettings();
+        if (settings.logoUrl) setLogoUrl(settings.logoUrl);
+        if (settings.name) setAppName(settings.name);
+      } catch (err) {
+        console.error('Erro ao carregar identidade visual', err);
+      }
+    };
+    loadIdentity();
   }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -63,20 +80,20 @@ const Login: React.FC = () => {
       
       <div className="w-full max-w-md z-10 space-y-8">
         <div className="flex flex-col items-center space-y-4">
-          <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center shadow-2xl border-4 border-blue-900/30">
+          <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center shadow-2xl border-4 border-blue-900/30 overflow-hidden">
             <img 
-              src="https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png" 
-              alt="Nord Barbershop" 
-              className="w-20 h-20 object-contain"
+              src={logoUrl} 
+              alt={appName} 
+              className="w-full h-full object-cover p-1"
             />
           </div>
           <div className="text-center">
-            <h1 className="text-white text-2xl font-black uppercase tracking-[0.3em]">Nord</h1>
+            <h1 className="text-white text-2xl font-black uppercase tracking-[0.3em]">{appName.split(' ')[0]}</h1>
             <p className="text-blue-400 text-[10px] font-bold uppercase tracking-[0.5em] mt-1">Gestão de Barbearia</p>
           </div>
         </div>
 
-        <form onSubmit={handleLogin} className="space-y-4 bg-white/5 p-8 rounded-[2.5rem] border border-white/10 backdrop-blur-md">
+        <form onSubmit={handleLogin} className="space-y-4 bg-white/5 p-8 rounded-[2.5rem] border border-white/10 backdrop-blur-md shadow-2xl">
           <h2 className="text-white/60 text-xs font-black uppercase tracking-widest text-center mb-4">Acesso ao Sistema</h2>
           
           {error && (
@@ -94,7 +111,7 @@ const Login: React.FC = () => {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                className="w-full bg-white/10 border border-white/10 rounded-2xl py-4 px-12 text-white outline-none focus:ring-2 focus:ring-blue-500 transition-all text-sm font-medium"
+                className="w-full bg-white/10 border border-white/10 rounded-2xl py-4 px-12 text-white outline-none focus:ring-2 focus:ring-blue-500 transition-all text-sm font-medium placeholder:text-gray-500"
               />
               <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
             </div>
@@ -105,7 +122,7 @@ const Login: React.FC = () => {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                className="w-full bg-white/10 border border-white/10 rounded-2xl py-4 px-12 text-white outline-none focus:ring-2 focus:ring-blue-500 transition-all text-sm font-medium"
+                className="w-full bg-white/10 border border-white/10 rounded-2xl py-4 px-12 text-white outline-none focus:ring-2 focus:ring-blue-500 transition-all text-sm font-medium placeholder:text-gray-500"
               />
               <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
             </div>

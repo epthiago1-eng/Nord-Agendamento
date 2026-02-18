@@ -2,15 +2,18 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   ChevronLeft, Copy, MapPin, Upload, ChevronRight, 
-  Globe, Check, X, Home, Palette, Eye, Clock
+  Globe, Check, X, Home, Palette, Eye, Clock, Loader2
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getSettings, saveSettings } from '../data/agendaData';
 import { EstablishmentSettings } from '../types';
+import { supabase } from '../supabase';
 
 const Establishment: React.FC = () => {
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
   
   // Estados Principais - Inicializa com valores padrão para evitar crash
   const [settings, setSettings] = useState<EstablishmentSettings>({
@@ -60,20 +63,58 @@ const Establishment: React.FC = () => {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleLogoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setSettings({ ...settings, logoUrl: reader.result as string });
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+
+    // Limite de 5MB
+    if (file.size > 5 * 1024 * 1024) {
+      alert("A imagem deve ter no máximo 5MB.");
+      return;
+    }
+
+    try {
+      setUploading(true);
+      
+      // Gera nome único para evitar cache ou sobreposição
+      const fileExt = file.name.split('.').pop();
+      const fileName = `logo-${Date.now()}.${fileExt}`;
+      const filePath = `${fileName}`;
+
+      // 1. Upload para o Supabase Storage
+      const { error: uploadError } = await supabase.storage
+        .from('establishment')
+        .upload(filePath, file);
+
+      if (uploadError) throw uploadError;
+
+      // 2. Pegar URL Pública
+      const { data } = supabase.storage
+        .from('establishment')
+        .getPublicUrl(filePath);
+
+      // 3. Atualizar estado local
+      setSettings({ ...settings, logoUrl: data.publicUrl });
+      
+    } catch (error: any) {
+      console.error('Erro no upload:', error);
+      alert('Erro ao fazer upload da logo: ' + error.message);
+    } finally {
+      setUploading(false);
     }
   };
 
-  const handleMainSave = () => {
-    saveSettings(settings);
-    alert('Configurações salvas com sucesso!');
+  const handleMainSave = async () => {
+    setLoading(true);
+    try {
+      await saveSettings(settings);
+      alert('Configurações salvas com sucesso!');
+    } catch (err: any) {
+      console.error(err);
+      alert('Erro ao salvar: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -91,29 +132,29 @@ const Establishment: React.FC = () => {
                 <h3 className="text-gray-900 font-black text-xs uppercase tracking-widest">Identidade Visual</h3>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-6">
                 <div className="space-y-2">
                     <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block px-1">Cor Primária</label>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 bg-gray-50 p-2 rounded-2xl border border-gray-200 shadow-inner">
                         <input 
                             type="color" 
                             value={settings.primaryColor}
                             onChange={(e) => setSettings({ ...settings, primaryColor: e.target.value })}
-                            className="w-12 h-12 rounded-xl border-none cursor-pointer"
+                            className="w-10 h-10 rounded-xl border-2 border-white shadow-sm cursor-pointer"
                         />
-                        <span className="text-xs font-mono font-bold text-gray-500 uppercase">{settings.primaryColor}</span>
+                        <span className="text-[10px] font-mono font-bold text-gray-600 uppercase">{settings.primaryColor}</span>
                     </div>
                 </div>
                 <div className="space-y-2">
                     <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block px-1">Cor Secundária</label>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 bg-gray-50 p-2 rounded-2xl border border-gray-200 shadow-inner">
                         <input 
                             type="color" 
                             value={settings.secondaryColor}
                             onChange={(e) => setSettings({ ...settings, secondaryColor: e.target.value })}
-                            className="w-12 h-12 rounded-xl border-none cursor-pointer"
+                            className="w-10 h-10 rounded-xl border-2 border-white shadow-sm cursor-pointer"
                         />
-                        <span className="text-xs font-mono font-bold text-gray-500 uppercase">{settings.secondaryColor}</span>
+                        <span className="text-[10px] font-mono font-bold text-gray-600 uppercase">{settings.secondaryColor}</span>
                     </div>
                 </div>
             </div>
@@ -121,15 +162,18 @@ const Establishment: React.FC = () => {
             {/* Preview Theme */}
             <div className="pt-4 border-t border-gray-50">
                 <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">Pré-visualização do Tema</p>
-                <div className="p-4 rounded-2xl border border-gray-100 flex items-center justify-between" style={{ backgroundColor: `${settings.primaryColor}10` }}>
+                <div 
+                    className="p-4 rounded-2xl border-2 border-gray-100 flex items-center justify-between shadow-sm" 
+                    style={{ backgroundColor: '#ffffff' }}
+                >
                     <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white" style={{ backgroundColor: settings.primaryColor }}>
+                        <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-md" style={{ backgroundColor: settings.primaryColor }}>
                             <Check size={20} />
                         </div>
-                        <span className="font-bold text-sm" style={{ color: settings.primaryColor }}>Botão Principal</span>
+                        <span className="font-bold text-sm" style={{ color: settings.primaryColor }}>Cor de Destaque</span>
                     </div>
-                    <button className="text-[10px] font-black uppercase tracking-widest py-2 px-4 rounded-full border border-gray-200 bg-white" style={{ color: settings.secondaryColor }}>
-                        Exemplo
+                    <button className="text-[10px] font-black uppercase tracking-widest py-2 px-4 rounded-full border bg-gray-50" style={{ borderColor: settings.secondaryColor, color: settings.secondaryColor }}>
+                        Botão Secundário
                     </button>
                 </div>
             </div>
@@ -212,19 +256,22 @@ const Establishment: React.FC = () => {
 
           <button 
             onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
             className="w-full bg-white border border-gray-100 p-5 rounded-2xl shadow-sm flex items-center justify-between active:bg-gray-50 transition-colors"
           >
             <div className="flex items-center gap-4">
-              {settings.logoUrl ? (
-                <div className="w-11 h-11 rounded-xl overflow-hidden border border-gray-100 shadow-inner">
-                   <img src={settings.logoUrl} alt="Logo" className="w-full h-full object-cover" />
+              {uploading ? (
+                <div className="w-11 h-11 rounded-xl flex items-center justify-center bg-gray-50"><Loader2 className="animate-spin text-blue-900" size={20} /></div>
+              ) : settings.logoUrl ? (
+                <div className="w-11 h-11 rounded-xl overflow-hidden border border-gray-100 shadow-inner bg-white">
+                   <img src={settings.logoUrl} alt="Logo" className="w-full h-full object-contain p-1" />
                 </div>
               ) : (
                 <div className="bg-gray-50 p-2.5 rounded-xl text-gray-500"><Upload size={22} /></div>
               )}
               <div className="text-left">
                 <span className="text-gray-700 font-bold text-sm block leading-none mb-1">Logo da Unidade</span>
-                <span className="text-[10px] text-gray-400 font-medium">{settings.logoUrl ? 'Logo carregada' : 'Nenhuma logo definida'}</span>
+                <span className="text-[10px] text-gray-400 font-medium">{uploading ? 'Enviando imagem...' : (settings.logoUrl ? 'Logo carregada' : 'Nenhuma logo definida')}</span>
               </div>
             </div>
             <ChevronRight className="text-gray-300" size={20} />
@@ -240,9 +287,10 @@ const Establishment: React.FC = () => {
 
         <button 
           onClick={handleMainSave}
-          className="w-full bg-[#1e3a8a] text-white font-black py-5 rounded-[2rem] shadow-xl active:scale-95 transition-all uppercase tracking-[0.2em] text-sm mt-4"
+          disabled={loading || uploading}
+          className="w-full bg-[#1e3a8a] text-white font-black py-5 rounded-[2rem] shadow-xl active:scale-95 transition-all uppercase tracking-[0.2em] text-sm mt-4 flex items-center justify-center gap-2"
         >
-          Salvar Alterações
+          {loading ? <Loader2 className="animate-spin" /> : 'Salvar Alterações'}
         </button>
       </div>
 

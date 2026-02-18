@@ -1,15 +1,10 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { ChevronLeft, Calendar as CalendarIcon, ChevronRight, X, Clock } from 'lucide-react';
+import { ChevronLeft, Calendar as CalendarIcon, ChevronRight, X, Clock, Loader2 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { getAvailableSlotsForPro, getSettings } from '../../data/agendaData';
 import { EstablishmentSettings } from '../../types';
-
-const initialProfessionals = [
-  { id: '1', name: 'Diego', avatar: 'https://picsum.photos/seed/diego/200', showInPublic: true },
-  { id: '2', name: 'Felipe', avatar: 'https://picsum.photos/seed/felipe/200', showInPublic: true },
-  { id: '3', name: 'Ricardo', avatar: 'https://picsum.photos/seed/ricardo/200', showInPublic: false },
-];
+import { db } from '../../supabase';
 
 const BookingSchedule: React.FC = () => {
   const navigate = useNavigate();
@@ -21,45 +16,64 @@ const BookingSchedule: React.FC = () => {
   const [showCalendar, setShowCalendar] = useState(false);
   const [pickerMonth, setPickerMonth] = useState(new Date());
   const [proSlots, setProSlots] = useState<Record<string, string[]>>({});
+  
+  const [professionals, setProfessionals] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
+  // Carregar Dados Iniciais
   useEffect(() => {
-    getSettings().then(setSettings);
-  }, []);
+    const init = async () => {
+      try {
+        const settingsData = await getSettings();
+        setSettings(settingsData);
 
-  const availableProfessionals = useMemo(() => {
-    return initialProfessionals.filter(p => p.showInPublic);
+        const { data: pros } = await db.professionals()
+            .select('*')
+            .eq('show_in_public', true) // Apenas públicos
+            .eq('status', 'Ativo')
+            .order('name');
+        
+        setProfessionals(pros || []);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    init();
   }, []);
 
   const totalDuration = useMemo(() => {
     return selectedServices.reduce((acc: number, s: any) => {
-      const mins = s.duration ? parseInt(s.duration.split(' ')[0]) : 30;
+      const mins = s.duration || 30; // Garante que lê a duração correta
       return acc + mins;
     }, 0) || 30;
   }, [selectedServices]);
 
   const dateStr = useMemo(() => selectedDate.toISOString().split('T')[0], [selectedDate]);
 
+  // Buscar Slots Disponíveis
   useEffect(() => {
     const fetchSlots = async () => {
       const slotsMap: Record<string, string[]> = {};
-      for (const pro of availableProfessionals) {
+      for (const pro of professionals) {
         slotsMap[pro.id] = await getAvailableSlotsForPro(pro.id, dateStr, totalDuration);
       }
       setProSlots(slotsMap);
     };
-    if (availableProfessionals.length > 0) {
+    if (professionals.length > 0) {
       fetchSlots();
     }
-  }, [availableProfessionals, dateStr, totalDuration]);
+  }, [professionals, dateStr, totalDuration]);
 
-  const handleSelectSlot = (pro: typeof initialProfessionals[0], time: string) => {
+  const handleSelectSlot = (pro: any, time: string) => {
     navigate('/booking/form', { 
         state: { 
             selectedServices, 
             professional: pro, 
             time, 
             date: selectedDate.toLocaleDateString('pt-BR'),
-            dateIso: dateStr // Adicionado para sincronização correta com o banco
+            dateIso: dateStr
         } 
     });
   };
@@ -127,13 +141,17 @@ const BookingSchedule: React.FC = () => {
     );
   };
 
-  if (!settings) return null;
+  if (loading || !settings) return (
+      <div className="min-h-screen flex items-center justify-center bg-white">
+          <Loader2 className="animate-spin text-blue-900" size={40} />
+      </div>
+  );
 
   return (
     <div className="min-h-screen bg-white flex flex-col font-sans">
       <div className="h-16 w-full relative shrink-0" style={{ backgroundColor: settings.secondaryColor }}>
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-0 w-32 h-32 rounded-full border-4 border-white bg-white overflow-hidden shadow-xl z-10 translate-y-[-20%]">
-          <img src={settings.logoUrl} alt={settings.name} className="w-full h-full object-contain p-1" />
+          <img src={settings.logoUrl || "https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png"} alt={settings.name} className="w-full h-full object-contain p-1" />
         </div>
       </div>
 
@@ -176,13 +194,15 @@ const BookingSchedule: React.FC = () => {
         </div>
 
         <div className="space-y-6">
-            {availableProfessionals.map(pro => {
+            {professionals.length === 0 ? (
+                <p className="text-center text-gray-400 text-sm italic py-10">Nenhum profissional disponível.</p>
+            ) : professionals.map(pro => {
                 const availableSlots = proSlots[pro.id] || [];
                 return (
                     <div key={pro.id} className="bg-white rounded-[2.5rem] border border-gray-100 shadow-sm overflow-hidden flex flex-col items-center">
                         <div className="pt-8 pb-4 flex flex-col items-center gap-3">
                             <div className="w-24 h-24 rounded-[2rem] overflow-hidden border-2 shadow-inner" style={{ borderColor: `${settings.primaryColor}20` }}>
-                                <img src={pro.avatar} alt={pro.name} className="w-full h-full object-cover" />
+                                <img src={pro.avatar || `https://ui-avatars.com/api/?name=${pro.name}&background=random`} alt={pro.name} className="w-full h-full object-cover" />
                             </div>
                             <div className="text-center">
                                 <span className="font-black text-gray-900 uppercase tracking-widest text-sm">{pro.name}</span>
