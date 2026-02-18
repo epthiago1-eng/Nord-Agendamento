@@ -38,7 +38,6 @@ const Login: React.FC = () => {
 
       if (profileError) {
         // Fallback apenas para não quebrar em desenvolvimento se a tabela estiver vazia
-        // Em produção, isso deveria ser tratado como erro
         localStorage.setItem('user_role', 'ADMIN');
         localStorage.setItem('user_name', 'Administrador');
       } else {
@@ -115,7 +114,7 @@ const Login: React.FC = () => {
           <button 
             type="submit"
             disabled={loading}
-            className="w-full bg-white text-[#0f172a] font-black py-4.5 rounded-2xl shadow-xl active:scale-95 transition-transform uppercase tracking-[0.2em] text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+            className="w-full bg-white text-[#0f172a] font-black py-5 rounded-2xl shadow-xl active:scale-95 transition-transform uppercase tracking-[0.2em] text-sm flex items-center justify-center gap-2 disabled:opacity-50 min-h-[64px]"
           >
             {loading ? <Loader2 className="animate-spin" size={20} /> : (
               <>

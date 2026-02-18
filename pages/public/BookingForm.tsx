@@ -3,11 +3,12 @@ import React, { useState } from 'react';
 import { ChevronLeft, CheckCircle2, User, Phone, Clipboard, AlertCircle } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { saveAppointment } from '../../data/agendaData';
+import { addNotification } from '../../data/notifications';
 
 const BookingForm: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { selectedServices, professional, time, date } = location.state || {};
+  const { selectedServices, professional, time, date, dateIso } = location.state || {};
 
   const [formData, setFormData] = useState({
     phone: '',
@@ -28,26 +29,23 @@ const BookingForm: React.FC = () => {
   };
 
   const handleFinish = async () => {
-    if (!validate()) {
-      return;
-    }
-
+    if (!validate()) return;
     setIsSubmitting(true);
 
     try {
         const totalDuration = selectedServices?.reduce((acc: number, s: any) => {
-            const mins = parseInt(s.duration.split(' ')[0]);
+            const mins = parseInt(String(s.duration || '30').split(' ')[0]);
             return acc + mins;
         }, 0) || 30;
 
         // Salva na agenda global
-        const newApt = saveAppointment({
+        const newApt = await saveAppointment({
             clientId: 'public-' + Date.now(),
             clientName: formData.name,
             clientPhone: formData.phone,
             professionalId: professional?.id || '1',
             professionalName: professional?.name || 'Diego',
-            date: '2026-02-09', // Data simplificada do mock para este exemplo
+            date: dateIso, 
             time: time,
             duration: totalDuration,
             status: 'Confirmado',
@@ -55,16 +53,25 @@ const BookingForm: React.FC = () => {
             observation: formData.observation
         });
 
-        // Navega para a tela de confirmação em vez de mostrar alert
+        // Notifica o Colaborador
+        await addNotification({
+            type: 'AGENDAMENTO',
+            title: '💈 Novo Agendamento Online',
+            message: `Cliente ${formData.name} reservou ${selectedServices?.map((s:any) => s.name).join(', ')} para ${date} às ${time} com ${professional?.name}.`,
+            link: '/agenda',
+            recipient_pro_id: professional?.id 
+        });
+
         navigate('/booking/confirmation', { 
             state: { 
                 appointment: newApt,
-                dateDisplay: date, // Mantém a data formatada exibida anteriormente
+                dateDisplay: date, 
                 address: "Rodovia Amaral Peixoto A, Br 106 (Tamoios) , 500 - Orla" 
             } 
         });
-    } catch (e) {
-        alert('Erro ao agendar. Tente novamente.');
+    } catch (e: any) {
+        console.error(e);
+        alert('Erro ao agendar: ' + e.message);
     } finally {
         setIsSubmitting(false);
     }
@@ -173,7 +180,7 @@ const BookingForm: React.FC = () => {
         <button 
             onClick={handleFinish}
             disabled={isSubmitting}
-            className={`w-full bg-black text-white font-black py-5 rounded-[2rem] shadow-xl active:scale-[0.98] transition-all uppercase tracking-[0.2em] text-sm mt-4 ${isSubmitting ? 'opacity-50' : ''}`}
+            className={`w-full bg-black text-white font-black py-5 rounded-[2rem] shadow-xl active:scale-[0.98] transition-all uppercase tracking-[0.2em] text-sm mt-4 min-h-[64px] ${isSubmitting ? 'opacity-50' : ''}`}
         >
             {isSubmitting ? 'Agendando...' : 'Confirmar Agendamento'}
         </button>

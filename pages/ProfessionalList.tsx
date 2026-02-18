@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, Plus, Settings, Calendar as CalendarIcon, Edit3, ShieldCheck, Loader2, UserX } from 'lucide-react';
+import { ChevronLeft, Plus, Settings, Calendar as CalendarIcon, Edit3, ShieldCheck, Loader2, UserX, Clock } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../supabase';
 
@@ -53,11 +53,12 @@ const ProfessionalList: React.FC = () => {
           <div key={pro.id} className="relative overflow-hidden border-b border-gray-100 bg-white">
             <div className={`absolute right-0 top-0 bottom-0 flex transition-transform duration-300 ease-in-out ${swipedId === pro.id ? 'translate-x-0' : 'translate-x-full'}`}>
               <button onClick={() => navigate(`/professionals/edit/${pro.id}`, { state: { pro } })} className="w-20 bg-[#ffa500] text-white flex flex-col items-center justify-center gap-1"><Edit3 size={20} /><span className="text-[9px] font-bold uppercase">Editar</span></button>
+              <button onClick={() => navigate(`/professionals/hours/${pro.id}`)} className="w-20 bg-blue-500 text-white flex flex-col items-center justify-center gap-1"><Clock size={20} /><span className="text-[9px] font-bold uppercase">Horários</span></button>
               <button onClick={() => navigate(`/professionals/services/${pro.id}`)} className="w-20 bg-[#9ca3af] text-white flex flex-col items-center justify-center gap-1"><Settings size={20} /><span className="text-[9px] font-bold uppercase">Serviços</span></button>
               <button onClick={() => navigate(`/professionals/access/${pro.id}`, { state: { pro } })} className="w-20 bg-[#ef4444] text-white flex flex-col items-center justify-center gap-1"><ShieldCheck size={20} /><span className="text-[9px] font-bold uppercase">Acesso</span></button>
             </div>
 
-            <div onClick={() => handleToggleSwipe(pro.id)} className={`p-5 transition-transform duration-300 bg-white cursor-pointer active:bg-gray-50 ${swipedId === pro.id ? '-translate-x-[240px]' : 'translate-x-0'}`}>
+            <div onClick={() => handleToggleSwipe(pro.id)} className={`p-5 transition-transform duration-300 bg-white cursor-pointer active:bg-gray-50 ${swipedId === pro.id ? '-translate-x-[320px]' : 'translate-x-0'}`}>
               <div className="flex items-center gap-4">
                 <div className="w-12 h-12 rounded-2xl bg-gray-100 overflow-hidden border-2 border-blue-50">
                     <img src={pro.avatar || `https://ui-avatars.com/api/?name=${pro.name}&background=random`} className="w-full h-full object-cover" />

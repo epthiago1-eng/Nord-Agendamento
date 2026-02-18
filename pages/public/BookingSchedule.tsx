@@ -22,7 +22,6 @@ const BookingSchedule: React.FC = () => {
   const [pickerMonth, setPickerMonth] = useState(new Date());
   const [proSlots, setProSlots] = useState<Record<string, string[]>>({});
 
-  // Fix: Fetch settings on mount
   useEffect(() => {
     getSettings().then(setSettings);
   }, []);
@@ -40,7 +39,6 @@ const BookingSchedule: React.FC = () => {
 
   const dateStr = useMemo(() => selectedDate.toISOString().split('T')[0], [selectedDate]);
 
-  // Fix: Fetch available slots when professional, date or duration changes
   useEffect(() => {
     const fetchSlots = async () => {
       const slotsMap: Record<string, string[]> = {};
@@ -60,7 +58,8 @@ const BookingSchedule: React.FC = () => {
             selectedServices, 
             professional: pro, 
             time, 
-            date: selectedDate.toLocaleDateString('pt-BR') 
+            date: selectedDate.toLocaleDateString('pt-BR'),
+            dateIso: dateStr // Adicionado para sincronização correta com o banco
         } 
     });
   };
@@ -178,7 +177,6 @@ const BookingSchedule: React.FC = () => {
 
         <div className="space-y-6">
             {availableProfessionals.map(pro => {
-                // Fix: Use stored slots from state
                 const availableSlots = proSlots[pro.id] || [];
                 return (
                     <div key={pro.id} className="bg-white rounded-[2.5rem] border border-gray-100 shadow-sm overflow-hidden flex flex-col items-center">

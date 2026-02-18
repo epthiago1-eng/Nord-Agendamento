@@ -1,5 +1,6 @@
+
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, Search, Info, Loader2, UserPlus, X, Save } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Search, Info, Loader2, UserPlus, X, Save, Calendar, MessageSquare } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../supabase';
 
@@ -11,7 +12,13 @@ const Clients: React.FC = () => {
   
   // Estado para Modal de Novo Cliente
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [newClient, setNewClient] = useState({ name: '', phone: '', email: '' });
+  const [newClient, setNewClient] = useState({ 
+    name: '', 
+    phone: '', 
+    email: '', 
+    birth_date: '', 
+    observation: '' 
+  });
   const [saving, setSaving] = useState(false);
 
   const fetchClients = async () => {
@@ -43,13 +50,19 @@ const Clients: React.FC = () => {
     }
     setSaving(true);
     try {
-        const { error } = await db.clients().insert(newClient);
+        const { error } = await db.clients().insert({
+          name: newClient.name,
+          phone: newClient.phone,
+          email: newClient.email || null,
+          birth_date: newClient.birth_date || null,
+          observation: newClient.observation || null
+        });
         if (error) throw error;
         
         alert('Cliente cadastrado com sucesso!');
         setIsModalOpen(false);
-        setNewClient({ name: '', phone: '', email: '' });
-        fetchClients(); // Recarrega a lista
+        setNewClient({ name: '', phone: '', email: '', birth_date: '', observation: '' });
+        fetchClients();
     } catch (err) {
         console.error(err);
         alert('Erro ao cadastrar cliente.');
@@ -98,7 +111,6 @@ const Clients: React.FC = () => {
         </div>
       </div>
 
-      {/* FAB - Botão Flutuante de Adicionar */}
       <div className="fixed bottom-24 right-6 z-50">
         <button 
             onClick={() => setIsModalOpen(true)}
@@ -108,10 +120,9 @@ const Clients: React.FC = () => {
         </button>
       </div>
 
-      {/* Modal Cadastro Rápido */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
-            <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-6 shadow-2xl space-y-5 animate-in zoom-in-95">
+            <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-6 shadow-2xl space-y-5 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto">
                 <div className="flex justify-between items-center px-1">
                     <h3 className="text-[#1e3a8a] font-black uppercase tracking-widest text-xs">Novo Cliente</h3>
                     <button onClick={() => setIsModalOpen(false)} className="text-gray-400 p-1"><X size={20} /></button>
@@ -119,7 +130,7 @@ const Clients: React.FC = () => {
                 
                 <div className="space-y-4">
                     <div>
-                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1 mb-1 block">Nome</label>
+                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1 mb-1 block">Nome *</label>
                         <input 
                             type="text" 
                             value={newClient.name}
@@ -128,7 +139,7 @@ const Clients: React.FC = () => {
                         />
                     </div>
                     <div>
-                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1 mb-1 block">Telefone</label>
+                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1 mb-1 block">Telefone *</label>
                         <input 
                             type="tel" 
                             value={newClient.phone}
@@ -136,14 +147,32 @@ const Clients: React.FC = () => {
                             className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-blue-900 text-gray-800 font-bold"
                         />
                     </div>
+                    <div className="grid grid-cols-1 gap-4">
+                        <div>
+                            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1 mb-1 block">Aniversário (Opcional)</label>
+                            <div className="relative">
+                                <input 
+                                    type="date" 
+                                    value={newClient.birth_date}
+                                    onChange={(e) => setNewClient({...newClient, birth_date: e.target.value})}
+                                    className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-blue-900 text-gray-800 font-medium"
+                                />
+                                <Calendar className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-300 pointer-events-none" size={16} />
+                            </div>
+                        </div>
+                    </div>
                     <div>
-                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1 mb-1 block">E-mail (Opcional)</label>
-                        <input 
-                            type="email" 
-                            value={newClient.email}
-                            onChange={(e) => setNewClient({...newClient, email: e.target.value})}
-                            className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-blue-900 text-gray-800 font-medium"
-                        />
+                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1 mb-1 block">Observação (Opcional)</label>
+                        <div className="relative">
+                            <textarea 
+                                value={newClient.observation}
+                                onChange={(e) => setNewClient({...newClient, observation: e.target.value})}
+                                rows={3}
+                                className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-blue-900 text-gray-800 font-medium resize-none text-sm"
+                                placeholder="Alergias, preferências, etc..."
+                            />
+                            <MessageSquare className="absolute right-4 bottom-4 text-gray-300 pointer-events-none" size={16} />
+                        </div>
                     </div>
                 </div>
 

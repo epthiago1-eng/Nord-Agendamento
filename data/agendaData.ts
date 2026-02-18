@@ -1,6 +1,8 @@
 
 import { Appointment, EstablishmentSettings } from '../types';
-import { supabase } from '../supabase';
+import { supabase, db } from '../supabase';
+import { addNotification } from './notifications';
+import { addTransaction } from './transactions';
 
 export type { Appointment };
 
@@ -75,7 +77,6 @@ export const deleteBlock = async (id: string) => {
 export const getAppointments = async (filters?: { proId?: string, date?: string }): Promise<Appointment[]> => {
   let query = supabase.from('appointments').select('*');
   
-  // CORREÇÃO: Usando 'professionalId' (camelCase)
   if (filters?.proId) query = query.eq('professionalId', filters.proId);
   if (filters?.date) query = query.eq('date', filters.date);
 
@@ -84,6 +85,12 @@ export const getAppointments = async (filters?: { proId?: string, date?: string 
 };
 
 export const saveAppointment = async (apt: Omit<Appointment, 'id'>) => {
+  // Validação Extra antes de salvar
+  const availability = await checkAvailability(apt.professionalId, apt.date, apt.time, apt.duration);
+  if (!availability.available) {
+      throw new Error(availability.reason);
+  }
+
   const { data, error } = await supabase
     .from('appointments')
     .insert(apt)
@@ -102,28 +109,151 @@ export const updateAppointment = async (id: string, data: Partial<Appointment>) 
   if (error) throw error;
 };
 
-export const deleteAppointment = async (id: string) => {
+export const deleteAppointment = async (id: string, reason: string = 'Exclusão manual') => {
+  // Busca dados antes de apagar para o log
+  const { data: apt } = await supabase.from('appointments').select('*').eq('id', id).single();
+  
   const { error } = await supabase
     .from('appointments')
     .delete()
     .eq('id', id);
+    
   if (error) throw error;
+
+  if (apt) {
+      // Notificar Admin
+      // FIX: Removed 'read' and 'created_at' properties as they are omitted in addNotification type
+      await addNotification({
+          type: 'SISTEMA',
+          title: 'Agendamento Excluído',
+          message: `Agendamento de ${apt.clientName} com ${apt.professionalName} em ${apt.date} às ${apt.time} foi apagado. Motivo: ${reason}`
+      });
+
+      // Logar no Sistema
+      await addTransaction({
+          operation: 'VENDA', // Neutro
+          type: 'OUTROS',
+          item: `LOG: Exclusão Agendamento - ${apt.clientName} (${apt.professionalName})`,
+          val: 0,
+          date: new Date().toISOString().split('T')[0],
+          payment_method: 'Sistema',
+          status: 'Pago',
+          pro: 'Sistema'
+      });
+  }
+};
+
+/**
+ * Função unificada para verificar disponibilidade (Conflitos e Datas Passadas)
+ */
+export const checkAvailability = async (
+    proId: string, 
+    date: string, 
+    time: string, 
+    duration: number, 
+    excludeAptId?: string
+): Promise<{ available: boolean, reason?: string }> => {
+    
+    // 1. Verificar Passado
+    const now = new Date();
+    const proposedStart = new Date(`${date}T${time}`);
+    const proposedEnd = new Date(proposedStart.getTime() + duration * 60000);
+
+    if (proposedStart < now) {
+        return { available: false, reason: 'Não é possível agendar em datas ou horários passados.' };
+    }
+
+    // 2. Verificar Bloqueios Manuais
+    const { data: blocks } = await supabase
+        .from('agenda_blocks')
+        .select('*')
+        .eq('professional_id', proId)
+        .gte('end_at', `${date}T00:00:00`)
+        .lte('start_at', `${date}T23:59:59`); // Otimização simples
+
+    const hasBlock = blocks?.some(blk => {
+        const bStart = new Date(blk.start_at);
+        const bEnd = new Date(blk.end_at);
+        // Interseção: (StartA < EndB) e (EndA > StartB)
+        return (proposedStart < bEnd && proposedEnd > bStart);
+    });
+
+    if (hasBlock) {
+        return { available: false, reason: 'Horário bloqueado pelo profissional.' };
+    }
+
+    // 3. Verificar Conflito com Outros Agendamentos
+    let query = supabase
+        .from('appointments')
+        .select('id, time, duration, status')
+        .eq('professionalId', proId)
+        .eq('date', date)
+        .not('status', 'in', '("Cancelaram","Desmarcou")'); // Ignora cancelados
+
+    if (excludeAptId) {
+        query = query.neq('id', excludeAptId);
+    }
+
+    const { data: appointments } = await query;
+
+    const hasConflict = appointments?.some(apt => {
+        const aptStart = new Date(`${date}T${apt.time}`);
+        const aptEnd = aptStart.getTime() + (apt.duration || 30) * 60000;
+        const proposedEndTime = proposedEnd.getTime();
+        const proposedStartTime = proposedStart.getTime();
+        
+        return (proposedStartTime < aptEnd && proposedEndTime > aptStart.getTime());
+    });
+
+    if (hasConflict) {
+        return { available: false, reason: 'Horário já ocupado por outro cliente.' };
+    }
+
+    return { available: true };
+};
+
+/**
+ * Transfere um agendamento para outro profissional
+ */
+export const transferAppointment = async (apt: Appointment, newProId: string, newProName: string) => {
+    // Verifica disponibilidade do novo profissional no mesmo horário
+    const check = await checkAvailability(newProId, apt.date, apt.time, apt.duration);
+    
+    if (!check.available) {
+        throw new Error(`O profissional ${newProName} não tem disponibilidade neste horário: ${check.reason}`);
+    }
+
+    // Atualiza
+    await updateAppointment(apt.id, {
+        professionalId: newProId,
+        professionalName: newProName
+    });
+
+    // Log e Notificação
+    // FIX: Removed 'read' and 'created_at' properties as they are omitted in addNotification type
+    await addNotification({
+        type: 'SISTEMA',
+        title: 'Agendamento Transferido',
+        message: `Cliente ${apt.clientName} transferido de ${apt.professionalName} para ${newProName}.`,
+        recipient_pro_id: newProId // Avisa o novo dono
+    });
+    
+    // Log para o antigo também (opcional, mas boa prática)
+    // FIX: Removed 'read' and 'created_at' properties as they are omitted in addNotification type
+    await addNotification({
+        type: 'SISTEMA',
+        title: 'Agendamento Transferido',
+        message: `Seu agendamento com ${apt.clientName} foi transferido para ${newProName}.`,
+        recipient_pro_id: apt.professionalId 
+    });
 };
 
 /**
  * Checks if a specific time slot is blocked for a professional.
  */
 export const isSlotBlocked = async (proId: string, date: string, time: string, duration: number): Promise<boolean> => {
-  const blocks = await getBlocks();
-  const startDateTime = new Date(`${date}T${time}`);
-  const endDateTime = new Date(startDateTime.getTime() + duration * 60000);
-
-  return blocks.some(block => {
-    if (block.professional_id !== proId) return false;
-    const bStart = new Date(block.start_at);
-    const bEnd = new Date(block.end_at);
-    return (startDateTime < bEnd && endDateTime > bStart);
-  });
+  const result = await checkAvailability(proId, date, time, duration);
+  return !result.available;
 };
 
 /**
@@ -138,41 +268,89 @@ export const getAppointmentsByPhone = async (phone: string): Promise<Appointment
   return data || [];
 };
 
-export const getAvailableSlotsForPro = async (proId: string, date: string, serviceDuration: number): Promise<string[]> => {
+export const getAvailableSlotsForPro = async (proId: string, dateStr: string, serviceDuration: number): Promise<string[]> => {
     const settings = await getSettings();
     const interval = settings.slotInterval || 15;
     
-    // Obter agendamentos e bloqueios do dia para este pro no banco
-    // CORREÇÃO: Usando 'professionalId' (camelCase)
+    // 1. Obter dia da semana da data solicitada
+    const dateObj = new Date(dateStr + 'T12:00:00'); // Meio-dia para evitar problemas de timezone
+    const daysMap = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+    const currentDayName = daysMap[dateObj.getDay()];
+
+    // 2. Buscar Horários de Atendimento configurados para este Pro neste dia
+    const { data: attendanceHours } = await db.professionalHours()
+      .select('start_time, end_time')
+      .eq('professional_id', proId)
+      .eq('day_of_week', currentDayName);
+
+    // Se não tiver horário de atendimento configurado para este dia, retorna nada (BLOQUEADO)
+    if (!attendanceHours || attendanceHours.length === 0) {
+      return [];
+    }
+
+    // 3. Obter agendamentos e bloqueios do dia
     const { data: appointments } = await supabase
       .from('appointments')
       .select('time, duration')
       .eq('professionalId', proId)
-      .eq('date', date)
+      .eq('date', dateStr)
       .not('status', 'in', '("Desmarcou", "Cancelaram")');
 
-    const slots: string[] = [];
-    const startHour = 8;
-    const endHour = 20;
+    const { data: blocks } = await supabase
+      .from('agenda_blocks')
+      .select('start_at, end_at')
+      .eq('professional_id', proId)
+      .filter('start_at', 'gte', `${dateStr}T00:00:00`)
+      .filter('start_at', 'lte', `${dateStr}T23:59:59`);
 
-    for (let h = startHour; h < endHour; h++) {
-        for (let m = 0; m < 60; m += interval) {
-            const time = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+    const availableSlots: string[] = [];
+
+    // 4. Percorrer cada faixa de horário de atendimento permitida
+    attendanceHours.forEach(range => {
+        const [startH, startM] = range.start_time.split(':').map(Number);
+        const [endH, endM] = range.end_time.split(':').map(Number);
+        
+        const rangeStartMinutes = startH * 60 + startM;
+        const rangeEndMinutes = endH * 60 + endM;
+
+        for (let currentMinutes = rangeStartMinutes; currentMinutes < rangeEndMinutes; currentMinutes += interval) {
+            const h = Math.floor(currentMinutes / 60);
+            const m = currentMinutes % 60;
+            const timeStr = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
             
-            // Lógica de conflito (simples)
-            const hasConflict = appointments?.some(apt => {
+            const slotStart = currentMinutes;
+            const slotEnd = currentMinutes + serviceDuration;
+
+            // Verificação de Passado na listagem de slots também
+            const slotDateTime = new Date(`${dateStr}T${timeStr}`);
+            if (slotDateTime < new Date()) continue;
+
+            // Fora da faixa de atendimento deste range?
+            if (slotEnd > rangeEndMinutes) continue;
+
+            // Verificar conflito com Agendamentos
+            const hasAptConflict = appointments?.some(apt => {
                 const [ah, am] = apt.time.split(':').map(Number);
                 const aptStart = ah * 60 + am;
                 const aptEnd = aptStart + apt.duration;
-                const slotStart = h * 60 + m;
-                const slotEnd = slotStart + serviceDuration;
                 return (slotStart < aptEnd && slotEnd > aptStart);
             });
 
-            if (!hasConflict) {
-                slots.push(time);
+            // Verificar conflito com Bloqueios Manuais
+            const hasBlockConflict = blocks?.some(blk => {
+                const bStart = new Date(blk.start_at);
+                const bEnd = new Date(blk.end_at);
+                const bStartMin = bStart.getHours() * 60 + bStart.getMinutes();
+                const bEndMin = bEnd.getHours() * 60 + bEnd.getMinutes();
+                return (slotStart < bEndMin && slotEnd > bStartMin);
+            });
+
+            if (!hasAptConflict && !hasBlockConflict) {
+                availableSlots.push(timeStr);
             }
         }
-    }
-    return slots;
+    });
+
+    // Remove duplicatas e ordena
+    return Array.from(new Set(availableSlots)).sort();
 };

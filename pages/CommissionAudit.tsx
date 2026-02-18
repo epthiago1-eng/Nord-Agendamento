@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   ChevronLeft, Calendar, Filter, DollarSign, CheckCircle2, 
@@ -74,7 +73,7 @@ const CommissionAudit: React.FC = () => {
         // Filtra localmente
         const filtered = allTrans.filter(t => 
             (t.pro === decodedName || (currentPro && t.professional_id === currentPro.id)) && 
-            t.type === 'income' && 
+            t.operation === 'VENDA' && 
             t.date >= dateRange.start && 
             t.date <= dateRange.end
         );

@@ -57,18 +57,23 @@ const ProfessionalAccessForm: React.FC = () => {
       if (authError) throw authError;
 
       if (authData.user) {
-        // 2. Criar o perfil na tabela 'profiles' vinculado ao ID do profissional
-        const { error: profileError } = await db.profiles().insert({
+        // 2. Criar ou Atualizar o perfil na tabela 'profiles' vinculado ao ID do profissional
+        // Usamos UPSERT para evitar erro se houver um Trigger no banco que cria o perfil automaticamente
+        // IMPORTANTE: Não enviamos o campo 'email' aqui pois ele não existe na tabela profiles (fica no auth.users)
+        const { error: profileError } = await db.profiles().upsert({
           id: authData.user.id,
           full_name: proData?.name,
-          email: formData.email,
           role: 'COLLABORATOR',
           professional_id: id 
         });
 
         if (profileError) {
-          console.error(profileError);
-          throw new Error('Usuário de autenticação criado, mas falha ao vincular perfil de colaborador.');
+          console.error('Erro detalhado:', profileError);
+          // Se for erro de RLS, tenta logar
+          if (profileError.code === '42501') {
+             throw new Error('Permissão negada. Verifique as políticas RLS da tabela profiles.');
+          }
+          throw new Error(`Falha ao vincular perfil: ${profileError.message}`);
         }
 
         // 3. Atualizar o email na tabela professionals
@@ -81,7 +86,19 @@ const ProfessionalAccessForm: React.FC = () => {
       }
 
     } catch (err: any) {
-      setError(err.message || 'Erro ao criar acesso.');
+      console.error(err);
+      let msg = err.message || 'Erro ao criar acesso.';
+      
+      // Traduções de erros comuns do Supabase
+      if (msg.includes('rate limit exceeded')) {
+        msg = 'Muitas tentativas recentes. O servidor bloqueou temporariamente o envio de e-mails. Aguarde alguns minutos e tente novamente.';
+      } else if (msg.includes('User already registered')) {
+        msg = 'Este e-mail já possui um cadastro no sistema.';
+      } else if (msg.includes('Password should be')) {
+        msg = 'A senha é muito fraca. Escolha uma senha mais forte.';
+      }
+
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -110,9 +127,9 @@ const ProfessionalAccessForm: React.FC = () => {
         </div>
 
         {error && (
-            <div className="bg-red-50 p-4 rounded-xl border border-red-100 flex items-center gap-3 text-red-600 text-sm font-bold">
-                <AlertCircle size={20} />
-                {error}
+            <div className="bg-red-50 p-4 rounded-xl border border-red-100 flex items-start gap-3 text-red-600 text-sm font-bold animate-in slide-in-from-top-2">
+                <AlertCircle size={20} className="shrink-0 mt-0.5" />
+                <span className="leading-snug">{error}</span>
             </div>
         )}
 

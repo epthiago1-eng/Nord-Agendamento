@@ -1,100 +1,96 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   ChevronLeft, ChevronRight, Plus, Receipt, AlertCircle, 
-  CheckCircle2, Clock, Loader2, Check, Trash2, RefreshCw
+  CheckCircle2, Clock, Loader2, Trash2, Calendar, Filter
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabase';
 import { addTransaction } from '../data/transactions';
 
-const BillCard: React.FC<{ 
-  bill: any; 
-  isOverdue?: boolean; 
-  onClick: () => void; 
-  onPay: (e: React.MouseEvent) => void;
-  onDelete: (e: React.MouseEvent) => void;
-  isDeleting: boolean;
-}> = ({ bill, isOverdue = false, onClick, onPay, onDelete, isDeleting }) => (
-  <div 
-    onClick={onClick}
-    className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm transition-all flex items-center justify-between group relative overflow-hidden hover:shadow-md cursor-pointer active:scale-[0.98]"
-  >
-    <div className="flex items-center gap-4 z-10">
-      <div className={`p-3 rounded-2xl ${
-        bill.status === 'PAID' ? 'bg-green-50 text-green-600' : 
-        isOverdue ? 'bg-red-50 text-red-600 animate-pulse' : 'bg-orange-50 text-orange-600'
-      }`}>
-        <Receipt size={22} />
+// --- COMPONENTE DO CARD DE CONTA ---
+const BillItem = ({ bill, onPay, onDelete, onClick }: any) => {
+  // Formatação segura de data
+  const formatDate = (dateString: string) => {
+    if (!dateString) return '--/--';
+    const [year, month, day] = dateString.split('-');
+    return `${day}/${month}/${year}`; // Formato PT-BR forçado manualmente para evitar erro de Timezone
+  };
+
+  const isOverdue = bill.status === 'PENDING' && new Date(bill.due_date) < new Date(new Date().setHours(0,0,0,0));
+
+  return (
+    <div 
+      onClick={() => onClick(bill.id)}
+      className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between active:scale-[0.98] transition-transform cursor-pointer relative overflow-hidden"
+    >
+      <div className="flex items-center gap-4 z-10">
+        <div className={`p-3 rounded-2xl ${
+          bill.status === 'PAID' ? 'bg-green-50 text-green-600' : 
+          isOverdue ? 'bg-red-50 text-red-500 animate-pulse' : 'bg-orange-50 text-orange-500'
+        }`}>
+          <Receipt size={22} />
+        </div>
+        <div>
+          <h4 className="text-sm font-black text-gray-900 tracking-tight">{bill.description}</h4>
+          <div className="flex items-center gap-2 mt-1">
+            <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">{bill.category}</span>
+            <span className="text-gray-300">|</span>
+            <span className={`text-[10px] font-bold ${isOverdue ? 'text-red-500' : 'text-gray-500'}`}>
+              Venc: {formatDate(bill.due_date)}
+            </span>
+          </div>
+        </div>
       </div>
-      <div>
-        <h4 className="text-sm font-black text-gray-900 tracking-tight flex items-center gap-2">
-          {bill.description}
-          {bill.recurring && <RefreshCw size={12} className="text-blue-400" />}
-        </h4>
-        <div className="flex items-center gap-2 mt-1">
-          <span className="text-[9px] font-black uppercase tracking-widest text-gray-400">{bill.category || 'Geral'}</span>
-          <span className="text-gray-200 text-[10px]">|</span>
-          <span className={`text-[10px] font-bold ${isOverdue ? 'text-red-500' : 'text-gray-500'}`}>
-            Venc: {bill.due_date ? new Date(bill.due_date + 'T12:00:00').toLocaleDateString('pt-BR') : '--/--'}
-          </span>
+
+      <div className="text-right z-10 flex flex-col items-end gap-2">
+        <p className={`text-base font-black ${bill.status === 'PAID' ? 'text-gray-900' : 'text-gray-700'}`}>
+          R$ {Number(bill.value).toFixed(2).replace('.', ',')}
+        </p>
+        
+        <div className="flex items-center gap-2">
+          {bill.status === 'PENDING' && (
+            <button 
+              onClick={(e) => { e.stopPropagation(); onPay(bill); }}
+              className="bg-green-50 text-green-600 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest hover:bg-green-100 transition-colors flex items-center gap-1"
+            >
+              <CheckCircle2 size={12} /> Pagar
+            </button>
+          )}
+          
+          {bill.status === 'PAID' && (
+            <span className="bg-gray-50 text-gray-400 px-2 py-1 rounded-lg text-[9px] font-black uppercase">
+              Pago
+            </span>
+          )}
         </div>
       </div>
     </div>
-    <div className="text-right z-20 flex flex-col items-end gap-2 relative">
-      <p className={`text-base font-black ${bill.status === 'PAID' ? 'text-gray-900' : isOverdue ? 'text-red-600' : 'text-gray-700'}`}>
-        R$ {Number(bill.value || 0).toFixed(2).replace('.', ',')}
-      </p>
-      
-      <div className="flex items-center gap-1">
-        <button 
-          onClick={(e) => {
-            e.stopPropagation(); 
-            onDelete(e);
-          }}
-          disabled={isDeleting}
-          className={`p-2.5 rounded-full transition-colors ${
-            isDeleting 
-              ? 'text-gray-300 bg-gray-50 cursor-wait' 
-              : 'text-gray-300 hover:text-red-500 hover:bg-red-50'
-          }`}
-          title="Excluir Conta"
-        >
-          {isDeleting ? <Loader2 size={18} className="animate-spin" /> : <Trash2 size={18} />}
-        </button>
+  );
+};
 
-        {bill.status !== 'PAID' ? (
-          <button 
-            onClick={(e) => {
-              e.stopPropagation();
-              onPay(e);
-            }}
-            className="flex items-center gap-1 bg-green-50 text-green-600 px-3 py-2 rounded-full hover:bg-green-100 transition-colors shadow-sm ml-1"
-          >
-            <Check size={14} strokeWidth={3} />
-            <span className="text-[9px] font-black uppercase tracking-widest">Pagar</span>
-          </button>
-        ) : (
-          <span className="text-[8px] font-black text-green-600 uppercase tracking-tighter bg-green-50 px-2 py-0.5 rounded-md ml-1">Liquidado</span>
-        )}
-      </div>
-    </div>
-  </div>
-);
-
+// --- TELA PRINCIPAL ---
 const BillManagement: React.FC = () => {
   const navigate = useNavigate();
-  const [selectedMonth, setSelectedMonth] = useState(new Date());
+  const [currentDate, setCurrentDate] = useState(new Date());
   const [bills, setBills] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [payingId, setPayingId] = useState<string | null>(null);
 
+  // Navegação de Mês
+  const handlePrevMonth = () => {
+    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
+  };
+  const handleNextMonth = () => {
+    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1));
+  };
+
+  // Carregar Dados
   const fetchBills = async () => {
     setLoading(true);
     try {
-      const year = selectedMonth.getFullYear();
-      const month = selectedMonth.getMonth() + 1;
+      const year = currentDate.getFullYear();
+      const month = currentDate.getMonth() + 1;
       
+      // Define intervalo do mês
       const startOfMonth = `${year}-${month.toString().padStart(2, '0')}-01`;
       const lastDay = new Date(year, month, 0).getDate();
       const endOfMonth = `${year}-${month.toString().padStart(2, '0')}-${lastDay}`;
@@ -108,8 +104,8 @@ const BillManagement: React.FC = () => {
 
       if (error) throw error;
       setBills(data || []);
-    } catch (err: any) {
-      console.error("Erro ao buscar contas:", err);
+    } catch (err) {
+      console.error(err);
     } finally {
       setLoading(false);
     }
@@ -117,135 +113,85 @@ const BillManagement: React.FC = () => {
 
   useEffect(() => {
     fetchBills();
-  }, [selectedMonth]);
+  }, [currentDate]);
 
-  const createNextMonthBill = async (currentBill: any) => {
+  // Ações Rápidas
+  const deleteBill = async (id: string) => {
+    if (!confirm('Tem certeza que deseja excluir esta conta?')) return;
     try {
-      const nextDueDate = new Date(currentBill.due_date);
-      nextDueDate.setMonth(nextDueDate.getMonth() + 1);
-      const nextDueDateStr = nextDueDate.toISOString().split('T')[0];
-
-      const { error } = await supabase.from('bills').insert({
-        description: currentBill.description,
-        value: currentBill.value,
-        due_date: nextDueDateStr,
-        recurring: true,
-        category: currentBill.category,
-        reminder_days: currentBill.reminder_days,
-        observation: currentBill.observation,
-        status: 'PENDING',
-        parent_bill_id: currentBill.id
-      });
-
+      const { error } = await supabase.from('bills').delete().eq('id', id);
       if (error) throw error;
+      setBills(prev => prev.filter(b => b.id !== id));
     } catch (err) {
-      console.error('Erro ao criar conta recorrente:', err);
+      alert('Erro ao excluir.');
     }
   };
 
-  const handleQuickPay = async (e: React.MouseEvent, bill: any) => {
-    e.stopPropagation();
+  const payBill = async (bill: any) => {
+    if (!confirm(`Confirmar pagamento de R$ ${bill.value}?`)) return;
     
-    const valueFloat = Number(bill.value) || 0;
-
-    if (valueFloat <= 0) {
-      alert('Para realizar o pagamento, o valor da conta deve ser maior que zero.\n\nPor favor, clique no card para editar e adicionar um valor.');
-      return;
-    }
-    
-    if(!window.confirm(`Confirmar pagamento de R$ ${valueFloat.toFixed(2).replace('.', ',')}?\nIsso registrará uma saída no financeiro.`)) return;
-
-    setPayingId(bill.id);
-
     try {
-      const { error: updateError } = await supabase
+      // 1. Atualiza Conta
+      const { error } = await supabase
         .from('bills')
         .update({ status: 'PAID' })
         .eq('id', bill.id);
+      
+      if (error) throw error;
 
-      if (updateError) throw updateError;
-
+      // 2. Lança no Financeiro
       await addTransaction({
-        type: 'expense',
-        category: bill.category || 'Fixas',
-        item: `Pgto: ${bill.description}`,
-        val: -Math.abs(valueFloat),
-        method: 'Dinheiro',
+        type: 'DESPESA',
+        category: bill.category,
+        item: `Pgto Conta: ${bill.description}`,
+        val: -Math.abs(Number(bill.value)),
+        payment_method: 'Dinheiro',
         pro: 'Sistema',
         date: new Date().toISOString().split('T')[0],
         status: 'Pago'
       });
 
-      // Se for recorrente, criar conta do próximo mês
+      // 3. Verifica Recorrência (Cria o próximo mês)
       if (bill.recurring) {
-        await createNextMonthBill(bill);
+        const nextDueDate = new Date(bill.due_date);
+        nextDueDate.setMonth(nextDueDate.getMonth() + 1);
+        
+        const { id: _, created_at: __, ...newBillData } = bill;
+        await supabase.from('bills').insert({
+          ...newBillData,
+          due_date: nextDueDate.toISOString().split('T')[0],
+          status: 'PENDING'
+        });
       }
 
-      // Atualizar a lista local
-      setBills(prev => prev.map(b => 
-        b.id === bill.id ? { ...b, status: 'PAID' } : b
-      ));
-
-      alert('Pagamento realizado com sucesso!');
-    } catch (err: any) {
-      console.error('Falha ao processar pagamento:', err);
-      alert('ERRO NO BANCO: ' + err.message);
-      fetchBills(); // Reverter em caso de erro
-    } finally {
-      setPayingId(null);
-    }
-  };
-
-  const handleQuickDelete = async (e: React.MouseEvent, id: string) => {
-    e.stopPropagation();
-    
-    if (!id) return;
-
-    if (!window.confirm('Deseja EXCLUIR permanentemente este registro?')) return;
-
-    setDeletingId(id);
-
-    try {
-      const { error } = await supabase
-        .from('bills')
-        .delete()
-        .eq('id', id);
-
-      if (error) throw error;
+      // Atualiza lista local
+      setBills(prev => prev.map(b => b.id === bill.id ? { ...b, status: 'PAID' } : b));
+      alert('Conta paga com sucesso!');
       
-      setBills(prev => prev.filter(b => b.id !== id));
     } catch (err: any) {
-      console.error('Erro ao excluir:', err);
-      alert('ERRO AO APAGAR: ' + err.message);
-    } finally {
-      setDeletingId(null);
+      alert('Erro ao processar pagamento: ' + err.message);
     }
   };
 
-  const billsByStatus = useMemo(() => {
-    const todayStr = new Date().toISOString().split('T')[0];
-    const overdue: any[] = [];
-    const pending: any[] = [];
-    const paid: any[] = [];
+  // Separação dos Dados para Visualização
+  const { overdue, pending, paid } = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0];
+    const overdueList: any[] = [];
+    const pendingList: any[] = [];
+    const paidList: any[] = [];
 
-    bills.forEach(bill => {
-      if (bill.status === 'PAID') {
-        paid.push(bill);
-      } else if (bill.due_date && bill.due_date < todayStr) {
-        overdue.push(bill);
+    bills.forEach(b => {
+      if (b.status === 'PAID') {
+        paidList.push(b);
+      } else if (b.due_date < today) {
+        overdueList.push(b);
       } else {
-        pending.push(bill);
+        pendingList.push(b);
       }
     });
 
-    return { overdue, pending, paid };
+    return { overdue: overdueList, pending: pendingList, paid: paidList };
   }, [bills]);
-
-  const changeMonth = (offset: number) => {
-    const newMonth = new Date(selectedMonth);
-    newMonth.setMonth(selectedMonth.getMonth() + offset);
-    setSelectedMonth(newMonth);
-  };
 
   return (
     <div className="flex flex-col h-full bg-[#fcfaff]">
@@ -260,112 +206,86 @@ const BillManagement: React.FC = () => {
       </header>
 
       <div className="p-4 space-y-6 overflow-y-auto pb-24">
-        <div className="flex items-center justify-between bg-white p-3 rounded-2xl border border-gray-100 shadow-sm">
-          <button onClick={() => changeMonth(-1)} className="p-2 hover:bg-gray-50 rounded-xl transition-colors">
-            <ChevronLeft size={20} className="text-blue-900" />
+        {/* Navegador de Meses */}
+        <div className="bg-white p-2 rounded-2xl border border-gray-100 shadow-sm flex items-center justify-between">
+          <button onClick={handlePrevMonth} className="p-3 hover:bg-gray-50 rounded-xl transition-colors text-blue-900">
+            <ChevronLeft size={20} />
           </button>
-          <div className="text-center">
-            <h3 className="text-xs font-black uppercase tracking-widest text-blue-900">
-              {selectedMonth.toLocaleString('pt-BR', { month: 'long', year: 'numeric' })}
-            </h3>
-          </div>
-          <button onClick={() => changeMonth(1)} className="p-2 hover:bg-gray-50 rounded-xl transition-colors">
-            <ChevronRight size={20} className="text-blue-900" />
+          <h3 className="text-xs font-black uppercase tracking-widest text-blue-900">
+            {currentDate.toLocaleString('pt-BR', { month: 'long', year: 'numeric' })}
+          </h3>
+          <button onClick={handleNextMonth} className="p-3 hover:bg-gray-50 rounded-xl transition-colors text-blue-900">
+            <ChevronRight size={20} />
           </button>
         </div>
 
+        {/* Cards de Resumo */}
         <div className="grid grid-cols-3 gap-3">
           <div className="bg-red-50 p-4 rounded-3xl border border-red-100 text-center">
-            <span className="text-[8px] font-black text-red-600 uppercase block mb-1 tracking-tighter">Vencidas</span>
-            <span className="text-sm font-black text-red-700">{billsByStatus.overdue.length}</span>
+            <span className="text-[8px] font-black text-red-600 uppercase block mb-1">Vencidas</span>
+            <span className="text-xl font-black text-red-700">{overdue.length}</span>
           </div>
           <div className="bg-orange-50 p-4 rounded-3xl border border-orange-100 text-center">
-            <span className="text-[8px] font-black text-orange-600 uppercase block mb-1 tracking-tighter">Em aberto</span>
-            <span className="text-sm font-black text-orange-700">{billsByStatus.pending.length}</span>
+            <span className="text-[8px] font-black text-orange-600 uppercase block mb-1">Em Aberto</span>
+            <span className="text-xl font-black text-orange-700">{pending.length}</span>
           </div>
           <div className="bg-green-50 p-4 rounded-3xl border border-green-100 text-center">
-            <span className="text-[8px] font-black text-green-600 uppercase block mb-1 tracking-tighter">Liquidadas</span>
-            <span className="text-sm font-black text-green-700">{billsByStatus.paid.length}</span>
+            <span className="text-[8px] font-black text-green-600 uppercase block mb-1">Liquidadas</span>
+            <span className="text-xl font-black text-green-700">{paid.length}</span>
           </div>
         </div>
 
         {loading ? (
-          <div className="flex justify-center py-10">
-            <Loader2 className="animate-spin text-blue-900" size={32} />
-          </div>
+          <div className="flex justify-center py-12"><Loader2 className="animate-spin text-blue-900" size={32} /></div>
         ) : (
           <>
-            {billsByStatus.overdue.length > 0 && (
-              <div className="space-y-4">
+            {/* Lista de Vencidas */}
+            {overdue.length > 0 && (
+              <div className="space-y-3">
                 <div className="flex items-center gap-2 px-2 text-red-600">
-                  <AlertCircle size={18} />
-                  <h3 className="text-gray-900 font-black text-[10px] uppercase tracking-[0.2em]">Contas em Atraso</h3>
+                  <AlertCircle size={16} />
+                  <h3 className="text-[10px] font-black uppercase tracking-widest">Contas Vencidas</h3>
                 </div>
-                <div className="space-y-3">
-                  {billsByStatus.overdue.map(bill => (
-                    <BillCard 
-                      key={bill.id} 
-                      bill={bill} 
-                      isOverdue
-                      isDeleting={deletingId === bill.id}
-                      onClick={() => navigate(`/bills/edit/${bill.id}`)}
-                      onPay={(e) => handleQuickPay(e, bill)}
-                      onDelete={(e) => handleQuickDelete(e, bill.id)}
-                    />
-                  ))}
-                </div>
+                {overdue.map(b => (
+                  <BillItem key={b.id} bill={b} onPay={payBill} onDelete={deleteBill} onClick={(id: string) => navigate(`/bills/edit/${id}`)} />
+                ))}
               </div>
             )}
 
-            <div className="space-y-4">
+            {/* Lista de Pendentes */}
+            <div className="space-y-3">
               <div className="flex items-center gap-2 px-2 text-orange-500">
-                <Clock size={18} />
-                <h3 className="text-gray-900 font-black text-[10px] uppercase tracking-[0.2em]">Pendentes no Mês</h3>
+                <Clock size={16} />
+                <h3 className="text-[10px] font-black uppercase tracking-widest">Pendentes no Mês</h3>
               </div>
-              {billsByStatus.pending.length > 0 ? (
-                <div className="space-y-3">
-                  {billsByStatus.pending.map(bill => (
-                    <BillCard 
-                      key={bill.id} 
-                      bill={bill}
-                      isDeleting={deletingId === bill.id}
-                      onClick={() => navigate(`/bills/edit/${bill.id}`)} 
-                      onPay={(e) => handleQuickPay(e, bill)}
-                      onDelete={(e) => handleQuickDelete(e, bill.id)}
-                    />
-                  ))}
+              {pending.length === 0 ? (
+                <div className="text-center py-8 border-2 border-dashed border-gray-100 rounded-3xl text-gray-400 text-xs font-bold uppercase">
+                  Nenhuma conta pendente
                 </div>
               ) : (
-                <p className="text-center py-8 text-[10px] text-gray-400 font-bold uppercase border-2 border-dashed border-gray-100 rounded-[2.5rem]">
-                  Nenhuma pendência encontrada
-                </p>
+                pending.map(b => (
+                  <BillItem key={b.id} bill={b} onPay={payBill} onDelete={deleteBill} onClick={(id: string) => navigate(`/bills/edit/${id}`)} />
+                ))
               )}
             </div>
 
-            {billsByStatus.paid.length > 0 && (
-              <div className="space-y-4">
+            {/* Lista de Pagas */}
+            {paid.length > 0 && (
+              <div className="space-y-3 opacity-80">
                 <div className="flex items-center gap-2 px-2 text-green-600">
-                  <CheckCircle2 size={18} />
-                  <h3 className="text-gray-900 font-black text-[10px] uppercase tracking-[0.2em]">Pagamentos Efetuados</h3>
+                  <CheckCircle2 size={16} />
+                  <h3 className="text-[10px] font-black uppercase tracking-widest">Contas Pagas</h3>
                 </div>
-                <div className="space-y-3 opacity-80">
-                  {billsByStatus.paid.map(bill => (
-                    <BillCard 
-                      key={bill.id} 
-                      bill={bill}
-                      isDeleting={deletingId === bill.id}
-                      onClick={() => navigate(`/bills/edit/${bill.id}`)}
-                      onPay={() => {}}
-                      onDelete={(e) => handleQuickDelete(e, bill.id)}
-                    />
-                  ))}
-                </div>
+                {paid.map(b => (
+                  <BillItem key={b.id} bill={b} onPay={payBill} onDelete={deleteBill} onClick={(id: string) => navigate(`/bills/edit/${id}`)} />
+                ))}
               </div>
             )}
           </>
         )}
       </div>
 
+      {/* FAB - Add Button */}
       <button 
         onClick={() => navigate('/bills/new')}
         className="fixed bottom-24 right-6 bg-[#1e3a8a] text-white p-4.5 rounded-[2rem] shadow-2xl active:scale-90 transition-transform z-50 ring-4 ring-blue-50"

@@ -48,11 +48,11 @@ const Register: React.FC = () => {
 
       if (authData.user) {
         // 2. Cria o perfil na tabela 'profiles' para uso da aplicação
+        // REMOVIDO: email, pois a coluna não existe na tabela profiles
         const { error: profileError } = await db.profiles().insert({
           id: authData.user.id,
           full_name: name,
-          role: 'ADMIN',
-          email: email
+          role: 'ADMIN'
         });
 
         if (profileError) {

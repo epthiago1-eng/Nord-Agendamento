@@ -22,5 +22,7 @@ export const db = {
   bills: () => supabase.from('bills'),
   paymentMethods: () => supabase.from('payment_methods'),
   costCenters: () => supabase.from('cost_centers'),
-  professionalServices: () => supabase.from('professional_services') // Nova tabela
+  professionalServices: () => supabase.from('professional_services'),
+  professionalHours: () => supabase.from('professional_hours'),
+  notifications: () => supabase.from('notifications') // Nova tabela
 };

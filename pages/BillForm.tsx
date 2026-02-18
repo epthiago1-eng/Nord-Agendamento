@@ -1,212 +1,266 @@
+
 import React, { useState, useEffect } from 'react';
 import { 
   ChevronLeft, Receipt, DollarSign, RefreshCw, 
-  CheckCircle2, Trash2, Clock, Save, Loader2, RotateCcw
+  CheckCircle2, Trash2, Save, Loader2, RotateCcw, Clock, AlertTriangle
 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../supabase';
-import { addTransaction } from '../data/transactions';
+import { addTransaction, deleteTransaction } from '../data/transactions';
 
 const BillForm: React.FC = () => {
   const navigate = useNavigate();
   const { id } = useParams();
 
+  const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(!!id);
+  
+  // Estado do Formulário
   const [formData, setFormData] = useState({
     description: '',
     value: '',
     dueDate: new Date().toISOString().split('T')[0],
     recurring: false,
     category: 'Fixo',
-    reminderDays: '3',
-    observation: ''
+    observation: '',
+    status: 'PENDING' // 'PENDING' ou 'PAID'
   });
 
-  const [isPaid, setIsPaid] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [initialLoading, setInitialLoading] = useState(!!id);
+  // Estado para Modal de Confirmação customizado
+  const [confirmConfig, setConfirmConfig] = useState<{
+    show: boolean,
+    title: string,
+    message: string,
+    action: () => void,
+    type: 'danger' | 'info' | 'success'
+  }>({ show: false, title: '', message: '', action: () => {}, type: 'info' });
 
+  // Carregar dados se for edição
   useEffect(() => {
     if (id) {
-      fetchBillData();
+      const fetchBill = async () => {
+        try {
+          const { data, error } = await supabase
+            .from('bills')
+            .select('*')
+            .eq('id', id)
+            .single();
+          
+          if (error) throw error;
+          if (data) {
+            setFormData({
+              description: data.description || '',
+              value: data.value ? String(data.value).replace('.', ',') : '',
+              dueDate: data.due_date,
+              recurring: data.recurring || false,
+              category: data.category || 'Fixo',
+              observation: data.observation || '',
+              status: data.status || 'PENDING'
+            });
+          }
+        } catch (err) {
+          console.error(err);
+          alert('Erro ao carregar dados da conta.');
+          navigate('/bills');
+        } finally {
+          setInitialLoading(false);
+        }
+      };
+      fetchBill();
     }
-  }, [id]);
+  }, [id, navigate]);
 
-  const fetchBillData = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('bills')
-        .select('*')
-        .eq('id', id)
-        .single();
-
-      if (error) throw error;
-
-      if (data) {
-        setFormData({
-          description: data.description || '',
-          value: data.value ? Number(data.value).toFixed(2).replace('.', ',') : '',
-          dueDate: data.due_date || new Date().toISOString().split('T')[0],
-          recurring: !!data.recurring,
-          category: data.category || 'Fixo',
-          reminderDays: String(data.reminder_days || '3'),
-          observation: data.observation || ''
-        });
-        setIsPaid(data.status === 'PAID');
-      }
-    } catch (err: any) {
-      console.error('Erro ao carregar conta:', err);
-      alert('Não foi possível carregar os dados desta conta.');
-      navigate('/bills');
-    } finally {
-      setInitialLoading(false);
-    }
+  // Helper para abrir o modal
+  const triggerConfirm = (title: string, message: string, action: () => void, type: 'danger' | 'info' | 'success' = 'info') => {
+    setConfirmConfig({ show: true, title, message, action, type });
   };
 
-  const createNextMonthBill = async (currentBill: any) => {
-    try {
-      const nextDueDate = new Date(currentBill.due_date);
-      nextDueDate.setMonth(nextDueDate.getMonth() + 1);
-      const nextDueDateStr = nextDueDate.toISOString().split('T')[0];
+  // FUNÇÕES DE AÇÃO
 
-      const { error } = await supabase.from('bills').insert({
-        description: currentBill.description,
-        value: currentBill.value,
-        due_date: nextDueDateStr,
-        recurring: true,
-        category: currentBill.category,
-        reminder_days: currentBill.reminder_days,
-        observation: currentBill.observation,
-        status: 'PENDING',
-        parent_bill_id: currentBill.id
-      });
-
-      if (error) throw error;
-    } catch (err) {
-      console.error('Erro ao criar conta recorrente:', err);
-    }
-  };
-
-  const handleSave = async (markAsPaidNow = false) => {
-    if (!formData.description) {
-      alert('A descrição da conta é obrigatória.');
-      return;
-    }
-
-    const cleanValue = formData.value.replace(/\./g, '').replace(',', '.');
-    const valueFloat = parseFloat(cleanValue) || 0;
-
-    if (markAsPaidNow) {
-      if (valueFloat <= 0) {
-        alert('Para marcar como pago, informe um valor válido maior que zero.');
-        return;
-      }
-    }
-
-    if (!formData.value) {
-      alert('Informe o valor previsto da conta.');
+  // 1. Salvar (Criar ou Editar sem mudar status financeiro extra)
+  const handleSave = async () => {
+    if (!formData.description || !formData.value) {
+      alert('Preencha descrição e valor.');
       return;
     }
 
     setLoading(true);
     try {
-      const finalStatus = markAsPaidNow ? 'PAID' : (isPaid ? 'PAID' : 'PENDING');
-
       const payload = {
         description: formData.description,
-        value: valueFloat,
+        value: parseFloat(formData.value.replace(',', '.')) || 0,
         due_date: formData.dueDate,
         recurring: formData.recurring,
         category: formData.category,
-        reminder_days: parseInt(formData.reminderDays) || 3,
         observation: formData.observation,
-        status: finalStatus
+        status: formData.status // Mantém o status atual
       };
 
       if (id) {
-        const { error } = await supabase.from('bills').update(payload).eq('id', id);
-        if (error) throw error;
-
-        // Se está pagando AGORA e é recorrente, cria a conta do próximo mês
-        if (markAsPaidNow && formData.recurring) {
-          await createNextMonthBill({ ...payload, id, due_date: formData.dueDate });
-        }
+        await supabase.from('bills').update(payload).eq('id', id);
       } else {
-        const { error } = await supabase.from('bills').insert(payload);
-        if (error) throw error;
+        await supabase.from('bills').insert(payload);
       }
 
-      if (markAsPaidNow && !isPaid) {
-        await addTransaction({
-          type: 'expense',
-          category: formData.category,
-          item: `Pgto: ${formData.description}`,
-          val: -Math.abs(valueFloat),
-          method: 'Dinheiro',
-          pro: 'Sistema',
-          date: new Date().toISOString().split('T')[0],
-          status: 'Pago'
-        });
-      }
-
-      alert('Salvo com sucesso!');
+      alert('Conta salva com sucesso!');
       navigate('/bills');
     } catch (err: any) {
-      console.error('Erro ao salvar:', err);
-      alert('Falha ao salvar no banco: ' + err.message);
+      alert('Erro ao salvar: ' + err.message);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleUnpay = async () => {
-    if (!confirm('Deseja reabrir esta conta? O status voltará para "Pendente".')) return;
-    
-    setLoading(true);
-    try {
-      const { error } = await supabase
-        .from('bills')
-        .update({ status: 'PENDING' })
-        .eq('id', id);
-
-      if (error) throw error;
-
-      setIsPaid(false);
-      alert('Conta reaberta!');
-      navigate('/bills');
-    } catch (err: any) {
-      alert('Erro ao reabrir conta: ' + err.message);
-    } finally {
-      setLoading(false);
+  // 2. Realizar Pagamento (Salva, muda status, lança transação)
+  const handlePay = () => {
+    const amount = parseFloat(formData.value.replace(',', '.')) || 0;
+    if (amount <= 0) {
+      alert('Valor inválido para pagamento.');
+      return;
     }
+
+    triggerConfirm(
+      'Confirmar Pagamento',
+      'Deseja confirmar o pagamento desta conta?',
+      async () => {
+        setConfirmConfig(prev => ({...prev, show: false}));
+        setLoading(true);
+        try {
+          // Atualiza (ou cria) a conta como PAGA
+          const payload = {
+            description: formData.description,
+            value: amount,
+            due_date: formData.dueDate,
+            recurring: formData.recurring,
+            category: formData.category,
+            observation: formData.observation,
+            status: 'PAID'
+          };
+
+          if (id) {
+            await supabase.from('bills').update(payload).eq('id', id);
+          } else {
+            const { error } = await supabase.from('bills').insert(payload);
+            if (error) throw error;
+          }
+
+          // Lança Transação (IMPORTANTE: O formato do 'item' deve ser consistente para o desfazer funcionar)
+          await addTransaction({
+            type: 'DESPESA',
+            category: formData.category,
+            item: `Pgto: ${formData.description}`,
+            val: -Math.abs(amount),
+            payment_method: 'Dinheiro',
+            pro: 'Sistema',
+            date: new Date().toISOString().split('T')[0],
+            status: 'Pago'
+          });
+
+          // Lógica de Recorrência (Criar próximo mês)
+          if (formData.recurring && formData.status !== 'PAID') { // Só cria se não estava pago antes
+            const nextDate = new Date(formData.dueDate);
+            nextDate.setMonth(nextDate.getMonth() + 1);
+            
+            await supabase.from('bills').insert({
+              ...payload,
+              due_date: nextDate.toISOString().split('T')[0],
+              status: 'PENDING'
+            });
+          }
+
+          alert('Pagamento registrado com sucesso!');
+          navigate('/bills');
+        } catch (err: any) {
+          alert('Erro no pagamento: ' + err.message);
+        } finally {
+          setLoading(false);
+        }
+      },
+      'success'
+    );
   };
 
-  const handleDelete = async () => {
+  // 3. Desfazer Pagamento (Volta para PENDING e remove transação)
+  const handleUnpay = () => {
+    if (!id) return;
+    triggerConfirm(
+      'Desfazer Pagamento',
+      'O status voltará para PENDENTE e o valor sairá das despesas. Confirmar?',
+      async () => {
+        setConfirmConfig(prev => ({...prev, show: false}));
+        setLoading(true);
+        try {
+          // 1. Volta status da conta para PENDING
+          const { error } = await supabase
+            .from('bills')
+            .update({ status: 'PENDING' })
+            .eq('id', id);
+
+          if (error) throw error;
+
+          // 2. Localiza e remove a transação financeira correspondente
+          // Procura por transações de despesa com o mesmo nome e valor negativo
+          const amount = parseFloat(formData.value.replace(',', '.')) || 0;
+          const searchItem = `Pgto: ${formData.description}`;
+          const searchVal = -Math.abs(amount);
+
+          // Busca a transação mais recente que bate com esses dados
+          const { data: matchingTrans } = await supabase
+            .from('transactions')
+            .select('id')
+            .eq('item', searchItem)
+            .eq('val', searchVal)
+            .eq('type', 'DESPESA')
+            .order('created_at', { ascending: false })
+            .limit(1);
+
+          if (matchingTrans && matchingTrans.length > 0) {
+             await deleteTransaction(matchingTrans[0].id);
+          }
+
+          setFormData(prev => ({ ...prev, status: 'PENDING' }));
+          alert('Pagamento desfeito! O valor foi estornado do financeiro.');
+        } catch (err: any) {
+          alert('Erro ao desfazer: ' + err.message);
+        } finally {
+          setLoading(false);
+        }
+      },
+      'info'
+    );
+  };
+
+  // 4. Excluir
+  const handleDelete = () => {
     if (!id) return;
     
-    if (!confirm('Tem certeza? Esta ação apagará o registro permanentemente.')) return;
-    
-    setLoading(true);
-    try {
-      const { error } = await supabase.from('bills').delete().eq('id', id);
-      if (error) throw error;
-      
-      alert('Conta excluída com sucesso!');
-      navigate('/bills', { replace: true });
-    } catch (err: any) {
-      console.error('Erro ao apagar:', err);
-      alert('Erro ao excluir: ' + err.message);
-    } finally {
-      setLoading(false);
-    }
+    triggerConfirm(
+      'Excluir Conta',
+      'Deseja excluir permanentemente este registro?',
+      async () => {
+        setConfirmConfig(prev => ({...prev, show: false}));
+        setLoading(true);
+        try {
+          const { error } = await supabase.from('bills').delete().eq('id', id);
+          if (error) throw error;
+          
+          alert('Registro excluído.');
+          navigate('/bills', { replace: true });
+        } catch (err: any) {
+          alert('Erro ao excluir: ' + err.message);
+        } finally {
+          setLoading(false);
+        }
+      },
+      'danger'
+    );
   };
 
   if (initialLoading) {
-    return (
-      <div className="flex items-center justify-center h-screen bg-[#fcfaff]">
-        <Loader2 className="animate-spin text-blue-900" size={32} />
-      </div>
-    );
+    return <div className="flex h-screen items-center justify-center"><Loader2 className="animate-spin text-blue-900" size={32} /></div>;
   }
+
+  const isPaid = formData.status === 'PAID';
 
   return (
     <div className="flex flex-col h-full bg-[#fcfaff]">
@@ -219,28 +273,28 @@ const BillForm: React.FC = () => {
 
       <div className="p-4 space-y-6 overflow-y-auto flex-1 bg-white">
         
+        {/* Status Banner */}
         {id && (
-          <div className={`p-4 rounded-3xl flex items-center justify-between border ${isPaid ? 'bg-green-50 text-green-700 border-green-100' : 'bg-orange-50 text-orange-700 border-orange-100'}`}>
-            <div className="flex items-center gap-2">
-              {isPaid ? <CheckCircle2 size={20} /> : <Clock size={20} />}
-              <div>
-                <span className="text-xs font-black uppercase tracking-widest block">{isPaid ? 'Conta Paga' : 'Pendente'}</span>
-                {isPaid && <span className="text-[10px] opacity-80">Valor debitado do financeiro</span>}
-              </div>
+          <div className={`p-4 rounded-2xl flex items-center gap-3 ${isPaid ? 'bg-green-50 text-green-700' : 'bg-orange-50 text-orange-700'}`}>
+            {isPaid ? <CheckCircle2 size={24} /> : <Clock size={24} />}
+            <div>
+              <h3 className="font-black text-sm uppercase tracking-widest">{isPaid ? 'CONTA PAGA' : 'PENDENTE'}</h3>
+              <p className="text-[10px] opacity-80">{isPaid ? 'Valor debitado do financeiro' : 'Aguardando pagamento'}</p>
             </div>
           </div>
         )}
 
+        {/* Inputs */}
         <div className="space-y-4">
           <div>
-            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2 px-1">Descrição *</label>
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2 px-1">Descrição</label>
             <div className="relative">
               <input 
                 type="text" 
                 value={formData.description}
                 onChange={e => setFormData({...formData, description: e.target.value})}
-                placeholder="Ex: Aluguel da Barbearia"
-                className="w-full bg-white border border-gray-200 rounded-2xl py-4 px-12 outline-none focus:ring-2 focus:ring-blue-500 shadow-sm text-gray-700 font-bold"
+                placeholder="Ex: Aluguel"
+                className="w-full bg-white border border-gray-200 rounded-2xl py-4 px-12 outline-none focus:ring-2 focus:ring-blue-900 font-bold text-gray-700"
               />
               <Receipt className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-300" size={20} />
             </div>
@@ -248,14 +302,14 @@ const BillForm: React.FC = () => {
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2 px-1">Valor (R$) *</label>
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2 px-1">Valor (R$)</label>
               <div className="relative">
                 <input 
                   type="text" 
                   value={formData.value}
                   onChange={e => setFormData({...formData, value: e.target.value})}
                   placeholder="0,00"
-                  className="w-full bg-white border border-gray-200 rounded-2xl py-4 px-10 outline-none focus:ring-2 focus:ring-blue-500 shadow-sm text-gray-700 font-black text-lg"
+                  className="w-full bg-white border border-gray-200 rounded-2xl py-4 px-10 outline-none focus:ring-2 focus:ring-blue-900 font-black text-lg text-gray-800"
                 />
                 <DollarSign className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-300" size={16} />
               </div>
@@ -266,7 +320,7 @@ const BillForm: React.FC = () => {
                 type="date" 
                 value={formData.dueDate}
                 onChange={e => setFormData({...formData, dueDate: e.target.value})}
-                className="w-full bg-white border border-gray-200 rounded-2xl py-4 px-4 outline-none focus:ring-2 focus:ring-blue-500 shadow-sm text-gray-700 font-bold text-xs"
+                className="w-full bg-white border border-gray-200 rounded-2xl py-4 px-4 outline-none focus:ring-2 focus:ring-blue-900 font-bold text-gray-700 text-xs"
               />
             </div>
           </div>
@@ -299,27 +353,23 @@ const BillForm: React.FC = () => {
               </select>
             </div>
           </div>
-          
-          {formData.recurring && (
-            <div className="bg-blue-50 p-3 rounded-xl border border-blue-100 text-[10px] text-blue-800 flex gap-2 items-center">
-              <RefreshCw size={14} />
-              <span>Ao pagar esta conta, uma nova será criada automaticamente para o próximo mês.</span>
-            </div>
-          )}
         </div>
 
-        <div className="space-y-3 pt-6 mb-12">
+        {/* Botões de Ação */}
+        <div className="pt-6 space-y-3 pb-12">
+          {/* Botão de Pagamento (Só aparece se NÃO estiver pago) */}
           {!isPaid && (
             <button 
-              onClick={() => handleSave(true)}
+              onClick={handlePay}
               disabled={loading}
               className="w-full bg-green-600 text-white font-black py-4.5 rounded-2xl shadow-xl active:scale-95 transition-transform uppercase tracking-[0.2em] text-sm flex items-center justify-center gap-3"
             >
-              {loading ? <Loader2 className="animate-spin" size={20} /> : <CheckCircle2 size={20} />}
+              {loading ? <Loader2 className="animate-spin" /> : <CheckCircle2 />}
               Confirmar Pagamento
             </button>
           )}
 
+          {/* Botão de Desfazer Pagamento (Só aparece se ESTIVER pago) */}
           {isPaid && (
             <button 
               onClick={handleUnpay}
@@ -330,18 +380,21 @@ const BillForm: React.FC = () => {
               Desfazer Pagamento
             </button>
           )}
-          
+
+          {/* Botão Salvar Genérico */}
           <button 
-            onClick={() => handleSave(false)}
+            onClick={handleSave}
             disabled={loading}
             className="w-full bg-[#1e3a8a] text-white font-black py-4.5 rounded-2xl shadow-xl active:scale-95 transition-transform uppercase tracking-[0.2em] text-sm flex items-center justify-center gap-3"
           >
-            {loading ? <Loader2 className="animate-spin" size={20} /> : <Save size={20} />}
+            {loading ? <Loader2 className="animate-spin" /> : <Save />}
             {id ? 'Salvar Alterações' : 'Salvar Pendente'}
           </button>
-          
+
+          {/* Botão Excluir (Só se estiver editando) */}
           {id && (
             <button 
+              type="button"
               onClick={handleDelete}
               disabled={loading}
               className="w-full bg-white border border-red-100 text-red-500 font-black py-4 rounded-2xl active:scale-95 transition-transform uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 mt-4"
@@ -352,6 +405,41 @@ const BillForm: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* MODAL DE CONFIRMAÇÃO CUSTOMIZADO */}
+      {confirmConfig.show && (
+        <div className="fixed inset-0 bg-black/80 z-[400] flex items-center justify-center p-6 backdrop-blur-md animate-in fade-in">
+          <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl text-center space-y-6 animate-in zoom-in-95">
+            <div className={`mx-auto w-16 h-16 rounded-full flex items-center justify-center ${
+                confirmConfig.type === 'danger' ? 'bg-red-50 text-red-500' : 
+                confirmConfig.type === 'success' ? 'bg-green-50 text-green-500' : 'bg-blue-50 text-blue-500'
+            }`}>
+              {confirmConfig.type === 'danger' ? <AlertTriangle size={32} /> : confirmConfig.type === 'success' ? <CheckCircle2 size={32} /> : <AlertTriangle size={32} className="rotate-180" />}
+            </div>
+            <div>
+                <h3 className="text-lg font-black text-gray-900 uppercase tracking-widest mb-2">{confirmConfig.title}</h3>
+                <p className="text-sm font-medium text-gray-500 leading-relaxed">{confirmConfig.message}</p>
+            </div>
+            <div className="flex flex-col gap-3">
+                <button 
+                  onClick={confirmConfig.action}
+                  className={`w-full py-4 rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg active:scale-95 transition-all ${
+                    confirmConfig.type === 'danger' ? 'bg-red-600 text-white' : 
+                    confirmConfig.type === 'success' ? 'bg-green-600 text-white' : 'bg-[#1e3a8a] text-white'
+                  }`}
+                >
+                  Confirmar
+                </button>
+                <button 
+                  onClick={() => setConfirmConfig({ ...confirmConfig, show: false })}
+                  className="w-full py-4 rounded-2xl font-black text-xs uppercase tracking-widest text-gray-400 bg-gray-50 active:scale-95 transition-all"
+                >
+                  Cancelar
+                </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

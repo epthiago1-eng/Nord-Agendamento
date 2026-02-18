@@ -15,7 +15,7 @@ export interface Professional {
   email: string;
   avatar: string;
   status: 'Ativo' | 'Inativo';
-  showInPublic: boolean; // Novo campo
+  showInPublic: boolean;
   createdAt: string;
 }
 
@@ -38,8 +38,17 @@ export interface Service {
   observation?: string;
   showInAgenda: boolean;
   showValueInAgenda: boolean;
-  showInPublic: boolean; // Novo campo
+  showInPublic: boolean;
   imageUrl?: string;
+  code?: string; // Novo campo
+}
+
+export interface Product {
+  id: string;
+  name: string;
+  code?: string; // Novo campo
+  sale_price: number;
+  current_stock: number;
 }
 
 export interface EstablishmentSettings {
@@ -47,7 +56,7 @@ export interface EstablishmentSettings {
   secondaryColor: string;
   logoUrl?: string;
   name: string;
-  slotInterval: number; // Novo campo para intervalo da agenda
+  slotInterval: number;
 }
 
 export interface ServiceGroup {
@@ -79,29 +88,45 @@ export interface Appointment {
   status: 'Aberto' | 'Atendido' | 'Chegou' | 'Confirmado' | 'Desmarcou' | 'Faltou' | 'Particular' | 'Atendimento Realizado' | 'Cancelaram';
   observation?: string;
   services: string[];
-  // Fix: Add totalValue property to Appointment interface to support checkout storage
+  products?: { id: string, name: string, price: number, quantity: number }[]; // Novo campo: Lista de produtos
   totalValue?: number;
 }
 
 export interface Transaction {
   id: string;
-  type: 'Receita' | 'Despesa';
-  costCenterId: string;
-  status: 'Pendente' | 'Pago';
-  description: string;
-  value: number;
-  discount: number;
-  interest: number;
-  tax: number;
-  dueDate: string;
-  paymentMethod: string;
-  financialAccount: string;
-  installments: number;
-  recurrenceMonths: number;
-  professionalId?: string;
-  clientId?: string;
+  date: string;
+  operation: 'COMPRA' | 'VENDA'; // Excel Column: OPERAÇÃO
+  type: 'PRODUTO' | 'SERVIÇO' | 'DESPESA' | 'OUTROS'; // Excel Column: TIPO
+  code?: string; // Excel Column: CÓD
+  item: string; // Excel Column: DESCRIÇÃO
   
-  // Novos campos para controle de comissão
-  commission_paid?: boolean; // Indica se a comissão dessa transação já foi paga ao pro
-  pro?: string; // Nome do profissional (legado ou redundante com professionalId, mantendo compatibilidade)
+  unit_price?: number; // VR VENDA (Unitário)
+  cost_value?: number; // VR CUSTO
+  quantity: number; // QTD.
+  total_value: number; // TOTAL (Calculado)
+  
+  client_supplier?: string; // CLIENTE / FORNEC
+  payment_method: string; // FORMA PAG.
+  pro?: string; // FUNCIONÁRIO
+  
+  status: 'Pendente' | 'Pago';
+  
+  // Campos de Sistema
+  category?: string; // Mantido para compatibilidade
+  val: number; // Mantido para compatibilidade (é o total_value com sinal)
+  professional_id?: string;
+  appointment_id?: string; // Vínculo para evitar duplicidade
+  commission_paid?: boolean;
+}
+
+export interface AppNotification {
+  id: string;
+  type: 'AGENDAMENTO' | 'FINANCEIRO' | 'SISTEMA';
+  title: string;
+  message: string;
+  read: boolean;
+  link?: string;
+  created_at: string;
+  recipient_pro_id?: string; // Novo campo para filtro
+  metadata?: any;
 }

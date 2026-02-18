@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
   ChevronLeft, Search, Filter, FileSpreadsheet, X, 
-  ShoppingBag, ClipboardList, Tag, User
+  ShoppingBag, ClipboardList, Tag, User, ArrowUp, ArrowDown
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getTransactions, Transaction, deleteTransaction } from '../data/transactions';
@@ -10,49 +10,48 @@ import { getTransactions, Transaction, deleteTransaction } from '../data/transac
 const FinancialLog: React.FC = () => {
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
-  const [showFilterModal, setShowFilterModal] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   
-  const [filters, setFilters] = useState({
-    type: 'all' as 'all' | 'income' | 'expense',
-    category: 'all' as string,
-    pro: 'all' as string
-  });
-
   useEffect(() => {
-    // Busca inicial
     getTransactions().then(setTransactions);
-
-    const handleUpdate = () => {
-        getTransactions().then(setTransactions);
-    };
+    const handleUpdate = () => { getTransactions().then(setTransactions); };
     window.addEventListener('transaction_added', handleUpdate);
     return () => window.removeEventListener('transaction_added', handleUpdate);
   }, []);
 
   const filteredData = useMemo(() => {
-    return transactions.filter(t => {
-      // Correção para evitar erro se item for nulo
-      const matchesSearch = (t.item || '').toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesType = filters.type === 'all' || t.type === filters.type;
-      const matchesCategory = filters.category === 'all' || t.category === filters.category;
-      const matchesPro = filters.pro === 'all' || t.pro === filters.pro;
-      return matchesSearch && matchesType && matchesCategory && matchesPro;
-    });
-  }, [searchTerm, filters, transactions]);
+    return transactions.filter(t => 
+      (t.item || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (t.client_supplier || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (t.code || '').toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }, [searchTerm, transactions]);
 
+  // Função para exportar CSV idêntico à planilha solicitada
   const exportToExcel = () => {
-    const headers = ['Data', 'Item', 'Categoria', 'Profissional', 'Valor', 'Meio', 'Status'];
+    const headers = ['DATA', 'OPERAÇÃO', 'TIPO', 'COD', 'DESCRIÇÃO', 'VR VENDA', 'VR CUSTO', 'QTD', 'TOTAL', 'CLIENTE/FORNEC', 'FORMA PAG.'];
     const csvContent = [
       headers.join(';'),
-      ...filteredData.map(t => [t.date, t.item, t.category, t.pro, t.val.toFixed(2), t.method, t.status].join(';'))
+      ...filteredData.map(t => [
+        t.date,
+        t.operation,
+        t.type,
+        t.code || '',
+        t.item,
+        (t.unit_price || 0).toFixed(2).replace('.', ','),
+        (t.cost_value || 0).toFixed(2).replace('.', ','),
+        t.quantity || 1,
+        (t.total_value || t.val).toFixed(2).replace('.', ','),
+        t.client_supplier || '',
+        t.payment_method
+      ].join(';'))
     ].join('\n');
 
     const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.setAttribute('download', `auditoria_nord_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `movimentacoes_${new Date().toISOString().split('T')[0]}.csv`);
     link.click();
   };
 
@@ -61,55 +60,58 @@ const FinancialLog: React.FC = () => {
       <header className="bg-[#1e3a8a] text-white px-4 py-4 flex items-center sticky top-0 z-50 shadow-md">
         <button onClick={() => navigate(-1)} className="p-1 active:scale-90 transition-transform"><ChevronLeft size={24} /></button>
         <div className="flex-1 text-center">
-            <h1 className="text-lg font-bold tracking-tight">Log de Movimentações</h1>
-            <span className="text-[10px] font-black uppercase tracking-widest text-blue-200">Total: {filteredData.length} registros</span>
+            <h1 className="text-lg font-bold tracking-tight">Movimentações</h1>
+            <span className="text-[10px] font-black uppercase tracking-widest text-blue-200">Entradas e Saídas</span>
         </div>
         <button onClick={exportToExcel} className="p-2 bg-blue-800 rounded-xl active:scale-90 border border-blue-700">
           <FileSpreadsheet size={22} />
         </button>
       </header>
 
-      <div className="p-4 space-y-4 overflow-y-auto flex-1 pb-24">
-        <div className="flex gap-2">
-          <div className="relative flex-1">
-            <input 
-              type="text" 
-              placeholder="Buscar item..." 
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full bg-white border border-gray-100 rounded-2xl py-3.5 px-11 outline-none focus:ring-2 focus:ring-blue-100 text-sm font-medium shadow-sm transition-all"
-            />
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-          </div>
-          <button onClick={() => setShowFilterModal(true)} className="p-3.5 rounded-2xl border bg-white text-blue-900 border-gray-100 shadow-sm">
-            <Filter size={22} />
-          </button>
+      <div className="p-2 space-y-4 overflow-y-auto flex-1 pb-24">
+        {/* Search Bar */}
+        <div className="px-2">
+            <div className="relative">
+                <input 
+                type="text" 
+                placeholder="Buscar por item, código ou cliente..." 
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full bg-white border border-gray-200 rounded-2xl py-3 px-11 outline-none focus:ring-1 focus:ring-blue-900 text-sm font-medium shadow-sm"
+                />
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+            </div>
         </div>
 
-        <div className="space-y-3">
+        {/* Table View like Excel Rows */}
+        <div className="space-y-2">
           {filteredData.map((t) => (
-            <div key={t.id} className="bg-white rounded-3xl border border-gray-50 shadow-sm p-4 flex flex-col gap-3">
-              <div className="flex justify-between items-start">
-                <div className="flex gap-3">
-                  <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${t.type === 'income' ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-500'}`}>
-                    {t.category === 'Serviço' ? <ClipboardList size={18} /> : t.category === 'Produto' ? <ShoppingBag size={18} /> : <Tag size={18} />}
-                  </div>
-                  <div>
-                    <h4 className="text-xs font-black text-gray-900 truncate">{t.item}</h4>
-                    <p className="text-[9px] font-bold text-gray-400 uppercase">{t.date} • {t.category}</p>
-                  </div>
+            <div key={t.id} className="bg-white mx-2 p-3 rounded-2xl border border-gray-100 shadow-sm flex flex-col gap-2 relative overflow-hidden">
+              {/* Left Stripe Indicator */}
+              <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${t.operation === 'COMPRA' ? 'bg-red-500' : 'bg-green-500'}`} />
+              
+              <div className="pl-3 flex justify-between items-start">
+                <div>
+                    <div className="flex items-center gap-2 mb-1">
+                        <span className="text-[10px] font-black bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-md uppercase tracking-tight">{t.code || '---'}</span>
+                        <h4 className="text-xs font-black text-gray-900 uppercase truncate max-w-[180px]">{t.item}</h4>
+                    </div>
+                    <p className="text-[10px] font-medium text-gray-400 uppercase flex items-center gap-1">
+                        {t.date} • {t.type} • {t.client_supplier || 'Balcão'}
+                    </p>
                 </div>
                 <div className="text-right">
-                  <p className={`text-sm font-black ${t.type === 'income' ? 'text-green-600' : 'text-red-500'}`}>R$ {Math.abs(t.val).toFixed(2).replace('.', ',')}</p>
-                  <p className="text-[8px] font-black uppercase text-gray-400">{t.method}</p>
+                    <p className={`text-sm font-black ${t.operation === 'COMPRA' ? 'text-red-500' : 'text-green-600'}`}>
+                        {t.operation === 'COMPRA' ? '-' : '+'} R$ {Math.abs(t.total_value || t.val).toFixed(2).replace('.', ',')}
+                    </p>
+                    <p className="text-[9px] font-bold text-gray-300 uppercase">{t.quantity} un.</p>
                 </div>
               </div>
-              <div className="pt-2 border-t border-gray-50 flex items-center justify-between">
-                <div className="flex items-center gap-1">
-                  <User size={10} className="text-gray-300" />
-                  <span className="text-[9px] font-bold text-gray-400 uppercase">{t.pro}</span>
-                </div>
-                <button onClick={() => { if(confirm('Excluir?')) deleteTransaction(t.id); }} className="text-[8px] font-black text-red-400 uppercase underline">Excluir</button>
+              
+              {/* Footer Actions */}
+              <div className="pl-3 pt-2 border-t border-gray-50 flex justify-between items-center">
+                 <span className="text-[9px] font-bold text-blue-900 uppercase bg-blue-50 px-2 py-0.5 rounded">{t.payment_method}</span>
+                 <button onClick={() => { if(confirm('Excluir registro?')) deleteTransaction(t.id); }} className="text-[9px] font-black text-red-300 uppercase hover:text-red-500">Excluir</button>
               </div>
             </div>
           ))}

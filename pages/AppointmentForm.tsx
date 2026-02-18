@@ -2,10 +2,11 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
   ChevronLeft, Search, UserPlus, X, Check, Scissors, 
-  UserCheck, Mail, Fingerprint, Cake, Loader2
+  UserCheck, Mail, Loader2, AlertTriangle, Clock, Calendar, MessageSquare
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { isSlotBlocked, saveAppointment } from '../data/agendaData';
+import { checkAvailability, saveAppointment } from '../data/agendaData';
+import { addNotification } from '../data/notifications';
 import { db } from '../supabase';
 
 const AppointmentForm: React.FC = () => {
@@ -17,6 +18,7 @@ const AppointmentForm: React.FC = () => {
   const [servicesList, setServicesList] = useState<any[]>([]);
   const [professionalsList, setProfessionalsList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   // Estados de Seleção e Busca
   const [clientSearch, setClientSearch] = useState('');
@@ -32,26 +34,34 @@ const AppointmentForm: React.FC = () => {
     phone: '',
     email: '',
     birth_date: '',
-    cpf: ''
+    observation: ''
   });
 
+  // Formatação segura YYYY-MM-DD
+  const formatDateSafe = (date: Date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
   const [formData, setFormData] = useState({
-    date: new Date().toISOString().split('T')[0],
+    date: formatDateSafe(new Date()),
     time: '10:00',
     status: 'Confirmado',
     observation: ''
   });
+
+  const [availabilityError, setAvailabilityError] = useState<string | null>(null);
 
   // Carregar dados iniciais do Supabase
   useEffect(() => {
     const fetchData = async () => {
         setLoading(true);
         try {
-            // Buscar Profissionais Ativos
             const { data: pros } = await db.professionals().select('*').eq('status', 'Ativo');
             if (pros) {
                 setProfessionalsList(pros);
-                // Seleciona o primeiro por padrão ou o usuário logado se for colaborador
                 const userProId = localStorage.getItem('user_pro_id');
                 if (userRole === 'COLLABORATOR' && userProId) {
                     setSelectedProId(userProId);
@@ -60,11 +70,9 @@ const AppointmentForm: React.FC = () => {
                 }
             }
 
-            // Buscar Serviços Ativos
             const { data: servs } = await db.services().select('*').order('name');
             if (servs) setServicesList(servs);
 
-            // Clientes recentes
             const { data: clis } = await db.clients().select('*').limit(20).order('created_at', { ascending: false });
             if (clis) setClientsList(clis);
         } catch (err) {
@@ -76,7 +84,7 @@ const AppointmentForm: React.FC = () => {
     fetchData();
   }, [userRole]);
 
-  // Busca dinâmica de clientes no banco conforme digita
+  // Busca dinâmica de clientes
   useEffect(() => {
     if (clientSearch.length > 2) {
         const fetchSearch = async () => {
@@ -92,11 +100,8 @@ const AppointmentForm: React.FC = () => {
 
   const filteredClients = useMemo(() => {
     if (clientSearch.length === 0) return [];
-    
     const searchLower = clientSearch.toLowerCase();
-    
     return clientsList.filter((c: any) => {
-      // Correção: Garante que name existe antes de chamar toLowerCase
       const nameMatch = (c.name || '').toLowerCase().includes(searchLower);
       const phoneMatch = c.phone && c.phone.includes(clientSearch);
       return nameMatch || phoneMatch;
@@ -119,17 +124,29 @@ const AppointmentForm: React.FC = () => {
     );
   };
 
+  // Verificar disponibilidade quando dados mudam
+  useEffect(() => {
+    if (selectedProId && formData.date && formData.time && totalDuration > 0) {
+        setAvailabilityError(null);
+        checkAvailability(selectedProId, formData.date, formData.time, totalDuration)
+            .then(result => {
+                if (!result.available) setAvailabilityError(result.reason || 'Horário indisponível');
+            });
+    }
+  }, [selectedProId, formData.date, formData.time, totalDuration]);
+
   const handleQuickAdd = async () => {
     if (!newClient.name || !newClient.phone) {
       alert('Nome e Telefone são campos obrigatórios.');
       return;
     }
-
     try {
         const { data, error } = await db.clients().insert({
             name: newClient.name,
             phone: newClient.phone,
-            email: newClient.email,
+            email: newClient.email || null,
+            birth_date: newClient.birth_date || null,
+            observation: newClient.observation || null
         }).select().single();
 
         if (error) throw error;
@@ -138,8 +155,7 @@ const AppointmentForm: React.FC = () => {
         setSelectedClient(data);
         setIsQuickAddOpen(false);
         setClientSearch('');
-        setNewClient({ name: '', phone: '', email: '', birth_date: '', cpf: '' });
-        
+        setNewClient({ name: '', phone: '', email: '', birth_date: '', observation: '' });
     } catch (err) {
         console.error(err);
         alert('Erro ao cadastrar cliente.');
@@ -147,45 +163,45 @@ const AppointmentForm: React.FC = () => {
   };
 
   const handleSave = async () => {
-    if (!selectedClient) {
-      alert('Selecione um cliente.');
-      return;
-    }
-    if (selectedServices.length === 0) {
-      alert('Selecione pelo menos um serviço.');
-      return;
-    }
-    if (!selectedProId) {
-        alert('Selecione um profissional.');
-        return;
-    }
+    if (!selectedClient) { alert('Selecione um cliente.'); return; }
+    if (selectedServices.length === 0) { alert('Selecione pelo menos um serviço.'); return; }
+    if (!selectedProId) { alert('Selecione um profissional.'); return; }
+    if (availabilityError) { alert(availabilityError); return; }
 
-    const pro = professionalsList.find(p => p.id === selectedProId);
-    
-    const isBlocked = await isSlotBlocked(selectedProId, formData.date, formData.time, totalDuration);
+    setSaving(true);
+    try {
+        const pro = professionalsList.find(p => p.id === selectedProId);
+        
+        await saveAppointment({
+            clientId: selectedClient.id,
+            clientName: selectedClient.name,
+            clientPhone: selectedClient.phone,
+            professionalId: selectedProId,
+            professionalName: pro?.name || 'Desconhecido',
+            date: formData.date,
+            time: formData.time,
+            duration: totalDuration,
+            status: formData.status as any,
+            services: selectedServices.map(s => s.name),
+            observation: formData.observation,
+            totalValue: totalValue
+        });
 
-    if (isBlocked) {
-        alert('Erro: Este horário está BLOQUEADO ou conflita com outro agendamento.');
-        return;
+        await addNotification({
+            type: 'AGENDAMENTO',
+            title: 'Novo Agendamento (Painel)',
+            message: `Cliente ${selectedClient.name} agendado para ${formData.date.split('-').reverse().join('/')} às ${formData.time}.`,
+            link: '/agenda',
+            recipient_pro_id: selectedProId
+        });
+
+        alert('Agendamento salvo com sucesso!');
+        navigate('/agenda');
+    } catch (e: any) {
+        alert('Erro ao salvar: ' + e.message);
+    } finally {
+        setSaving(false);
     }
-
-    await saveAppointment({
-      clientId: selectedClient.id,
-      clientName: selectedClient.name,
-      clientPhone: selectedClient.phone,
-      professionalId: selectedProId,
-      professionalName: pro?.name || 'Desconhecido',
-      date: formData.date,
-      time: formData.time,
-      duration: totalDuration,
-      status: formData.status as any,
-      services: selectedServices.map(s => s.name),
-      observation: formData.observation,
-      totalValue: totalValue // Salva o valor total calculado
-    });
-
-    alert('Agendamento salvo com sucesso!');
-    navigate('/agenda');
   };
 
   return (
@@ -319,8 +335,9 @@ const AppointmentForm: React.FC = () => {
                     <input 
                         type="date" 
                         value={formData.date}
+                        min={formatDateSafe(new Date())} 
                         onChange={(e) => setFormData({...formData, date: e.target.value})}
-                        className="w-full bg-gray-50 border border-gray-100 rounded-2xl py-4 px-4 outline-none font-bold text-gray-700 text-sm"
+                        className="w-full bg-gray-50 border border-gray-100 rounded-2xl py-4 px-4 outline-none font-bold text-gray-700 text-sm shadow-inner"
                     />
                 </div>
                 <div>
@@ -329,10 +346,18 @@ const AppointmentForm: React.FC = () => {
                         type="time" 
                         value={formData.time}
                         onChange={(e) => setFormData({...formData, time: e.target.value})}
-                        className="w-full bg-gray-50 border border-gray-100 rounded-2xl py-4 px-4 outline-none font-bold text-gray-700 text-sm"
+                        className="w-full bg-gray-50 border border-gray-100 rounded-2xl py-4 px-4 outline-none font-bold text-gray-700 text-sm shadow-inner"
                     />
                 </div>
             </div>
+
+            {/* ALERTA DE CONFLITO */}
+            {availabilityError && (
+                <div className="bg-red-50 p-4 rounded-2xl border border-red-100 flex gap-3 items-center animate-in slide-in-from-top-2">
+                    <AlertTriangle className="text-red-500 shrink-0" size={20} />
+                    <span className="text-xs font-bold text-red-700">{availabilityError}</span>
+                </div>
+            )}
 
             {/* RESUMO */}
             {selectedServices.length > 0 && (
@@ -355,9 +380,10 @@ const AppointmentForm: React.FC = () => {
 
             <button 
             onClick={handleSave}
-            className="w-full bg-green-600 text-white font-black py-4.5 rounded-[2rem] shadow-xl active:scale-95 transition-transform uppercase tracking-[0.2em] text-sm mt-4"
+            disabled={saving || !!availabilityError}
+            className="w-full bg-green-600 text-white font-black py-5 rounded-[2rem] shadow-xl active:scale-95 transition-transform uppercase tracking-[0.2em] text-sm mt-4 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed min-h-[64px]"
             >
-                Confirmar Agendamento
+                {saving ? <Loader2 className="animate-spin" /> : 'Confirmar Agendamento'}
             </button>
         </div>
       )}
@@ -365,13 +391,13 @@ const AppointmentForm: React.FC = () => {
       {/* MODAL DE CADASTRO RÁPIDO */}
       {isQuickAddOpen && (
         <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-6 shadow-2xl space-y-5 animate-in zoom-in-95">
+          <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-6 shadow-2xl space-y-5 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto no-scrollbar">
             <div className="flex justify-between items-center px-1">
               <h3 className="text-[#1e3a8a] font-black uppercase tracking-widest text-xs">Cadastro Rápido</h3>
               <button onClick={() => setIsQuickAddOpen(false)} className="text-gray-400 p-1"><X size={20} /></button>
             </div>
 
-            <div className="space-y-4 max-h-[70vh] overflow-y-auto px-1 no-scrollbar">
+            <div className="space-y-4">
               <div className="space-y-3 p-4 bg-blue-50 rounded-3xl border border-blue-100">
                 <div className="flex items-center gap-2 mb-1">
                   <UserCheck size={14} className="text-blue-900" />
@@ -411,12 +437,31 @@ const AppointmentForm: React.FC = () => {
                   />
                   <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-300" size={16} />
                 </div>
+                <div className="relative">
+                  <input 
+                    type="date" 
+                    value={newClient.birth_date}
+                    onChange={e => setNewClient({...newClient, birth_date: e.target.value})}
+                    className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-10 outline-none focus:ring-1 focus:ring-blue-900 text-sm font-medium text-gray-700"
+                  />
+                  <Calendar className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-300" size={16} />
+                </div>
+                <div className="relative">
+                  <textarea 
+                    placeholder="Observações do cliente..."
+                    value={newClient.observation}
+                    onChange={e => setNewClient({...newClient, observation: e.target.value})}
+                    rows={2}
+                    className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-10 outline-none focus:ring-1 focus:ring-blue-900 text-sm font-medium text-gray-700 resize-none"
+                  />
+                  <MessageSquare className="absolute left-3.5 top-4 text-gray-300" size={16} />
+                </div>
               </div>
             </div>
 
             <button 
               onClick={handleQuickAdd}
-              className="w-full bg-blue-900 text-white font-black py-4 rounded-2xl shadow-xl active:scale-95 transition-transform uppercase tracking-widest text-xs"
+              className="w-full bg-blue-900 text-white font-black py-5 rounded-2xl shadow-xl active:scale-95 transition-transform uppercase tracking-widest text-xs min-h-[60px]"
             >
               Salvar e Selecionar
             </button>

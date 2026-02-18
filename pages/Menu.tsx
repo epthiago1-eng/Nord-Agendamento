@@ -38,6 +38,7 @@ const Menu: React.FC = () => {
     { id: 'my-clients', label: 'Meus Clientes', icon: Users, path: '/clients' },
     { id: 'my-performance', label: 'Meu Financeiro', icon: Zap, path: '/financial' },
     { id: 'my-schedule', label: 'Minha Agenda', icon: FileText, path: '/agenda' },
+    { id: 'new-expense', label: 'Lançar Despesa', icon: Receipt, path: '/financial/expense/new' },
     { id: 'support', label: 'Suporte', icon: LifeBuoy, path: '/menu' },
   ];
 
