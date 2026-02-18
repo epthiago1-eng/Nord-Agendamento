@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Download, X } from 'lucide-react';
+import { Download, X, Smartphone } from 'lucide-react';
 
 const InstallPrompt: React.FC = () => {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
@@ -8,11 +8,15 @@ const InstallPrompt: React.FC = () => {
 
   useEffect(() => {
     const handler = (e: any) => {
+      // Impede o mini-infobar padrão do Chrome
       e.preventDefault();
+      // Guarda o evento para disparar depois
       setDeferredPrompt(e);
-      // Verifica se já não foi instalado ou fechado recentemente
+      
+      // Verifica se o usuário já dispensou. Se não, mostra o prompt.
+      // Adiciona um pequeno delay para não aparecer instantaneamente ao carregar a página
       if (!localStorage.getItem('install_dismissed')) {
-          setShow(true);
+          setTimeout(() => setShow(true), 2000);
       }
     };
 
@@ -33,35 +37,41 @@ const InstallPrompt: React.FC = () => {
 
   const handleClose = () => {
       setShow(false);
-      // Lembra de não mostrar novamente na sessão ou por um tempo (opcional)
-      // localStorage.setItem('install_dismissed', 'true'); 
+      // Salva no localStorage para não mostrar novamente
+      localStorage.setItem('install_dismissed', 'true'); 
   };
 
   if (!show) return null;
 
   return (
-    <div className="fixed bottom-20 left-4 right-4 z-[100] animate-in slide-in-from-bottom-4 fade-in duration-500">
-      <div className="bg-[#1e3a8a] text-white p-4 rounded-2xl shadow-2xl flex items-center justify-between border border-blue-700/50 backdrop-blur-sm relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-20 h-20 bg-white/10 rounded-full -mr-10 -mt-10 blur-xl"></div>
+    <div className="fixed bottom-24 left-4 right-4 z-[100] animate-in slide-in-from-bottom-8 fade-in duration-700">
+      <div className="bg-gradient-to-br from-[#1e3a8a] to-[#2563eb] text-white p-5 rounded-[2rem] shadow-2xl flex items-center justify-between border-2 border-white/20 relative overflow-hidden group">
+        
+        {/* Efeito de Brilho de Fundo */}
+        <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16 blur-2xl group-hover:scale-150 transition-transform duration-1000"></div>
         
         <div className="flex items-center gap-4 z-10">
-            <div className="bg-white/20 p-3 rounded-xl backdrop-blur-md">
-                <Download size={24} className="text-white" />
+            <div className="bg-white/20 p-3.5 rounded-2xl backdrop-blur-md shadow-inner animate-pulse">
+                <Smartphone size={28} className="text-white" />
             </div>
             <div>
-                <h3 className="font-black text-sm uppercase tracking-widest leading-tight">Instalar App</h3>
-                <p className="text-[10px] text-blue-200 font-medium mt-0.5">Acesse mais rápido direto da tela inicial</p>
+                <h3 className="font-black text-sm uppercase tracking-widest leading-tight mb-0.5">Instalar App</h3>
+                <p className="text-[10px] text-blue-100 font-medium leading-tight">Acesso rápido e offline direto da tela inicial</p>
             </div>
         </div>
 
-        <div className="flex items-center gap-2 z-10">
+        <div className="flex items-center gap-3 z-10 pl-2">
             <button 
                 onClick={handleInstallClick}
-                className="bg-white text-blue-900 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg active:scale-95 transition-transform"
+                className="bg-white text-blue-900 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg active:scale-95 transition-transform flex items-center gap-2"
             >
-                Instalar
+                <Download size={14} />
+                Baixar
             </button>
-            <button onClick={handleClose} className="p-2 text-blue-300 hover:text-white transition-colors">
+            <button 
+                onClick={handleClose} 
+                className="p-2 bg-white/10 rounded-xl text-blue-100 hover:bg-white/20 hover:text-white transition-colors active:scale-90"
+            >
                 <X size={18} />
             </button>
         </div>

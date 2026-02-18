@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
   ChevronLeft, Search, UserPlus, X, Check, Scissors, 
-  UserCheck, Mail, Loader2, AlertTriangle, Clock, Calendar, MessageSquare
+  UserCheck, Mail, Loader2, AlertTriangle, AlertCircle, Calendar
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { checkAvailability, saveAppointment } from '../data/agendaData';
@@ -27,6 +27,14 @@ const AppointmentForm: React.FC = () => {
   const [selectedProId, setSelectedProId] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
 
+  // Estado de Erros de Validação Visual
+  const [validationErrors, setValidationErrors] = useState<{
+    client?: boolean;
+    services?: boolean;
+    professional?: boolean;
+    general?: string;
+  }>({});
+
   // Estado do Modal de Cadastro Rápido
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
   const [newClient, setNewClient] = useState({
@@ -34,7 +42,6 @@ const AppointmentForm: React.FC = () => {
     phone: '',
     email: '',
     birth_date: ''
-    // Removido observation
   });
 
   // Formatação segura YYYY-MM-DD
@@ -117,6 +124,11 @@ const AppointmentForm: React.FC = () => {
   , [selectedServices]);
 
   const toggleService = (service: any) => {
+    // Limpa erro de serviço se selecionar um
+    if (validationErrors.services) {
+        setValidationErrors(prev => ({ ...prev, services: false }));
+    }
+    
     setSelectedServices(prev => 
       prev.find(s => s.id === service.id) 
         ? prev.filter(s => s.id !== service.id) 
@@ -145,13 +157,16 @@ const AppointmentForm: React.FC = () => {
             name: newClient.name,
             phone: newClient.phone,
             email: newClient.email || null,
-            birth_date: newClient.birth_date || null // snake_case
+            birth_date: newClient.birth_date || null
         }).select().single();
 
         if (error) throw error;
 
         setClientsList(prev => [...prev, data]);
         setSelectedClient(data);
+        // Limpa erro de cliente
+        setValidationErrors(prev => ({ ...prev, client: false }));
+        
         setIsQuickAddOpen(false);
         setClientSearch('');
         setNewClient({ name: '', phone: '', email: '', birth_date: '' });
@@ -162,10 +177,25 @@ const AppointmentForm: React.FC = () => {
   };
 
   const handleSave = async () => {
-    if (!selectedClient) { alert('Selecione um cliente.'); return; }
-    if (selectedServices.length === 0) { alert('Selecione pelo menos um serviço.'); return; }
-    if (!selectedProId) { alert('Selecione um profissional.'); return; }
-    if (availabilityError) { alert(availabilityError); return; }
+    // Validação Visual
+    const errors: any = {};
+    if (!selectedClient) errors.client = true;
+    if (selectedServices.length === 0) errors.services = true;
+    if (!selectedProId) errors.professional = true;
+    
+    if (Object.keys(errors).length > 0) {
+        setValidationErrors({
+            ...errors,
+            general: 'Por favor, preencha os campos destacados em vermelho.'
+        });
+        // Scroll to top (optional)
+        return;
+    }
+
+    if (availabilityError) { 
+        setValidationErrors({ general: availabilityError });
+        return; 
+    }
 
     setSaving(true);
     try {
@@ -197,7 +227,7 @@ const AppointmentForm: React.FC = () => {
         alert('Agendamento salvo com sucesso!');
         navigate('/agenda');
     } catch (e: any) {
-        alert('Erro ao salvar: ' + e.message);
+        setValidationErrors({ general: 'Erro ao salvar: ' + e.message });
     } finally {
         setSaving(false);
     }
@@ -220,58 +250,69 @@ const AppointmentForm: React.FC = () => {
         </div>
       ) : (
         <div className="p-4 space-y-6 flex-1 overflow-y-auto pb-32">
+            
             {/* BUSCA DE CLIENTE */}
             <div className="relative">
-            <label className="text-[11px] font-black text-gray-400 uppercase tracking-widest block mb-2 px-1">Cliente</label>
-            <div className="flex gap-2">
-                <div className="relative flex-1">
-                <input 
-                    type="text" 
-                    value={selectedClient ? selectedClient.name : clientSearch}
-                    onChange={(e) => {
-                        setClientSearch(e.target.value); 
-                        setSelectedClient(null);
-                        setShowSuggestions(true);
-                    }}
-                    placeholder="Nome ou Telefone..." 
-                    className="w-full bg-gray-50 border border-gray-100 rounded-2xl py-4 px-12 outline-none focus:ring-1 focus:ring-blue-900 shadow-inner font-bold text-gray-700"
-                />
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
-                {selectedClient && (
-                    <button onClick={() => setSelectedClient(null)} className="absolute right-4 top-1/2 -translate-y-1/2 text-red-400">
-                    <X size={18} />
-                    </button>
-                )}
+                <div className="flex justify-between items-center mb-2 px-1">
+                    <label className={`text-[11px] font-black uppercase tracking-widest ${validationErrors.client ? 'text-red-500' : 'text-gray-400'}`}>Cliente *</label>
+                    {validationErrors.client && <span className="text-[10px] text-red-500 font-bold flex items-center gap-1"><AlertCircle size={10} /> Obrigatório</span>}
                 </div>
-                <button 
-                onClick={() => setIsQuickAddOpen(true)}
-                className="bg-blue-900 text-white p-4 rounded-2xl shadow-lg active:scale-95 transition-transform"
-                title="Cadastro Rápido"
-                >
-                <UserPlus size={24} />
-                </button>
-            </div>
-
-            {showSuggestions && filteredClients.length > 0 && (
-                <div className="absolute top-full left-0 right-14 bg-white border border-gray-100 rounded-2xl shadow-2xl mt-2 z-[100] max-h-60 overflow-y-auto">
-                {filteredClients.map((c: any) => (
-                    <button 
-                    key={c.id}
-                    onClick={() => {
-                        setSelectedClient(c);
-                        setShowSuggestions(false);
-                        setClientSearch('');
-                    }}
-                    className="w-full p-4 flex items-center justify-between hover:bg-blue-50 border-b border-gray-50 last:border-0"
-                    >
-                    <div className="text-left">
-                        <p className="font-bold text-gray-800 text-sm">{c.name}</p>
-                        <p className="text-[10px] text-gray-400 font-medium">{c.phone}</p>
+                <div className="flex gap-2">
+                    <div className="relative flex-1">
+                    <input 
+                        type="text" 
+                        value={selectedClient ? selectedClient.name : clientSearch}
+                        onChange={(e) => {
+                            setClientSearch(e.target.value); 
+                            setSelectedClient(null);
+                            setShowSuggestions(true);
+                            // Limpa erro ao digitar
+                            if (validationErrors.client) setValidationErrors(prev => ({ ...prev, client: false }));
+                        }}
+                        placeholder="Nome ou Telefone..." 
+                        className={`w-full bg-gray-50 border rounded-2xl py-4 px-12 outline-none focus:ring-1 shadow-inner font-bold text-gray-700 transition-colors ${
+                            validationErrors.client 
+                            ? 'border-red-300 ring-red-100 bg-red-50 focus:ring-red-500 placeholder:text-red-300' 
+                            : 'border-gray-100 focus:ring-blue-900'
+                        }`}
+                    />
+                    <Search className={`absolute left-4 top-1/2 -translate-y-1/2 ${validationErrors.client ? 'text-red-400' : 'text-gray-400'}`} size={20} />
+                    {selectedClient && (
+                        <button onClick={() => setSelectedClient(null)} className="absolute right-4 top-1/2 -translate-y-1/2 text-red-400">
+                        <X size={18} />
+                        </button>
+                    )}
                     </div>
+                    <button 
+                    onClick={() => setIsQuickAddOpen(true)}
+                    className="bg-blue-900 text-white p-4 rounded-2xl shadow-lg active:scale-95 transition-transform"
+                    title="Cadastro Rápido"
+                    >
+                    <UserPlus size={24} />
                     </button>
-                ))}
                 </div>
-            )}
+
+                {showSuggestions && filteredClients.length > 0 && (
+                    <div className="absolute top-full left-0 right-14 bg-white border border-gray-100 rounded-2xl shadow-2xl mt-2 z-[100] max-h-60 overflow-y-auto">
+                    {filteredClients.map((c: any) => (
+                        <button 
+                        key={c.id}
+                        onClick={() => {
+                            setSelectedClient(c);
+                            setShowSuggestions(false);
+                            setClientSearch('');
+                            setValidationErrors(prev => ({ ...prev, client: false }));
+                        }}
+                        className="w-full p-4 flex items-center justify-between hover:bg-blue-50 border-b border-gray-50 last:border-0"
+                        >
+                        <div className="text-left">
+                            <p className="font-bold text-gray-800 text-sm">{c.name}</p>
+                            <p className="text-[10px] text-gray-400 font-medium">{c.phone}</p>
+                        </div>
+                        </button>
+                    ))}
+                    </div>
+                )}
             </div>
 
             {/* SELEÇÃO DE PROFISSIONAL */}
@@ -297,34 +338,37 @@ const AppointmentForm: React.FC = () => {
             )}
 
             {/* SERVIÇOS */}
-            <div className="space-y-3">
-            <label className="text-[11px] font-black text-gray-400 uppercase tracking-widest block px-1">Serviços</label>
-            <div className="grid grid-cols-1 gap-2">
-                {servicesList.length === 0 ? (
-                    <p className="text-sm text-gray-400 italic">Nenhum serviço cadastrado.</p>
-                ) : servicesList.map(s => (
-                <button
-                    key={s.id}
-                    onClick={() => toggleService(s)}
-                    className={`p-4 rounded-2xl border flex items-center justify-between transition-all ${
-                    selectedServices.find(x => x.id === s.id)
-                    ? 'bg-blue-50 border-blue-200 shadow-sm'
-                    : 'bg-white border-gray-100'
-                    }`}
-                >
-                    <div className="flex items-center gap-3">
-                    <div className={`p-2 rounded-lg ${selectedServices.find(x => x.id === s.id) ? 'bg-blue-900 text-white' : 'bg-gray-100 text-gray-400'}`}>
-                        <Scissors size={18} />
-                    </div>
-                    <div className="text-left">
-                        <p className="text-sm font-bold text-gray-800">{s.name}</p>
-                        <p className="text-[10px] text-gray-400 font-bold uppercase">{s.duration} min • R$ {s.price?.toFixed(2)}</p>
-                    </div>
-                    </div>
-                    {selectedServices.find(x => x.id === s.id) && <Check size={20} className="text-blue-900" />}
-                </button>
-                ))}
-            </div>
+            <div className={`space-y-3 p-2 -m-2 rounded-2xl transition-colors ${validationErrors.services ? 'bg-red-50/50 border border-red-100' : ''}`}>
+                <div className="flex justify-between items-center px-1">
+                    <label className={`text-[11px] font-black uppercase tracking-widest ${validationErrors.services ? 'text-red-500' : 'text-gray-400'}`}>Serviços *</label>
+                    {validationErrors.services && <span className="text-[10px] text-red-500 font-bold flex items-center gap-1"><AlertCircle size={10} /> Selecione ao menos um</span>}
+                </div>
+                <div className="grid grid-cols-1 gap-2">
+                    {servicesList.length === 0 ? (
+                        <p className="text-sm text-gray-400 italic">Nenhum serviço cadastrado.</p>
+                    ) : servicesList.map(s => (
+                    <button
+                        key={s.id}
+                        onClick={() => toggleService(s)}
+                        className={`p-4 rounded-2xl border flex items-center justify-between transition-all ${
+                        selectedServices.find(x => x.id === s.id)
+                        ? 'bg-blue-50 border-blue-200 shadow-sm ring-1 ring-blue-100'
+                        : 'bg-white border-gray-100'
+                        }`}
+                    >
+                        <div className="flex items-center gap-3">
+                        <div className={`p-2 rounded-lg ${selectedServices.find(x => x.id === s.id) ? 'bg-blue-900 text-white' : 'bg-gray-100 text-gray-400'}`}>
+                            <Scissors size={18} />
+                        </div>
+                        <div className="text-left">
+                            <p className="text-sm font-bold text-gray-800">{s.name}</p>
+                            <p className="text-[10px] text-gray-400 font-bold uppercase">{s.duration} min • R$ {s.price?.toFixed(2)}</p>
+                        </div>
+                        </div>
+                        {selectedServices.find(x => x.id === s.id) && <Check size={20} className="text-blue-900" />}
+                    </button>
+                    ))}
+                </div>
             </div>
 
             {/* DATA E HORA */}
@@ -350,11 +394,14 @@ const AppointmentForm: React.FC = () => {
                 </div>
             </div>
 
-            {/* ALERTA DE CONFLITO */}
-            {availabilityError && (
-                <div className="bg-red-50 p-4 rounded-2xl border border-red-100 flex gap-3 items-center animate-in slide-in-from-top-2">
-                    <AlertTriangle className="text-red-500 shrink-0" size={20} />
-                    <span className="text-xs font-bold text-red-700">{availabilityError}</span>
+            {/* CAIXA DE ALERTA DE ERRO GERAL */}
+            {validationErrors.general && (
+                <div className="bg-red-50 p-4 rounded-2xl border border-red-100 flex gap-3 items-start animate-in slide-in-from-top-2">
+                    <AlertTriangle className="text-red-500 shrink-0 mt-0.5" size={20} />
+                    <div>
+                        <h4 className="text-xs font-black text-red-700 uppercase mb-1">Atenção</h4>
+                        <span className="text-xs font-medium text-red-600 leading-tight block">{validationErrors.general}</span>
+                    </div>
                 </div>
             )}
 
@@ -379,7 +426,7 @@ const AppointmentForm: React.FC = () => {
 
             <button 
             onClick={handleSave}
-            disabled={saving || !!availabilityError}
+            disabled={saving}
             className="w-full bg-green-600 text-white font-black py-5 rounded-[2rem] shadow-xl active:scale-95 transition-transform uppercase tracking-[0.2em] text-sm mt-4 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed min-h-[64px]"
             >
                 {saving ? <Loader2 className="animate-spin" /> : 'Confirmar Agendamento'}
