@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { ChevronLeft, Calendar as CalendarIcon, ChevronRight, X, Clock, Loader2 } from 'lucide-react';
+import { ChevronLeft, Calendar as CalendarIcon, ChevronRight, X, Clock, Loader2, Edit2 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { getAvailableSlotsForPro, getSettings } from '../../data/agendaData';
 import { EstablishmentSettings } from '../../types';
@@ -10,6 +10,7 @@ const BookingSchedule: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const selectedServices = location.state?.selectedServices || [];
+  const editingAppointment = location.state?.editingAppointment; // Recebe o agendamento original se for edição
   
   const [settings, setSettings] = useState<EstablishmentSettings | null>(null);
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -57,14 +58,15 @@ const BookingSchedule: React.FC = () => {
     const fetchSlots = async () => {
       const slotsMap: Record<string, string[]> = {};
       for (const pro of professionals) {
-        slotsMap[pro.id] = await getAvailableSlotsForPro(pro.id, dateStr, totalDuration);
+        // Passa o ID do agendamento sendo editado para a função excluir ele da verificação de conflito
+        slotsMap[pro.id] = await getAvailableSlotsForPro(pro.id, dateStr, totalDuration, editingAppointment?.id);
       }
       setProSlots(slotsMap);
     };
     if (professionals.length > 0) {
       fetchSlots();
     }
-  }, [professionals, dateStr, totalDuration]);
+  }, [professionals, dateStr, totalDuration, editingAppointment]);
 
   const handleSelectSlot = (pro: any, time: string) => {
     navigate('/booking/form', { 
@@ -73,7 +75,8 @@ const BookingSchedule: React.FC = () => {
             professional: pro, 
             time, 
             date: selectedDate.toLocaleDateString('pt-BR'),
-            dateIso: dateStr
+            dateIso: dateStr,
+            editingAppointment // Repassa o objeto de edição
         } 
     });
   };
@@ -158,8 +161,18 @@ const BookingSchedule: React.FC = () => {
       <div className="mt-20 px-4 space-y-6 pb-12">
         <button onClick={() => navigate(-1)} className="flex items-center gap-2 text-gray-900 font-bold text-sm">
             <ChevronLeft size={20} className="text-primary" style={{ color: settings.primaryColor }} />
-            Escolha o profissional e horário
+            {editingAppointment ? 'Escolha o novo horário' : 'Escolha o profissional e horário'}
         </button>
+
+        {editingAppointment && (
+            <div className="bg-blue-50 p-3 rounded-xl border border-blue-100 flex items-center gap-3 text-blue-900 animate-in fade-in slide-in-from-top-2">
+                <Edit2 size={18} />
+                <div className="text-xs">
+                    <span className="font-bold block">Modo de Reagendamento</span>
+                    <span className="opacity-80">Selecione a nova data para o seu agendamento.</span>
+                </div>
+            </div>
+        )}
 
         <div className="bg-gray-50 border border-gray-100 rounded-3xl p-2 shadow-sm flex items-center justify-between sticky top-4 z-20 backdrop-blur-sm bg-white/80">
             <button 
@@ -198,10 +211,11 @@ const BookingSchedule: React.FC = () => {
                 <p className="text-center text-gray-400 text-sm italic py-10">Nenhum profissional disponível.</p>
             ) : professionals.map(pro => {
                 const availableSlots = proSlots[pro.id] || [];
+                // Se estiver editando, só mostra o profissional original ou todos? 
+                // Geralmente reagendar pode ser com qualquer um, mas vamos deixar livre.
                 return (
                     <div key={pro.id} className="bg-white rounded-[2.5rem] border border-gray-100 shadow-sm overflow-hidden flex flex-col items-center">
                         <div className="pt-8 pb-4 flex flex-col items-center gap-3">
-                            {/* FOTO DO PROFISSIONAL AGORA É REDONDA (rounded-full) */}
                             <div className="w-24 h-24 rounded-full overflow-hidden border-2 shadow-inner" style={{ borderColor: `${settings.primaryColor}20` }}>
                                 <img src={pro.avatar || `https://ui-avatars.com/api/?name=${pro.name}&background=random`} alt={pro.name} className="w-full h-full object-cover" />
                             </div>

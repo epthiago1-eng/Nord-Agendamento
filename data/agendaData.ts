@@ -1,4 +1,3 @@
-
 import type { Appointment, EstablishmentSettings } from '../types';
 import { supabase, db } from '../supabase';
 import { addNotification } from './notifications';
@@ -326,7 +325,7 @@ export const isSlotBlocked = async (proId: string, date: string, time: string, d
   return !result.available;
 };
 
-export const getAvailableSlotsForPro = async (proId: string, dateStr: string, serviceDuration: number): Promise<string[]> => {
+export const getAvailableSlotsForPro = async (proId: string, dateStr: string, serviceDuration: number, excludeAptId?: string): Promise<string[]> => {
     const settings = await getSettings();
     const interval = settings.slotInterval || 15;
     
@@ -348,7 +347,10 @@ export const getAvailableSlotsForPro = async (proId: string, dateStr: string, se
       .select('*')
       .eq('date', dateStr);
       
-    const appointments = appointmentsData ? appointmentsData.map(mapAppointmentFromDB).filter(a => a.professionalId === proId && !['Desmarcou', 'Cancelaram'].includes(a.status)) : [];
+    const appointments = appointmentsData ? appointmentsData
+        .map(mapAppointmentFromDB)
+        .filter(a => a.professionalId === proId && !['Desmarcou', 'Cancelaram'].includes(a.status) && a.id !== excludeAptId) 
+        : [];
 
     const { data: blocks } = await supabase
       .from('agenda_blocks')

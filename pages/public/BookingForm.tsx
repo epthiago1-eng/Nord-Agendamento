@@ -2,18 +2,18 @@
 import React, { useState } from 'react';
 import { ChevronLeft, CheckCircle2, User, Phone, Clipboard, AlertCircle } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { saveAppointment } from '../../data/agendaData';
+import { saveAppointment, updateAppointment } from '../../data/agendaData';
 import { addNotification } from '../../data/notifications';
 
 const BookingForm: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { selectedServices, professional, time, date, dateIso } = location.state || {};
+  const { selectedServices, professional, time, date, dateIso, editingAppointment } = location.state || {};
 
   const [formData, setFormData] = useState({
-    phone: '',
-    name: '',
-    observation: ''
+    phone: editingAppointment?.clientPhone || '',
+    name: editingAppointment?.clientName || '',
+    observation: editingAppointment?.observation || ''
   });
 
   const [errors, setErrors] = useState<{ name?: boolean; phone?: boolean }>({});
@@ -47,33 +47,67 @@ const BookingForm: React.FC = () => {
             return acc + mins;
         }, 0) || 30;
 
-        // Salva na agenda global
-        const newApt = await saveAppointment({
-            clientId: 'public-' + Date.now(),
-            clientName: formData.name,
-            clientPhone: formData.phone,
-            professionalId: professional?.id || '1',
-            professionalName: professional?.name || 'Diego',
-            date: dateIso, 
-            time: time,
-            duration: totalDuration,
-            status: 'Confirmado',
-            services: selectedServices?.map((s: any) => s.name) || [],
-            observation: formData.observation
-        });
+        let finalAppointment;
 
-        // Notifica o Colaborador
-        await addNotification({
-            type: 'AGENDAMENTO',
-            title: '💈 Novo Agendamento Online',
-            message: `Cliente ${formData.name} reservou ${selectedServices?.map((s:any) => s.name).join(', ')} para ${date} às ${time} com ${professional?.name}.`,
-            link: '/agenda',
-            recipient_pro_id: professional?.id 
-        });
+        if (editingAppointment) {
+            // FLUXO DE EDIÇÃO (ATUALIZAÇÃO)
+            await updateAppointment(editingAppointment.id, {
+                professionalId: professional?.id || '1',
+                professionalName: professional?.name || 'Diego',
+                date: dateIso,
+                time: time,
+                duration: totalDuration,
+                status: 'Confirmado', // Reseta status se estava cancelado
+                observation: formData.observation
+            });
+
+            // Notifica Profissional
+            await addNotification({
+                type: 'AGENDAMENTO',
+                title: '🔄 Agendamento Remarcado',
+                message: `O cliente ${formData.name} reagendou para ${date} às ${time}.`,
+                link: '/agenda',
+                recipient_pro_id: professional?.id 
+            });
+
+            // Mock do objeto para a confirmação
+            finalAppointment = { 
+                ...editingAppointment, 
+                date: dateIso, 
+                time, 
+                professionalName: professional?.name,
+                duration: totalDuration 
+            };
+
+        } else {
+            // FLUXO DE NOVO AGENDAMENTO
+            finalAppointment = await saveAppointment({
+                clientId: 'public-' + Date.now(),
+                clientName: formData.name,
+                clientPhone: formData.phone,
+                professionalId: professional?.id || '1',
+                professionalName: professional?.name || 'Diego',
+                date: dateIso, 
+                time: time,
+                duration: totalDuration,
+                status: 'Confirmado',
+                services: selectedServices?.map((s: any) => s.name) || [],
+                observation: formData.observation
+            });
+
+            // Notifica Profissional
+            await addNotification({
+                type: 'AGENDAMENTO',
+                title: '💈 Novo Agendamento Online',
+                message: `Cliente ${formData.name} reservou ${selectedServices?.map((s:any) => s.name).join(', ')} para ${date} às ${time} com ${professional?.name}.`,
+                link: '/agenda',
+                recipient_pro_id: professional?.id 
+            });
+        }
 
         navigate('/booking/confirmation', { 
             state: { 
-                appointment: newApt,
+                appointment: finalAppointment,
                 dateDisplay: date, 
                 address: "Rodovia Amaral Peixoto A, Br 106 (Tamoios) , 500 - Orla" 
             } 
@@ -113,7 +147,7 @@ const BookingForm: React.FC = () => {
 
         <div className="bg-gray-50 border border-gray-100 rounded-3xl p-6 space-y-4 shadow-inner">
             <div className="flex items-center justify-center gap-2 text-blue-900 font-black uppercase text-[10px] tracking-widest">
-                <CheckCircle2 size={14} /> Resumo
+                <CheckCircle2 size={14} /> {editingAppointment ? 'Nova Escolha' : 'Resumo'}
             </div>
             <p className="font-bold text-gray-800 text-center text-sm">
                 Dia {date} às {time}<br/>
@@ -140,9 +174,10 @@ const BookingForm: React.FC = () => {
                         value={formData.name}
                         onChange={e => handleInputChange('name', e.target.value)}
                         placeholder="Como devemos te chamar?" 
+                        readOnly={!!editingAppointment} // Nome não muda na edição para simplificar
                         className={`w-full bg-white border rounded-2xl py-4 px-12 outline-none focus:ring-1 text-gray-800 font-bold shadow-sm transition-all ${
                           errors.name ? 'border-red-500 ring-red-100 ring-1' : 'border-gray-200 focus:ring-black'
-                        }`}
+                        } ${editingAppointment ? 'bg-gray-50 text-gray-500' : ''}`}
                     />
                     <User className={`absolute left-4 top-1/2 -translate-y-1/2 transition-colors ${errors.name ? 'text-red-400' : 'text-gray-300'}`} size={20} />
                 </div>
@@ -164,9 +199,10 @@ const BookingForm: React.FC = () => {
                         onChange={e => handleInputChange('phone', e.target.value)}
                         placeholder="(00) 0 0000-0000" 
                         maxLength={15}
+                        readOnly={!!editingAppointment} // Telefone é chave de busca, não muda na edição pública
                         className={`w-full bg-white border rounded-2xl py-4 px-12 outline-none focus:ring-1 text-gray-800 font-bold shadow-sm transition-all ${
                           errors.phone ? 'border-red-500 ring-red-100 ring-1' : 'border-gray-200 focus:ring-black'
-                        }`}
+                        } ${editingAppointment ? 'bg-gray-50 text-gray-500' : ''}`}
                     />
                     <Phone className={`absolute left-4 top-1/2 -translate-y-1/2 transition-colors ${errors.phone ? 'text-red-400' : 'text-gray-300'}`} size={20} />
                 </div>
@@ -196,7 +232,7 @@ const BookingForm: React.FC = () => {
             disabled={isSubmitting}
             className={`w-full bg-black text-white font-black py-5 rounded-[2rem] shadow-xl active:scale-[0.98] transition-all uppercase tracking-[0.2em] text-sm mt-4 min-h-[64px] ${isSubmitting ? 'opacity-50' : ''}`}
         >
-            {isSubmitting ? 'Agendando...' : 'Confirmar Agendamento'}
+            {isSubmitting ? 'Processando...' : editingAppointment ? 'Confirmar Reagendamento' : 'Confirmar Agendamento'}
         </button>
       </div>
     </div>

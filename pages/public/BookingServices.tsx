@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, CalendarDays, MapPin, ChevronLeft, Clock, Check, Loader2 } from 'lucide-react';
+import { Search, CalendarDays, MapPin, ChevronLeft, Clock, Check, Loader2, Calendar } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getSettings } from '../../data/agendaData';
 import { EstablishmentSettings } from '../../types';
@@ -74,54 +74,65 @@ const BookingServices: React.FC = () => {
       `}</style>
 
       {/* Header com a cor secundária ou preto padrão */}
-      <div className="h-16 w-full relative shrink-0" style={{ backgroundColor: settings.secondaryColor }}>
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-0 w-32 h-32 rounded-full border-4 border-white bg-white overflow-hidden shadow-xl z-10 translate-y-[-20%]">
-          <img src={settings.logoUrl || "https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png"} alt={settings.name} className="w-full h-full object-contain p-1" />
+      <div className="h-24 w-full relative shrink-0" style={{ backgroundColor: settings.secondaryColor }}>
+        {/* Logo Redonda Centralizada */}
+        <div className="absolute -bottom-12 left-1/2 -translate-x-1/2 w-32 h-32 rounded-full border-4 border-white bg-white overflow-hidden shadow-xl z-20">
+          <img 
+            src={settings.logoUrl || "https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png"} 
+            alt={settings.name} 
+            className="w-full h-full object-cover p-0.5 rounded-full" 
+          />
         </div>
       </div>
 
-      <div className="mt-20 px-4 space-y-4 pb-24">
+      <div className="mt-14 px-4 space-y-5 pb-28">
         <h2 className="text-center font-black text-gray-900 uppercase tracking-widest text-sm pt-2">
             Seja bem-vindo à <span className="text-primary">{settings.name}</span>
         </h2>
 
-        <div className="flex gap-2">
-          <div className="flex-1 relative">
-            <input 
-              type="text" 
-              placeholder="Pesquisar..." 
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full border border-gray-200 rounded-lg py-3 px-4 pr-10 outline-none bg-gray-50/50 text-sm font-medium" 
-            />
-            <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-          </div>
-          <button 
-            onClick={() => navigate('/booking/consult')} 
-            className="p-3 bg-gray-900 text-white rounded-xl shadow-sm active:scale-95"
-            style={{ backgroundColor: settings.secondaryColor }}
-          >
-            <CalendarDays size={20} />
-          </button>
-          <button 
-            onClick={() => navigate('/booking/location')} 
-            className="p-3 bg-gray-900 text-white rounded-xl shadow-sm active:scale-95"
-            style={{ backgroundColor: settings.secondaryColor }}
-          >
-            <MapPin size={20} />
-          </button>
+        {/* Busca e Ações Rápidas */}
+        <div className="space-y-3">
+            <div className="flex gap-2">
+            <div className="flex-1 relative">
+                <input 
+                type="text" 
+                placeholder="Pesquisar serviço..." 
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full border border-gray-200 rounded-xl py-3 px-4 pr-10 outline-none bg-gray-50/50 text-sm font-medium focus:ring-1 focus:ring-gray-300 transition-all" 
+                />
+                <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+            </div>
+            <button 
+                onClick={() => navigate('/booking/location')} 
+                className="p-3 bg-gray-900 text-white rounded-xl shadow-sm active:scale-95"
+                style={{ backgroundColor: settings.secondaryColor }}
+            >
+                <MapPin size={20} />
+            </button>
+            </div>
+
+            {/* Botão de Consulta de Agendamentos */}
+            <button 
+                onClick={() => navigate('/booking/consult')}
+                className="w-full bg-white border border-gray-200 p-3 rounded-xl flex items-center justify-center gap-2 text-gray-600 font-bold text-xs uppercase tracking-widest shadow-sm active:scale-95 transition-all hover:bg-gray-50"
+            >
+                <Calendar size={16} className="text-primary" />
+                Consultar Meus Agendamentos
+            </button>
         </div>
 
-        <div className="space-y-6 pt-4">
+        {/* Lista de Serviços */}
+        <div className="space-y-4 pt-2">
           {availableServices.length === 0 ? (
               <div className="text-center py-10 text-gray-400 text-sm">
                   Nenhum serviço disponível no momento.
               </div>
           ) : availableServices.map(s => (
-            <div key={s.id} className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-visible flex flex-col items-center relative mt-8 pt-10 pb-6 transition-all hover:shadow-md">
+            <div key={s.id} className="bg-white rounded-[2rem] border border-gray-100 shadow-sm overflow-visible flex flex-col items-center relative mt-16 pt-14 pb-6 transition-all hover:shadow-md">
               
-              {/* Imagem Redonda Centralizada no Topo (Overlap) */}
-              <div className="absolute -top-10 left-1/2 -translate-x-1/2 w-28 h-28 rounded-full border-4 border-white shadow-lg overflow-hidden bg-gray-50">
+              {/* Imagem Redonda Centralizada no Topo (Overlap corrigido com margens maiores) */}
+              <div className="absolute -top-12 left-1/2 -translate-x-1/2 w-28 h-28 rounded-full border-[6px] border-white shadow-lg overflow-hidden bg-gray-50 z-10">
                 {s.image_url ? (
                     <img src={s.image_url} alt={s.name} className="w-full h-full object-cover" />
                 ) : (
@@ -140,7 +151,7 @@ const BookingServices: React.FC = () => {
                 )}
               </div>
 
-              <div className="w-full px-5 mt-4 text-center space-y-2">
+              <div className="w-full px-5 mt-2 text-center space-y-2">
                 <h3 className="font-black text-gray-900 text-lg uppercase tracking-tight leading-tight">{s.name}</h3>
                 <div className="flex items-center justify-center gap-2 text-gray-400 text-xs font-bold uppercase">
                   <Clock size={14} className="text-primary" style={{ color: settings.primaryColor }} />

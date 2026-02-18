@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   ChevronLeft, Copy, MapPin, Upload, ChevronRight, 
-  Globe, Check, X, Home, Palette, Eye, Clock, Loader2
+  Globe, Check, X, Home, Clock, Loader2, Eye
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getSettings, saveSettings } from '../data/agendaData';
@@ -108,7 +108,7 @@ const Establishment: React.FC = () => {
     setLoading(true);
     try {
       await saveSettings(settings);
-      alert('Configurações salvas com sucesso!');
+      alert('✅ Configurações salvas com sucesso!');
     } catch (err: any) {
       console.error(err);
       alert('Erro ao salvar: ' + err.message);
@@ -125,60 +125,7 @@ const Establishment: React.FC = () => {
       </header>
 
       <div className="p-4 space-y-6 overflow-y-auto pb-24">
-        {/* Identidade Visual */}
-        <div className="bg-white p-6 rounded-[2rem] border border-gray-100 shadow-sm space-y-6">
-            <div className="flex items-center gap-2 mb-2">
-                <Palette size={18} className="text-blue-900" />
-                <h3 className="text-gray-900 font-black text-xs uppercase tracking-widest">Identidade Visual</h3>
-            </div>
-
-            <div className="grid grid-cols-2 gap-6">
-                <div className="space-y-2">
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block px-1">Cor Primária</label>
-                    <div className="flex items-center gap-3 bg-gray-50 p-2 rounded-2xl border border-gray-200 shadow-inner">
-                        <input 
-                            type="color" 
-                            value={settings.primaryColor}
-                            onChange={(e) => setSettings({ ...settings, primaryColor: e.target.value })}
-                            className="w-10 h-10 rounded-xl border-2 border-white shadow-sm cursor-pointer"
-                        />
-                        <span className="text-[10px] font-mono font-bold text-gray-600 uppercase">{settings.primaryColor}</span>
-                    </div>
-                </div>
-                <div className="space-y-2">
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block px-1">Cor Secundária</label>
-                    <div className="flex items-center gap-3 bg-gray-50 p-2 rounded-2xl border border-gray-200 shadow-inner">
-                        <input 
-                            type="color" 
-                            value={settings.secondaryColor}
-                            onChange={(e) => setSettings({ ...settings, secondaryColor: e.target.value })}
-                            className="w-10 h-10 rounded-xl border-2 border-white shadow-sm cursor-pointer"
-                        />
-                        <span className="text-[10px] font-mono font-bold text-gray-600 uppercase">{settings.secondaryColor}</span>
-                    </div>
-                </div>
-            </div>
-
-            {/* Preview Theme */}
-            <div className="pt-4 border-t border-gray-50">
-                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">Pré-visualização do Tema</p>
-                <div 
-                    className="p-4 rounded-2xl border-2 border-gray-100 flex items-center justify-between shadow-sm" 
-                    style={{ backgroundColor: '#ffffff' }}
-                >
-                    <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-md" style={{ backgroundColor: settings.primaryColor }}>
-                            <Check size={20} />
-                        </div>
-                        <span className="font-bold text-sm" style={{ color: settings.primaryColor }}>Cor de Destaque</span>
-                    </div>
-                    <button className="text-[10px] font-black uppercase tracking-widest py-2 px-4 rounded-full border bg-gray-50" style={{ borderColor: settings.secondaryColor, color: settings.secondaryColor }}>
-                        Botão Secundário
-                    </button>
-                </div>
-            </div>
-        </div>
-
+        
         {/* Configurações da Agenda */}
         <div className="bg-white p-6 rounded-[2rem] border border-gray-100 shadow-sm space-y-6">
             <div className="flex items-center gap-2 mb-2">
@@ -264,7 +211,11 @@ const Establishment: React.FC = () => {
                 <div className="w-11 h-11 rounded-xl flex items-center justify-center bg-gray-50"><Loader2 className="animate-spin text-blue-900" size={20} /></div>
               ) : settings.logoUrl ? (
                 <div className="w-11 h-11 rounded-xl overflow-hidden border border-gray-100 shadow-inner bg-white">
-                   <img src={settings.logoUrl} alt="Logo" className="w-full h-full object-contain p-1" />
+                   <img 
+                    src={settings.logoUrl} 
+                    alt="Logo" 
+                    className="w-full h-full object-cover scale-110" 
+                   />
                 </div>
               ) : (
                 <div className="bg-gray-50 p-2.5 rounded-xl text-gray-500"><Upload size={22} /></div>

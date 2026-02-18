@@ -9,6 +9,7 @@ import {
 import { useNavigate, useParams } from 'react-router-dom';
 import { getAppointments, updateAppointment, Appointment, deleteAppointment, transferAppointment } from '../data/agendaData';
 import { syncAppointmentTransactions } from '../data/transactions'; 
+import { addNotification } from '../data/notifications';
 import { db } from '../supabase';
 
 const AppointmentCheckout: React.FC = () => {
@@ -160,21 +161,42 @@ const AppointmentCheckout: React.FC = () => {
   const handleDelete = async () => {
       if (!appointment) return;
       
-      // Lógica com Justificativa (Simulada aqui com prompt nativo ou modal customizado)
-      const reason = prompt('Motivo da exclusão (será registrado no log):');
-      if (!reason) return;
+      // Abre o modal de confirmação em vez de usar prompt
+      triggerConfirm(
+          'Excluir Agendamento?',
+          'Esta ação removerá permanentemente o registro e notificará a administração. Deseja continuar?',
+          async () => {
+              setProcessing(true);
+              try {
+                  const reason = "Cancelado via app pelo usuário";
+                  await deleteAppointment(appointment.id, reason);
 
-      setProcessing(true);
-      try {
-          await deleteAppointment(appointment.id, reason);
-          alert('Agendamento excluído e log registrado.');
-          navigate('/agenda');
-      } catch (e) {
-          console.error(e);
-          alert('Erro ao excluir agendamento.');
-      } finally {
-          setProcessing(false);
-      }
+                  // Verifica se é Colaborador para enviar notificação extra aos Admins
+                  const role = localStorage.getItem('user_role');
+                  const userName = localStorage.getItem('user_name') || 'Colaborador';
+
+                  if (role === 'COLLABORATOR') {
+                      await addNotification({
+                          type: 'SISTEMA',
+                          title: '⚠️ Registro Apagado por Colaborador',
+                          message: `O colaborador ${userName} apagou o agendamento de ${appointment.clientName} (Data: ${appointment.date}).`,
+                          link: '/financial/log',
+                          // recipient_pro_id nulo vai para Admins
+                      });
+                  }
+
+                  alert('Agendamento excluído com sucesso.');
+                  navigate('/agenda');
+              } catch (e: any) {
+                  console.error(e);
+                  alert('Erro ao excluir: ' + e.message);
+              } finally {
+                  setProcessing(false);
+                  setConfirmConfig(prev => ({ ...prev, show: false }));
+              }
+          },
+          'danger'
+      );
   };
 
   const handleTransfer = async () => {
