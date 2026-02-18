@@ -3,6 +3,7 @@ import React from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
+import InstallPrompt from './components/InstallPrompt';
 
 // Páginas Administrativas e Gerais
 import Agenda from './pages/Agenda';
@@ -72,6 +73,7 @@ import BookingConfirmation from './pages/public/BookingConfirmation';
 const App: React.FC = () => {
   return (
     <HashRouter>
+      <InstallPrompt />
       <Routes>
         <Route path="/" element={<Navigate to="/login" replace />} />
         <Route path="/login" element={<Login />} />

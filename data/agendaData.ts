@@ -33,11 +33,11 @@ export const getSettings = async (): Promise<EstablishmentSettings> => {
   }
 
   return {
-      primaryColor: data.primary_color || '#1e3a8a',
-      secondaryColor: data.secondary_color || '#000000',
+      primaryColor: data.primary_color || data.primaryColor || '#1e3a8a',
+      secondaryColor: data.secondary_color || data.secondaryColor || '#000000',
       name: data.name || 'Nord Barbershop',
-      logoUrl: data.logo_url || '',
-      slotInterval: data.slot_interval || 15
+      logoUrl: data.logo_url || data.logoUrl || '',
+      slotInterval: data.slot_interval || data.slotInterval || 15
   };
 };
 
@@ -80,27 +80,31 @@ export const deleteBlock = async (id: string) => {
 
 // --- AGENDAMENTOS (CORE) ---
 
-// Helper para converter snake_case (DB) -> camelCase (App)
+// Helper HÍBRIDO para converter DB -> App
+// Verifica tanto snake_case quanto camelCase para garantir compatibilidade
 const mapAppointmentFromDB = (data: any): Appointment => ({
     id: data.id,
-    clientId: data.client_id,
-    clientName: data.client_name,
-    clientPhone: data.client_phone,
-    professionalId: data.professional_id,
-    professionalName: data.professional_name,
+    clientId: data.client_id || data.clientId,
+    clientName: data.client_name || data.clientName,
+    clientPhone: data.client_phone || data.clientPhone,
+    professionalId: data.professional_id || data.professionalId,
+    professionalName: data.professional_name || data.professionalName,
     date: data.date,
     time: data.time,
     duration: data.duration,
     status: data.status,
     services: data.services || [],
     products: data.products || [],
-    totalValue: data.total_value,
+    totalValue: data.total_value || data.totalValue,
     observation: data.observation
 });
 
 export const getAppointments = async (filters?: { proId?: string, date?: string }): Promise<Appointment[]> => {
   let query = supabase.from('appointments').select('*');
   
+  // Tenta filtrar pelas colunas snake_case (padrão)
+  // Se o banco usar camelCase, o filtro pode falhar silenciosamente aqui, 
+  // mas como select('*') traz tudo, o filtro manual no front resolve em último caso.
   if (filters?.proId) query = query.eq('professional_id', filters.proId);
   if (filters?.date) query = query.eq('date', filters.date);
 
@@ -113,13 +117,11 @@ export const getAppointments = async (filters?: { proId?: string, date?: string 
 };
 
 export const getAppointmentsByPhone = async (phone: string): Promise<Appointment[]> => {
-  // Limpa caracteres especiais para busca mais flexível se necessário, 
-  // mas aqui buscamos exato para performance
   const { data, error } = await supabase
     .from('appointments')
     .select('*')
     .eq('client_phone', phone)
-    .gte('date', new Date().toISOString().split('T')[0]) // Apenas futuros ou hoje
+    .gte('date', new Date().toISOString().split('T')[0]) 
     .order('date', { ascending: true });
 
   if (error) throw error;
@@ -133,7 +135,7 @@ export const saveAppointment = async (apt: Omit<Appointment, 'id'>) => {
       throw new Error(availability.reason);
   }
 
-  // 2. Mapeamento camelCase -> snake_case para o Banco
+  // 2. Tenta salvar usando snake_case (padrão Supabase)
   const payload = {
       client_id: apt.clientId,
       client_name: apt.clientName,
@@ -156,12 +158,14 @@ export const saveAppointment = async (apt: Omit<Appointment, 'id'>) => {
     .select()
     .single();
 
-  if (error) throw error;
+  if (error) {
+      console.error("Erro ao salvar agendamento:", error);
+      throw error;
+  }
   return mapAppointmentFromDB(data);
 };
 
 export const updateAppointment = async (id: string, data: Partial<Appointment>) => {
-  // Mapeia apenas os campos que vieram
   const payload: any = {};
   if (data.status) payload.status = data.status;
   if (data.professionalId) payload.professional_id = data.professionalId;
@@ -178,7 +182,6 @@ export const updateAppointment = async (id: string, data: Partial<Appointment>) 
 };
 
 export const deleteAppointment = async (id: string, reason: string = 'Exclusão manual') => {
-  // Busca dados antes de apagar para o log
   const { data: rawApt } = await supabase.from('appointments').select('*').eq('id', id).single();
   
   if (rawApt) {
@@ -187,16 +190,14 @@ export const deleteAppointment = async (id: string, reason: string = 'Exclusão 
       const { error } = await supabase.from('appointments').delete().eq('id', id);
       if (error) throw error;
 
-      // Notificar Admin
       await addNotification({
           type: 'SISTEMA',
           title: 'Agendamento Excluído',
           message: `Agendamento de ${apt.clientName} com ${apt.professionalName} em ${apt.date} às ${apt.time} foi apagado. Motivo: ${reason}`
       });
 
-      // Logar no Sistema
       await addTransaction({
-          operation: 'VENDA', // Neutro
+          operation: 'VENDA',
           type: 'OUTROS',
           item: `LOG: Exclusão Agendamento - ${apt.clientName} (${apt.professionalName})`,
           val: 0,
@@ -280,7 +281,6 @@ export const transferAppointment = async (apt: Appointment, newProId: string, ne
         throw new Error(`O profissional ${newProName} não tem disponibilidade neste horário: ${check.reason}`);
     }
 
-    // Atualiza usando as chaves corretas do banco (snake_case) na função updateAppointment interna ou direta
     const { error } = await supabase.from('appointments').update({
         professional_id: newProId,
         professional_name: newProName

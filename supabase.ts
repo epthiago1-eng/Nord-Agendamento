@@ -1,10 +1,19 @@
+
 import { createClient } from '@supabase/supabase-js';
 
-// Credenciais configuradas para o projeto (Recupera do Env do Netlify ou usa Fallback seguro)
-// No Netlify, defina as variáveis de ambiente: VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY
-export const supabaseUrl = (import.meta as any).env?.VITE_SUPABASE_URL || 'https://vnpqrmrgpgrlkddquald.supabase.co';
+// Função auxiliar para obter variáveis de ambiente de forma segura
+const getEnv = (key: string, fallback: string): string => {
+  // Verifica se import.meta.env existe (Vite)
+  if (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env[key]) {
+    return (import.meta as any).env[key];
+  }
+  // Fallback direto
+  return fallback;
+};
 
-export const supabaseAnonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZucHFybXJncGdybGtkZHF1YWxkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA4MzYwNjIsImV4cCI6MjA4NjQxMjA2Mn0.Cjw6wUkGAWpbeTWp15wcBeAydHmloZoVHBxFXKFa9z0'; 
+// Credenciais com fallback explícito
+export const supabaseUrl = getEnv('VITE_SUPABASE_URL', 'https://vnpqrmrgpgrlkddquald.supabase.co');
+export const supabaseAnonKey = getEnv('VITE_SUPABASE_ANON_KEY', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZucHFybXJncGdybGtkZHF1YWxkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA4MzYwNjIsImV4cCI6MjA4NjQxMjA2Mn0.Cjw6wUkGAWpbeTWp15wcBeAydHmloZoVHBxFXKFa9z0');
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
@@ -23,5 +32,5 @@ export const db = {
   costCenters: () => supabase.from('cost_centers'),
   professionalServices: () => supabase.from('professional_services'),
   professionalHours: () => supabase.from('professional_hours'),
-  notifications: () => supabase.from('notifications') // Nova tabela
+  notifications: () => supabase.from('notifications')
 };
