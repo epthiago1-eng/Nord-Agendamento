@@ -42,6 +42,7 @@ export const getSettings = async (): Promise<EstablishmentSettings> => {
 };
 
 export const saveSettings = async (settings: EstablishmentSettings) => {
+  // BANCO: table 'settings' usa snake_case
   const payload = {
       id: 1, 
       primary_color: settings.primaryColor,
@@ -80,32 +81,29 @@ export const deleteBlock = async (id: string) => {
 
 // --- AGENDAMENTOS (CORE) ---
 
-// Helper HÍBRIDO para converter DB -> App
-// Verifica tanto snake_case quanto camelCase para garantir compatibilidade
+// Helper para converter DB -> App
 const mapAppointmentFromDB = (data: any): Appointment => ({
     id: data.id,
-    clientId: data.client_id || data.clientId,
-    clientName: data.client_name || data.clientName,
-    clientPhone: data.client_phone || data.clientPhone,
-    professionalId: data.professional_id || data.professionalId,
-    professionalName: data.professional_name || data.professionalName,
+    clientId: data.clientId, // BANCO: camelCase
+    clientName: data.clientName,
+    clientPhone: data.clientPhone,
+    professionalId: data.professionalId,
+    professionalName: data.professionalName,
     date: data.date,
     time: data.time,
     duration: data.duration,
     status: data.status,
     services: data.services || [],
     products: data.products || [],
-    totalValue: data.total_value || data.totalValue,
+    totalValue: data.totalValue !== undefined ? data.totalValue : data.total_value,
     observation: data.observation
 });
 
 export const getAppointments = async (filters?: { proId?: string, date?: string }): Promise<Appointment[]> => {
   let query = supabase.from('appointments').select('*');
   
-  // Tenta filtrar pelas colunas snake_case (padrão)
-  // Se o banco usar camelCase, o filtro pode falhar silenciosamente aqui, 
-  // mas como select('*') traz tudo, o filtro manual no front resolve em último caso.
-  if (filters?.proId) query = query.eq('professional_id', filters.proId);
+  // BANCO: appointments usa colunas camelCase
+  if (filters?.proId) query = query.eq('professionalId', filters.proId);
   if (filters?.date) query = query.eq('date', filters.date);
 
   const { data, error } = await query;
@@ -120,7 +118,7 @@ export const getAppointmentsByPhone = async (phone: string): Promise<Appointment
   const { data, error } = await supabase
     .from('appointments')
     .select('*')
-    .eq('client_phone', phone)
+    .eq('clientPhone', phone) // BANCO: camelCase
     .gte('date', new Date().toISOString().split('T')[0]) 
     .order('date', { ascending: true });
 
@@ -135,20 +133,20 @@ export const saveAppointment = async (apt: Omit<Appointment, 'id'>) => {
       throw new Error(availability.reason);
   }
 
-  // 2. Tenta salvar usando snake_case (padrão Supabase)
+  // 2. Salvar usando camelCase conforme Tabela 'appointments' do SQL
   const payload = {
-      client_id: apt.clientId,
-      client_name: apt.clientName,
-      client_phone: apt.clientPhone,
-      professional_id: apt.professionalId,
-      professional_name: apt.professionalName,
+      clientId: apt.clientId,
+      clientName: apt.clientName,
+      clientPhone: apt.clientPhone,
+      professionalId: apt.professionalId,
+      professionalName: apt.professionalName,
       date: apt.date,
       time: apt.time,
       duration: apt.duration,
       status: apt.status,
       services: apt.services,
       products: apt.products || [],
-      total_value: apt.totalValue || 0,
+      totalValue: apt.totalValue || 0,
       observation: apt.observation
   };
 
@@ -166,11 +164,12 @@ export const saveAppointment = async (apt: Omit<Appointment, 'id'>) => {
 };
 
 export const updateAppointment = async (id: string, data: Partial<Appointment>) => {
+  // Payload camelCase para 'appointments'
   const payload: any = {};
   if (data.status) payload.status = data.status;
-  if (data.professionalId) payload.professional_id = data.professionalId;
-  if (data.professionalName) payload.professional_name = data.professionalName;
-  if (data.totalValue !== undefined) payload.total_value = data.totalValue;
+  if (data.professionalId) payload.professionalId = data.professionalId;
+  if (data.professionalName) payload.professionalName = data.professionalName;
+  if (data.totalValue !== undefined) payload.totalValue = data.totalValue;
   if (data.services) payload.services = data.services;
   if (data.products) payload.products = data.products;
 
@@ -217,7 +216,6 @@ export const checkAvailability = async (
     excludeAptId?: string
 ): Promise<{ available: boolean, reason?: string }> => {
     
-    // 1. Verificar Passado
     const now = new Date();
     const proposedStart = new Date(`${date}T${time}`);
     const proposedEnd = new Date(proposedStart.getTime() + duration * 60000);
@@ -226,7 +224,6 @@ export const checkAvailability = async (
         return { available: false, reason: 'Não é possível agendar em datas ou horários passados.' };
     }
 
-    // 2. Verificar Bloqueios Manuais
     const { data: blocks } = await supabase
         .from('agenda_blocks')
         .select('*')
@@ -244,11 +241,11 @@ export const checkAvailability = async (
         return { available: false, reason: 'Horário bloqueado pelo profissional.' };
     }
 
-    // 3. Verificar Conflito com Outros Agendamentos
+    // BANCO: appointments usa 'professionalId'
     let query = supabase
         .from('appointments')
         .select('id, time, duration, status')
-        .eq('professional_id', proId)
+        .eq('professionalId', proId)
         .eq('date', date)
         .not('status', 'in', '("Cancelaram","Desmarcou")');
 
@@ -282,8 +279,8 @@ export const transferAppointment = async (apt: Appointment, newProId: string, ne
     }
 
     const { error } = await supabase.from('appointments').update({
-        professional_id: newProId,
-        professional_name: newProName
+        professionalId: newProId,
+        professionalName: newProName
     }).eq('id', apt.id);
 
     if (error) throw error;
@@ -328,7 +325,7 @@ export const getAvailableSlotsForPro = async (proId: string, dateStr: string, se
     const { data: appointments } = await supabase
       .from('appointments')
       .select('time, duration')
-      .eq('professional_id', proId)
+      .eq('professionalId', proId)
       .eq('date', dateStr)
       .not('status', 'in', '("Desmarcou", "Cancelaram")');
 

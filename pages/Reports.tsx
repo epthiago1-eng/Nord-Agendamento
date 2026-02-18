@@ -57,7 +57,7 @@ const Reports: React.FC = () => {
             <h3 className="text-center font-bold text-[#1e3a8a] mb-6 uppercase text-[11px] tracking-[0.2em]">Resumo de Atendimentos</h3>
             
             <div className="flex flex-col items-center">
-                <div className="w-full h-48 flex justify-center">
+                <div className="w-full h-48 flex justify-center min-h-[192px]">
                     <ResponsiveContainer width="100%" height="100%">
                         <RePieChart>
                             <Pie

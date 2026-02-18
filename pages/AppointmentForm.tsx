@@ -33,8 +33,8 @@ const AppointmentForm: React.FC = () => {
     name: '',
     phone: '',
     email: '',
-    birth_date: '',
-    observation: ''
+    birth_date: ''
+    // Removido observation
   });
 
   // Formatação segura YYYY-MM-DD
@@ -145,8 +145,7 @@ const AppointmentForm: React.FC = () => {
             name: newClient.name,
             phone: newClient.phone,
             email: newClient.email || null,
-            birth_date: newClient.birth_date || null,
-            observation: newClient.observation || null
+            birth_date: newClient.birth_date || null // snake_case
         }).select().single();
 
         if (error) throw error;
@@ -155,10 +154,10 @@ const AppointmentForm: React.FC = () => {
         setSelectedClient(data);
         setIsQuickAddOpen(false);
         setClientSearch('');
-        setNewClient({ name: '', phone: '', email: '', birth_date: '', observation: '' });
-    } catch (err) {
+        setNewClient({ name: '', phone: '', email: '', birth_date: '' });
+    } catch (err: any) {
         console.error(err);
-        alert('Erro ao cadastrar cliente.');
+        alert('Erro ao cadastrar cliente: ' + err.message);
     }
   };
 
@@ -445,16 +444,6 @@ const AppointmentForm: React.FC = () => {
                     className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-10 outline-none focus:ring-1 focus:ring-blue-900 text-sm font-medium text-gray-700"
                   />
                   <Calendar className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-300" size={16} />
-                </div>
-                <div className="relative">
-                  <textarea 
-                    placeholder="Observações do cliente..."
-                    value={newClient.observation}
-                    onChange={e => setNewClient({...newClient, observation: e.target.value})}
-                    rows={2}
-                    className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-10 outline-none focus:ring-1 focus:ring-blue-900 text-sm font-medium text-gray-700 resize-none"
-                  />
-                  <MessageSquare className="absolute left-3.5 top-4 text-gray-300" size={16} />
                 </div>
               </div>
             </div>

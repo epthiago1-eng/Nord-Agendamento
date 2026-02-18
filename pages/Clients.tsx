@@ -17,7 +17,7 @@ const Clients: React.FC = () => {
     phone: '', 
     email: '', 
     birth_date: '', 
-    observation: '' 
+    // Removed observation as it doesn't exist in DB
   });
   const [saving, setSaving] = useState(false);
 
@@ -54,18 +54,17 @@ const Clients: React.FC = () => {
           name: newClient.name,
           phone: newClient.phone,
           email: newClient.email || null,
-          birth_date: newClient.birth_date || null,
-          observation: newClient.observation || null
+          birth_date: newClient.birth_date || null // Usando snake_case correto
         });
         if (error) throw error;
         
         alert('Cliente cadastrado com sucesso!');
         setIsModalOpen(false);
-        setNewClient({ name: '', phone: '', email: '', birth_date: '', observation: '' });
+        setNewClient({ name: '', phone: '', email: '', birth_date: '' });
         fetchClients();
-    } catch (err) {
+    } catch (err: any) {
         console.error(err);
-        alert('Erro ao cadastrar cliente.');
+        alert('Erro ao cadastrar cliente: ' + err.message);
     } finally {
         setSaving(false);
     }
@@ -159,19 +158,6 @@ const Clients: React.FC = () => {
                                 />
                                 <Calendar className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-300 pointer-events-none" size={16} />
                             </div>
-                        </div>
-                    </div>
-                    <div>
-                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1 mb-1 block">Observação (Opcional)</label>
-                        <div className="relative">
-                            <textarea 
-                                value={newClient.observation}
-                                onChange={(e) => setNewClient({...newClient, observation: e.target.value})}
-                                rows={3}
-                                className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-blue-900 text-gray-800 font-medium resize-none text-sm"
-                                placeholder="Alergias, preferências, etc..."
-                            />
-                            <MessageSquare className="absolute right-4 bottom-4 text-gray-300 pointer-events-none" size={16} />
                         </div>
                     </div>
                 </div>

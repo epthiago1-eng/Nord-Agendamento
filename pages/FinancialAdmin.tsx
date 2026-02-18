@@ -343,7 +343,7 @@ const FinancialAdmin: React.FC = () => {
             <div className="bg-green-50 p-3 rounded-2xl border border-green-100 text-center">
                 <div className="flex justify-center text-green-600 mb-1"><TrendingUp size={18} /></div>
                 <span className="text-[9px] font-black text-green-800 uppercase block">Entradas</span>
-                <span className="text-sm font-black text-green-700">R$ {stats.income.toFixed(0)}</span>
+                <span className="text-sm font-black text-green-700">R$ {Math.abs(stats.income).toFixed(0)}</span>
             </div>
             <div className="bg-red-50 p-3 rounded-2xl border border-red-100 text-center">
                 <div className="flex justify-center text-red-500 mb-1"><TrendingDown size={18} /></div>
@@ -362,7 +362,7 @@ const FinancialAdmin: React.FC = () => {
             <h3 className="text-xs font-black text-gray-900 uppercase tracking-widest mb-4 flex items-center gap-2">
                 <BarChart3 size={16} className="text-blue-900" /> Fluxo do Período
             </h3>
-            <div className="h-48 w-full">
+            <div className="h-48 w-full min-h-[192px]">
                 <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={stats.chartData}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />

@@ -52,7 +52,7 @@ const ProfessionalForm: React.FC = () => {
         phone: formData.phone,
         email: formData.email,
         avatar: imagePreview,
-        show_in_public: formData.showInPublic
+        show_in_public: formData.showInPublic // BANCO: snake_case
     };
 
     try {

@@ -27,8 +27,7 @@ const ServiceForm: React.FC = () => {
         name: editData.name || '',
         duration: String(editData.duration || '45'),
         value: `${String(editData.price || '0,00').replace('.', ',')}`,
-        // Verifica variações de nome da coluna (reminder_days é o padrão do banco)
-        reminders: String(editData.reminder_days || editData.reminder || '0'),
+        reminders: String(editData.reminder_days || '0'),
         group: editData.group_name || 'Barber',
         observation: editData.observation || '',
         showInPublic: editData.show_in_public !== undefined ? editData.show_in_public : true
@@ -58,10 +57,10 @@ const ServiceForm: React.FC = () => {
         name: formData.name,
         duration: parseInt(formData.duration) || 30,
         price: parseFloat(formData.value.replace('R$ ', '').replace(',', '.')) || 0,
-        show_in_public: formData.showInPublic,
-        image_url: imagePreview,
-        group_name: formData.group,
-        reminder_days: parseInt(formData.reminders) || 0, // Salva na coluna correta
+        show_in_public: formData.showInPublic, // snake_case
+        image_url: imagePreview, // snake_case
+        group_name: formData.group, // snake_case
+        reminder_days: parseInt(formData.reminders) || 0, // snake_case
         observation: formData.observation
     };
 

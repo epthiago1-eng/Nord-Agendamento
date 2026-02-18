@@ -9,7 +9,7 @@ import { useNavigate } from 'react-router-dom';
 import { getTransactions, Transaction } from '../data/transactions';
 import { getAppointments, Appointment } from '../data/agendaData';
 import { db } from '../supabase';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { BarChart, Bar, XAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
 const CollaboratorFinancial: React.FC = () => {
   const navigate = useNavigate();
@@ -305,7 +305,7 @@ const CollaboratorFinancial: React.FC = () => {
                     </div>
                 </div>
 
-                <div className="h-40 w-full">
+                <div className="h-40 w-full min-h-[160px]">
                     <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={chartDailyData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
                             <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 9, fontWeight: 'bold', fill: '#9ca3af' }} />
@@ -315,7 +315,7 @@ const CollaboratorFinancial: React.FC = () => {
                                     if (active && payload && payload.length) {
                                         return (
                                             <div className="bg-[#1e3a8a] text-white p-2 rounded-xl text-[10px] font-bold shadow-xl border border-white/20">
-                                                {prodMetric === 'value' ? `R$ ${payload[0].value.toFixed(2)}` : `${payload[0].payload.count} atendimentos`}
+                                                {prodMetric === 'value' ? `R$ ${Number(payload[0].value).toFixed(2)}` : `${payload[0].payload.count} atendimentos`}
                                             </div>
                                         );
                                     }
@@ -356,7 +356,7 @@ const CollaboratorFinancial: React.FC = () => {
                     </div>
                 </div>
 
-                <div className="h-40 w-full">
+                <div className="h-40 w-full min-h-[160px]">
                     <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={peakMetric === 'hour' ? peakData.hours : peakData.days} margin={{ top: 0, right: 0, left: -30, bottom: 0 }}>
                             <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 9, fontWeight: 'bold', fill: '#9ca3af' }} />
