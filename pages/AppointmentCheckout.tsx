@@ -3,7 +3,8 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { 
   ChevronLeft, ShoppingBag, ClipboardList, Plus, Trash2, 
   DollarSign, CheckCircle2, User, Clock, Calendar, Scissors, Box,
-  ArrowRightLeft, AlertTriangle, X, Loader2, UserX, XCircle, LogOut
+  ArrowRightLeft, AlertTriangle, X, Loader2, UserX, XCircle, LogOut,
+  MessageCircle
 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { getAppointments, updateAppointment, Appointment, deleteAppointment, transferAppointment } from '../data/agendaData';
@@ -25,6 +26,7 @@ const AppointmentCheckout: React.FC = () => {
   const [dbProfessionals, setDbProfessionals] = useState<any[]>([]);
   const [dbPaymentMethods, setDbPaymentMethods] = useState<any[]>([]);
   const [adminIds, setAdminIds] = useState<Set<string>>(new Set());
+  const [establishmentName, setEstablishmentName] = useState('Nord Barbershop');
 
   // Itens Selecionados
   const [selectedServices, setSelectedServices] = useState<any[]>([]);
@@ -57,17 +59,19 @@ const AppointmentCheckout: React.FC = () => {
         setLoading(true);
         try {
             // Carregar Listas Auxiliares
-            const [servicesRes, productsRes, prosRes, payMethodsRes, profilesRes] = await Promise.all([
+            const [servicesRes, productsRes, prosRes, payMethodsRes, profilesRes, settingsRes] = await Promise.all([
                 db.services().select('*').order('name'),
                 db.products().select('*').gt('current_stock', 0).order('name'),
                 db.professionals().select('*').eq('status', 'Ativo'),
                 db.paymentMethods().select('*').order('name'),
-                db.profiles().select('professional_id').eq('role', 'ADMIN')
+                db.profiles().select('professional_id').eq('role', 'ADMIN'),
+                db.settings().select('name').single()
             ]);
 
             setDbServices(servicesRes.data || []);
             setDbProducts(productsRes.data || []);
             setDbProfessionals(prosRes.data || []);
+            if (settingsRes.data?.name) setEstablishmentName(settingsRes.data.name);
             
             // Identificar IDs de Admins para filtrar da transferência
             const admins = new Set((profilesRes.data || []).map(p => p.professional_id).filter(Boolean));
@@ -190,6 +194,37 @@ const AppointmentCheckout: React.FC = () => {
       } finally {
           setProcessing(false);
       }
+  };
+
+  const handleWhatsAppReminder = () => {
+    if (!appointment || !appointment.clientPhone) {
+        alert('Telefone do cliente não disponível.');
+        return;
+    }
+
+    const cleanPhone = appointment.clientPhone.replace(/\D/g, '');
+    // Adiciona código do país se necessário (assumindo Brasil +55 se tiver 10 ou 11 dígitos)
+    const phoneParam = cleanPhone.length >= 10 && cleanPhone.length <= 11 ? `55${cleanPhone}` : cleanPhone;
+    
+    // Pega o primeiro nome
+    const firstName = appointment.clientName.split(' ')[0];
+    const dateFormatted = formatDateSafe(appointment.date);
+    const servicesText = selectedServices.map(s => s.name).join(' / ');
+
+    const message = `💈 E aí, ${firstName}! Tudo bem?
+
+Passando aqui pra dar aquele toque sobre seu horário amanhã:
+📅 Data: ${dateFormatted}
+⏰ Hora: ${appointment.time}
+🪑 Serviço: ${servicesText || 'Corte'}
+✂️ Profissional: ${appointment.professionalName}
+
+Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é só nos avisar. 😉
+
+👊 ${establishmentName}`;
+
+    const url = `https://wa.me/${phoneParam}?text=${encodeURIComponent(message)}`;
+    window.open(url, '_blank');
   };
 
   // --- Handlers de Adição ---
@@ -360,8 +395,12 @@ const AppointmentCheckout: React.FC = () => {
           )}
         </div>
 
-        {/* AÇÕES DE GESTÃO DO AGENDAMENTO (Transferir, Cancelar, Apagar) */}
-        <div className="grid grid-cols-4 gap-2">
+        {/* AÇÕES DE GESTÃO DO AGENDAMENTO (Transferir, Cancelar, Apagar, WhatsApp) */}
+        <div className="grid grid-cols-5 gap-2">
+            <button onClick={handleWhatsAppReminder} className="bg-green-50 border border-green-100 p-3 rounded-2xl flex flex-col items-center justify-center gap-1 active:bg-green-100">
+                <MessageCircle size={18} className="text-green-600" />
+                <span className="text-[8px] font-bold uppercase text-green-700">Lembrete</span>
+            </button>
             <button onClick={() => setShowTransferModal(true)} className="bg-white border border-gray-200 p-3 rounded-2xl flex flex-col items-center justify-center gap-1 active:bg-gray-50">
                 <ArrowRightLeft size={18} className="text-blue-900" />
                 <span className="text-[8px] font-bold uppercase text-gray-600">Transferir</span>
