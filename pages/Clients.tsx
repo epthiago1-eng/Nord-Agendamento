@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, Search, Info, Loader2, UserPlus, X, Save, Calendar, MessageSquare } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Search, Info, Loader2, UserPlus, X, Save, Calendar, MessageSquare, FileText } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../supabase';
 
@@ -17,7 +17,7 @@ const Clients: React.FC = () => {
     phone: '', 
     email: '', 
     birth_date: '', 
-    // Removed observation as it doesn't exist in DB
+    observation: '' // Novo campo
   });
   const [saving, setSaving] = useState(false);
 
@@ -43,6 +43,21 @@ const Clients: React.FC = () => {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
+  // Função de Formatação de Telefone
+  const formatPhone = (value: string) => {
+    const numbers = value.replace(/\D/g, '').substring(0, 11); // Apenas números, max 11
+    if (numbers.length > 10) {
+        return numbers.replace(/^(\d{2})(\d{5})(\d{4}).*/, '($1) $2-$3');
+    } else if (numbers.length > 6) {
+        return numbers.replace(/^(\d{2})(\d{4})(\d{0,4}).*/, '($1) $2-$3');
+    } else if (numbers.length > 2) {
+        return numbers.replace(/^(\d{2})(\d{0,5}).*/, '($1) $2');
+    } else if (numbers.length > 0) {
+        return numbers.replace(/^(\d{0,2})/, '($1');
+    }
+    return numbers;
+  };
+
   const handleSaveClient = async () => {
     if (!newClient.name || !newClient.phone) {
         alert('Nome e Telefone são obrigatórios.');
@@ -54,13 +69,14 @@ const Clients: React.FC = () => {
           name: newClient.name,
           phone: newClient.phone,
           email: newClient.email || null,
-          birth_date: newClient.birth_date || null // Usando snake_case correto
+          birth_date: newClient.birth_date || null,
+          observation: newClient.observation || null // Salva observação
         });
         if (error) throw error;
         
         alert('Cliente cadastrado com sucesso!');
         setIsModalOpen(false);
-        setNewClient({ name: '', phone: '', email: '', birth_date: '' });
+        setNewClient({ name: '', phone: '', email: '', birth_date: '', observation: '' });
         fetchClients();
     } catch (err: any) {
         console.error(err);
@@ -142,22 +158,36 @@ const Clients: React.FC = () => {
                         <input 
                             type="tel" 
                             value={newClient.phone}
-                            onChange={(e) => setNewClient({...newClient, phone: e.target.value})}
+                            onChange={(e) => setNewClient({...newClient, phone: formatPhone(e.target.value)})}
+                            placeholder="(xx) xxxxx-xxxx"
+                            maxLength={15}
                             className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-blue-900 text-gray-800 font-bold"
                         />
                     </div>
-                    <div className="grid grid-cols-1 gap-4">
-                        <div>
-                            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1 mb-1 block">Aniversário (Opcional)</label>
-                            <div className="relative">
-                                <input 
-                                    type="date" 
-                                    value={newClient.birth_date}
-                                    onChange={(e) => setNewClient({...newClient, birth_date: e.target.value})}
-                                    className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-blue-900 text-gray-800 font-medium"
-                                />
-                                <Calendar className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-300 pointer-events-none" size={16} />
-                            </div>
+                    
+                    <div>
+                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1 mb-1 block">Aniversário (Opcional)</label>
+                        <div className="relative">
+                            <input 
+                                type="date" 
+                                value={newClient.birth_date}
+                                onChange={(e) => setNewClient({...newClient, birth_date: e.target.value})}
+                                className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-blue-900 text-gray-800 font-medium"
+                            />
+                            <Calendar className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-300 pointer-events-none" size={16} />
+                        </div>
+                    </div>
+
+                    <div>
+                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1 mb-1 block">Observações</label>
+                        <div className="relative">
+                            <textarea 
+                                value={newClient.observation}
+                                onChange={(e) => setNewClient({...newClient, observation: e.target.value})}
+                                placeholder="Ex: Cliente prefere corte na tesoura..."
+                                className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-blue-900 text-gray-800 font-medium resize-none h-24"
+                            />
+                            <FileText className="absolute right-4 top-4 text-gray-300 pointer-events-none" size={16} />
                         </div>
                     </div>
                 </div>

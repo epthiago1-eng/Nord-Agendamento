@@ -46,7 +46,7 @@ const Agenda: React.FC = () => {
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 60000);
-    return () => clearInterval(timer);
+    return () => clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -85,23 +85,41 @@ const Agenda: React.FC = () => {
 
   useEffect(() => {
     const fetchPros = async () => {
-        // Tenta buscar lista. Se falhar ou estiver vazia, ainda precisamos configurar o ID do colaborador
-        let prosData: any[] = [];
         try {
-            const { data } = await db.professionals().select('*').eq('status', 'Ativo').order('name');
-            prosData = data || [];
-            setProfessionalsList(prosData);
+            // 1. Busca todos os profissionais ativos
+            const { data: allPros } = await db.professionals().select('*').eq('status', 'Ativo').order('name');
+            const prosData = allPros || [];
+
+            // 2. Busca Perfis ADMIN para filtrar da visualização da agenda
+            // Quem é ADMIN (Gerente) não deve aparecer na lista de agendáveis visualmente
+            const { data: adminProfiles } = await db.profiles().select('professional_id').eq('role', 'ADMIN');
+            const adminIds = new Set(adminProfiles?.map(p => p.professional_id).filter(Boolean));
+
+            let visiblePros: any[] = [];
+
+            if (userRole === 'ADMIN') {
+                // REGRA: Se for ADMIN, vê todos os profissionais que NÃO são Admins (Barbeiros)
+                // Removemos a condição "|| p.id === userProId" para que o Admin não veja a si mesmo na lista
+                visiblePros = prosData.filter(p => !adminIds.has(p.id));
+            } else {
+                // REGRA: Se for COLABORADOR, vê apenas a si mesmo
+                visiblePros = prosData.filter(p => p.id === userProId);
+            }
+            
+            setProfessionalsList(visiblePros);
+
+            // Lógica de Seleção Inicial
+            if (userRole === 'COLLABORATOR' && userProId) {
+                // Colaborador já vem selecionado
+                setSelectedPros([userProId]);
+            } else {
+                // Admin: Se não tiver ninguém selecionado, seleciona o primeiro da lista visível (Barbeiro)
+                if (visiblePros.length > 0 && selectedPros.length === 0) {
+                    setSelectedPros([visiblePros[0].id]);
+                }
+            }
         } catch (e) {
             console.error('Erro ao buscar profissionais:', e);
-        }
-
-        // Lógica de Seleção Inicial
-        if (userRole === 'COLLABORATOR' && userProId) {
-            // Se for colaborador, força o ID dele mesmo que não tenha vindo na lista (ex: permissões)
-            setSelectedPros([userProId]);
-        } else if (prosData.length > 0) {
-            // Se for Admin, seleciona o primeiro
-            setSelectedPros([prosData[0].id]);
         }
     };
     fetchPros();
@@ -220,17 +238,21 @@ const Agenda: React.FC = () => {
             <div className="flex items-center gap-2 text-gray-400 mr-2 shrink-0">
                 <Users size={16} /><span className="text-[10px] font-black uppercase tracking-widest">Equipe</span>
             </div>
-            {professionalsList.map(pro => {
-                const isSelected = selectedPros.includes(pro.id);
-                return (
-                    <button key={pro.id} onClick={() => togglePro(pro.id)} className={`flex items-center gap-2 pr-4 pl-1 py-1 rounded-full border transition-all active:scale-95 shrink-0 ${isSelected ? 'bg-white border-blue-900 shadow-sm ring-1 ring-blue-900' : 'bg-white border-gray-200 opacity-60'}`}>
-                        <div className="w-8 h-8 rounded-full bg-gray-200 overflow-hidden">
-                            {pro.avatar ? <img src={pro.avatar} alt={pro.name} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center bg-blue-100 text-blue-900"><User size={14} /></div>}
-                        </div>
-                        <span className={`text-[11px] font-bold uppercase tracking-tight ${isSelected ? 'text-blue-900' : 'text-gray-500'}`}>{pro.name.split(' ')[0]}</span>
-                    </button>
-                )
-            })}
+            {professionalsList.length === 0 ? (
+                <span className="text-xs text-gray-400 italic">Nenhum barbeiro disponível</span>
+            ) : (
+                professionalsList.map(pro => {
+                    const isSelected = selectedPros.includes(pro.id);
+                    return (
+                        <button key={pro.id} onClick={() => togglePro(pro.id)} className={`flex items-center gap-2 pr-4 pl-1 py-1 rounded-full border transition-all active:scale-95 shrink-0 ${isSelected ? 'bg-white border-blue-900 shadow-sm ring-1 ring-blue-900' : 'bg-white border-gray-200 opacity-60'}`}>
+                            <div className="w-8 h-8 rounded-full bg-gray-200 overflow-hidden">
+                                {pro.avatar ? <img src={pro.avatar} alt={pro.name} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center bg-blue-100 text-blue-900"><User size={14} /></div>}
+                            </div>
+                            <span className={`text-[11px] font-bold uppercase tracking-tight ${isSelected ? 'text-blue-900' : 'text-gray-500'}`}>{pro.name.split(' ')[0]}</span>
+                        </button>
+                    )
+                })
+            )}
         </div>
       )}
 

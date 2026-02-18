@@ -201,7 +201,8 @@ const BookingSchedule: React.FC = () => {
                 return (
                     <div key={pro.id} className="bg-white rounded-[2.5rem] border border-gray-100 shadow-sm overflow-hidden flex flex-col items-center">
                         <div className="pt-8 pb-4 flex flex-col items-center gap-3">
-                            <div className="w-24 h-24 rounded-[2rem] overflow-hidden border-2 shadow-inner" style={{ borderColor: `${settings.primaryColor}20` }}>
+                            {/* FOTO DO PROFISSIONAL AGORA É REDONDA (rounded-full) */}
+                            <div className="w-24 h-24 rounded-full overflow-hidden border-2 shadow-inner" style={{ borderColor: `${settings.primaryColor}20` }}>
                                 <img src={pro.avatar || `https://ui-avatars.com/api/?name=${pro.name}&background=random`} alt={pro.name} className="w-full h-full object-cover" />
                             </div>
                             <div className="text-center">

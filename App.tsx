@@ -1,9 +1,10 @@
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 import InstallPrompt from './components/InstallPrompt';
+import { getSettings } from './data/agendaData';
 
 // Páginas Administrativas e Gerais
 import Agenda from './pages/Agenda';
@@ -71,6 +72,21 @@ import BookingLocation from './pages/public/BookingLocation';
 import BookingConfirmation from './pages/public/BookingConfirmation';
 
 const App: React.FC = () => {
+  // Efeito global para atualizar o título da página com o nome da barbearia
+  useEffect(() => {
+    const updateTitle = async () => {
+      try {
+        const settings = await getSettings();
+        if (settings && settings.name) {
+          document.title = settings.name;
+        }
+      } catch (error) {
+        console.error('Erro ao atualizar título:', error);
+      }
+    };
+    updateTitle();
+  }, []);
+
   return (
     <HashRouter>
       <InstallPrompt />

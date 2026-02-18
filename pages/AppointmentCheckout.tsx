@@ -24,6 +24,7 @@ const AppointmentCheckout: React.FC = () => {
   const [dbProducts, setDbProducts] = useState<any[]>([]);
   const [dbProfessionals, setDbProfessionals] = useState<any[]>([]);
   const [dbPaymentMethods, setDbPaymentMethods] = useState<any[]>([]);
+  const [adminIds, setAdminIds] = useState<Set<string>>(new Set());
 
   // Itens Selecionados
   const [selectedServices, setSelectedServices] = useState<any[]>([]);
@@ -56,16 +57,21 @@ const AppointmentCheckout: React.FC = () => {
         setLoading(true);
         try {
             // Carregar Listas Auxiliares
-            const [servicesRes, productsRes, prosRes, payMethodsRes] = await Promise.all([
+            const [servicesRes, productsRes, prosRes, payMethodsRes, profilesRes] = await Promise.all([
                 db.services().select('*').order('name'),
                 db.products().select('*').gt('current_stock', 0).order('name'),
                 db.professionals().select('*').eq('status', 'Ativo'),
-                db.paymentMethods().select('*').order('name')
+                db.paymentMethods().select('*').order('name'),
+                db.profiles().select('professional_id').eq('role', 'ADMIN')
             ]);
 
             setDbServices(servicesRes.data || []);
             setDbProducts(productsRes.data || []);
             setDbProfessionals(prosRes.data || []);
+            
+            // Identificar IDs de Admins para filtrar da transferência
+            const admins = new Set((profilesRes.data || []).map(p => p.professional_id).filter(Boolean));
+            setAdminIds(admins as Set<string>);
             
             const methods = payMethodsRes.data || [];
             setDbPaymentMethods(methods);
@@ -98,6 +104,13 @@ const AppointmentCheckout: React.FC = () => {
     };
     fetchAllData();
   }, [id]);
+
+  // Helper de Data Segura
+  const formatDateSafe = (dateStr: string) => {
+      if (!dateStr) return '--/--/----';
+      const [y, m, d] = dateStr.split('-');
+      return `${d}/${m}/${y}`;
+  };
 
   // Cálculos de Totais
   const totals = useMemo(() => {
@@ -322,7 +335,7 @@ const AppointmentCheckout: React.FC = () => {
                 <div className="flex items-center gap-4 text-gray-400">
                 <div className="flex items-center gap-1.5">
                     <Calendar size={12} />
-                    <span className="text-[10px] font-bold uppercase">{new Date(appointment.date).toLocaleDateString('pt-BR')}</span>
+                    <span className="text-[10px] font-bold uppercase">{formatDateSafe(appointment.date)}</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                     <Clock size={12} className={isOverdue ? 'text-red-500' : ''} />
@@ -465,8 +478,11 @@ const AppointmentCheckout: React.FC = () => {
                         className="w-full bg-white border border-gray-200 rounded-lg py-3.5 px-4 outline-none focus:ring-1 focus:ring-blue-900 text-gray-700 font-bold"
                     >
                         <option value="">Selecione...</option>
-                        {dbProfessionals.filter(p => p.id !== appointment.professionalId).map(p => (
-                            <option key={p.id} value={p.id}>{p.name}</option>
+                        {dbProfessionals
+                            .filter(p => p.id !== appointment.professionalId) // Não mostra o atual
+                            .filter(p => !adminIds.has(p.id)) // Não mostra Admins
+                            .map(p => (
+                                <option key={p.id} value={p.id}>{p.name}</option>
                         ))}
                     </select>
                 </div>

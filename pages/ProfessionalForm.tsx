@@ -41,6 +41,15 @@ const ProfessionalForm: React.FC = () => {
     }
   };
 
+  const formatPhone = (value: string) => {
+    const numbers = value.replace(/\D/g, '').substring(0, 11);
+    if (numbers.length > 10) return numbers.replace(/^(\d{2})(\d{5})(\d{4}).*/, '($1) $2-$3');
+    if (numbers.length > 6) return numbers.replace(/^(\d{2})(\d{4})(\d{0,4}).*/, '($1) $2-$3');
+    if (numbers.length > 2) return numbers.replace(/^(\d{2})(\d{0,5}).*/, '($1) $2');
+    if (numbers.length > 0) return numbers.replace(/^(\d{0,2})/, '($1');
+    return numbers;
+  };
+
   const handleSave = async () => {
     if (!formData.name) {
         alert('Nome obrigatório');
@@ -130,7 +139,9 @@ const ProfessionalForm: React.FC = () => {
           <input 
             type="tel" 
             value={formData.phone}
-            onChange={(e) => setFormData({...formData, phone: e.target.value})}
+            onChange={(e) => setFormData({...formData, phone: formatPhone(e.target.value)})}
+            placeholder="(xx) xxxxx-xxxx"
+            maxLength={15}
             className="w-full bg-white border border-gray-200 rounded-lg py-3.5 px-4 outline-none focus:ring-1 focus:ring-blue-500"
           />
         </div>

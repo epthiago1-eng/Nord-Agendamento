@@ -95,19 +95,33 @@ const ProfessionalServices: React.FC = () => {
 
   const handleRemoveService = async (serviceId: string) => {
     if (!proId) return;
+    
+    // Tenta encontrar o ID da linha de configuração para exclusão segura
+    const configToDelete = linkedConfigs.find(l => l.service_id === serviceId);
+    
     if (confirm('Remover este serviço do profissional?')) {
       try {
-        const { error } = await db.professionalServices()
-            .delete()
-            .eq('professional_id', proId)
-            .eq('service_id', serviceId);
+        let error;
+        
+        if (configToDelete && configToDelete.id) {
+            // Delete by Primary Key (Safer)
+            const res = await db.professionalServices().delete().eq('id', configToDelete.id);
+            error = res.error;
+        } else {
+            // Fallback: Delete by Composite Key
+            const res = await db.professionalServices()
+                .delete()
+                .eq('professional_id', proId)
+                .eq('service_id', serviceId);
+            error = res.error;
+        }
         
         if (error) throw error;
 
         setLinkedConfigs(prev => prev.filter(l => l.service_id !== serviceId));
-      } catch (err) {
+      } catch (err: any) {
         console.error('Erro ao remover:', err);
-        alert('Erro ao remover serviço.');
+        alert('Erro ao remover serviço: ' + err.message);
       }
     }
   };

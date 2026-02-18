@@ -112,48 +112,65 @@ const BookingServices: React.FC = () => {
           </button>
         </div>
 
-        <div className="space-y-4">
+        <div className="space-y-6 pt-4">
           {availableServices.length === 0 ? (
               <div className="text-center py-10 text-gray-400 text-sm">
                   Nenhum serviço disponível no momento.
               </div>
           ) : availableServices.map(s => (
-            <div key={s.id} className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden flex flex-col">
-              <div className="h-44 overflow-hidden relative bg-gray-100">
+            <div key={s.id} className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-visible flex flex-col items-center relative mt-8 pt-10 pb-6 transition-all hover:shadow-md">
+              
+              {/* Imagem Redonda Centralizada no Topo (Overlap) */}
+              <div className="absolute -top-10 left-1/2 -translate-x-1/2 w-28 h-28 rounded-full border-4 border-white shadow-lg overflow-hidden bg-gray-50">
                 {s.image_url ? (
                     <img src={s.image_url} alt={s.name} className="w-full h-full object-cover" />
                 ) : (
                     <div className="w-full h-full flex items-center justify-center text-gray-300">
-                        <Clock size={48} />
+                        <Clock size={32} />
                     </div>
                 )}
                 
+                {/* Overlay de Seleção Circular */}
                 {selectedIds.includes(s.id) && (
-                    <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px] flex items-center justify-center animate-in fade-in">
-                        <div className="bg-white rounded-full p-2 text-primary shadow-xl">
-                            <Check size={32} strokeWidth={3} />
+                    <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px] flex items-center justify-center animate-in fade-in">
+                        <div className="bg-white rounded-full p-2 text-primary shadow-xl" style={{ color: settings.primaryColor }}>
+                            <Check size={24} strokeWidth={3} />
                         </div>
                     </div>
                 )}
               </div>
-              <div className="p-5 text-center space-y-2">
-                <h3 className="font-black text-gray-900 text-base uppercase tracking-tight">{s.name}</h3>
+
+              <div className="w-full px-5 mt-4 text-center space-y-2">
+                <h3 className="font-black text-gray-900 text-lg uppercase tracking-tight leading-tight">{s.name}</h3>
                 <div className="flex items-center justify-center gap-2 text-gray-400 text-xs font-bold uppercase">
-                  <Clock size={14} className="text-primary" />
+                  <Clock size={14} className="text-primary" style={{ color: settings.primaryColor }} />
                   <span>{s.duration} minutos</span>
                 </div>
               </div>
-              <div className="p-5 border-t border-gray-50 flex items-center justify-between">
-                <span className="font-black text-gray-900 text-lg">R$ {s.price.toFixed(2).replace('.', ',')}</span>
-                <button 
-                  onClick={() => toggleService(s.id)}
-                  className={`px-6 py-2.5 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all active:scale-95 ${
-                    selectedIds.includes(s.id) ? 'text-white' : 'border border-gray-200 text-gray-500'
-                  }`}
-                  style={{ backgroundColor: selectedIds.includes(s.id) ? settings.primaryColor : 'transparent' }}
-                >
-                  {selectedIds.includes(s.id) ? 'Selecionado' : 'Selecionar'}
-                </button>
+
+              <div className="w-full px-5 mt-6 pt-4 border-t border-gray-50 flex items-center justify-between">
+                <div className="flex flex-col text-left">
+                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Valor</span>
+                    <span className="font-black text-gray-900 text-xl">R$ {s.price.toFixed(2).replace('.', ',')}</span>
+                </div>
+                
+                {selectedIds.includes(s.id) ? (
+                    <button 
+                      onClick={() => toggleService(s.id)}
+                      className="px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest text-white shadow-lg active:scale-95 transition-all flex items-center gap-2"
+                      style={{ backgroundColor: settings.primaryColor }}
+                    >
+                      <Check size={14} strokeWidth={3} />
+                      Selecionado
+                    </button>
+                ) : (
+                    <button 
+                      onClick={() => toggleService(s.id)}
+                      className="px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest border-2 border-gray-100 text-gray-500 hover:border-gray-200 active:scale-95 transition-all"
+                    >
+                      Selecionar
+                    </button>
+                )}
               </div>
             </div>
           ))}

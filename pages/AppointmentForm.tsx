@@ -52,6 +52,16 @@ const AppointmentForm: React.FC = () => {
     return `${year}-${month}-${day}`;
   };
 
+  // Helper de Formatação de Telefone
+  const formatPhone = (value: string) => {
+    const numbers = value.replace(/\D/g, '').substring(0, 11);
+    if (numbers.length > 10) return numbers.replace(/^(\d{2})(\d{5})(\d{4}).*/, '($1) $2-$3');
+    if (numbers.length > 6) return numbers.replace(/^(\d{2})(\d{4})(\d{0,4}).*/, '($1) $2-$3');
+    if (numbers.length > 2) return numbers.replace(/^(\d{2})(\d{0,5}).*/, '($1) $2');
+    if (numbers.length > 0) return numbers.replace(/^(\d{0,2})/, '($1');
+    return numbers;
+  };
+
   const [formData, setFormData] = useState({
     date: formatDateSafe(new Date()),
     time: '10:00',
@@ -464,7 +474,8 @@ const AppointmentForm: React.FC = () => {
                       type="tel" 
                       placeholder="Telefone / WhatsApp *"
                       value={newClient.phone}
-                      onChange={e => setNewClient({...newClient, phone: e.target.value})}
+                      onChange={e => setNewClient({...newClient, phone: formatPhone(e.target.value)})}
+                      maxLength={15}
                       className="w-full bg-white border border-blue-100 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-blue-900 text-sm font-bold text-gray-700"
                     />
                   </div>

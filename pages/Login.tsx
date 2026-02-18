@@ -87,8 +87,10 @@ const Login: React.FC = () => {
               className="w-full h-full object-cover p-1"
             />
           </div>
-          <div className="text-center">
-            <h1 className="text-white text-2xl font-black uppercase tracking-[0.3em]">{appName.split(' ')[0]}</h1>
+          <div className="text-center px-4">
+            <h1 className="text-white text-xl font-black uppercase tracking-[0.2em] leading-tight break-words">
+                {appName}
+            </h1>
             <p className="text-blue-400 text-[10px] font-bold uppercase tracking-[0.5em] mt-1">Gestão de Barbearia</p>
           </div>
         </div>

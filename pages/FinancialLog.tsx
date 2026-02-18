@@ -33,7 +33,7 @@ const FinancialLog: React.FC = () => {
     const csvContent = [
       headers.join(';'),
       ...filteredData.map(t => [
-        t.date,
+        t.date ? t.date.split('-').reverse().join('/') : '',
         t.operation,
         t.type,
         t.code || '',
@@ -53,6 +53,11 @@ const FinancialLog: React.FC = () => {
     link.href = url;
     link.setAttribute('download', `movimentacoes_${new Date().toISOString().split('T')[0]}.csv`);
     link.click();
+  };
+
+  const formatDate = (dateStr?: string) => {
+      if (!dateStr) return '--/--/----';
+      return dateStr.split('-').reverse().join('/');
   };
 
   return (
@@ -97,7 +102,7 @@ const FinancialLog: React.FC = () => {
                         <h4 className="text-xs font-black text-gray-900 uppercase truncate max-w-[180px]">{t.item}</h4>
                     </div>
                     <p className="text-[10px] font-medium text-gray-400 uppercase flex items-center gap-1">
-                        {t.date} • {t.type} • {t.client_supplier || 'Balcão'}
+                        {formatDate(t.date)} • {t.type} • {t.client_supplier || 'Balcão'}
                     </p>
                 </div>
                 <div className="text-right">

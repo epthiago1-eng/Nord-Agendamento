@@ -28,6 +28,15 @@ const BookingForm: React.FC = () => {
     return Object.keys(newErrors).length === 0;
   };
 
+  const formatPhone = (value: string) => {
+    const numbers = value.replace(/\D/g, '').substring(0, 11);
+    if (numbers.length > 10) return numbers.replace(/^(\d{2})(\d{5})(\d{4}).*/, '($1) $2-$3');
+    if (numbers.length > 6) return numbers.replace(/^(\d{2})(\d{4})(\d{0,4}).*/, '($1) $2-$3');
+    if (numbers.length > 2) return numbers.replace(/^(\d{2})(\d{0,5}).*/, '($1) $2');
+    if (numbers.length > 0) return numbers.replace(/^(\d{0,2})/, '($1');
+    return numbers;
+  };
+
   const handleFinish = async () => {
     if (!validate()) return;
     setIsSubmitting(true);
@@ -78,7 +87,11 @@ const BookingForm: React.FC = () => {
   };
 
   const handleInputChange = (field: 'name' | 'phone' | 'observation', value: string) => {
-    setFormData({ ...formData, [field]: value });
+    let finalValue = value;
+    if (field === 'phone') {
+        finalValue = formatPhone(value);
+    }
+    setFormData({ ...formData, [field]: finalValue });
     if (errors[field as keyof typeof errors]) {
       setErrors({ ...errors, [field]: false });
     }
@@ -150,6 +163,7 @@ const BookingForm: React.FC = () => {
                         value={formData.phone}
                         onChange={e => handleInputChange('phone', e.target.value)}
                         placeholder="(00) 0 0000-0000" 
+                        maxLength={15}
                         className={`w-full bg-white border rounded-2xl py-4 px-12 outline-none focus:ring-1 text-gray-800 font-bold shadow-sm transition-all ${
                           errors.phone ? 'border-red-500 ring-red-100 ring-1' : 'border-gray-200 focus:ring-black'
                         }`}
