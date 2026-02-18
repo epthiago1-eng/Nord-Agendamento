@@ -1,8 +1,8 @@
 
 import { supabase } from '../supabase';
-import { Transaction } from '../types';
+import type { Transaction } from '../types';
 
-export { Transaction };
+export type { Transaction };
 
 export const getTransactions = async (filters?: { proId?: string, month?: string }): Promise<Transaction[]> => {
   let query = supabase.from('transactions').select('*').order('date', { ascending: false });
@@ -43,10 +43,9 @@ export const addTransaction = async (transaction: Partial<Transaction> & { metho
     professional_id: (transaction.professional_id && transaction.professional_id.length > 20) ? transaction.professional_id : null,
     appointment_id: transaction.appointment_id,
     
-    // Campos Legados mantidos apenas se existirem colunas no banco, mas description causava erro
+    // Campos Legados mantidos apenas se existirem colunas no banco
     category: transaction.category || transaction.type,
     val: transaction.val,
-    // description: transaction.item  <-- REMOVIDO: Causava o erro pois a coluna não existe
   };
 
   const { data, error } = await supabase

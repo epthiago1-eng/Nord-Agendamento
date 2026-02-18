@@ -1,5 +1,5 @@
 
-import { Appointment, EstablishmentSettings } from '../types';
+import type { Appointment, EstablishmentSettings } from '../types';
 import { supabase, db } from '../supabase';
 import { addNotification } from './notifications';
 import { addTransaction } from './transactions';

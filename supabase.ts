@@ -1,11 +1,10 @@
+import { createClient } from '@supabase/supabase-js';
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.7';
+// Credenciais configuradas para o projeto (Recupera do Env do Netlify ou usa Fallback seguro)
+// No Netlify, defina as variáveis de ambiente: VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY
+export const supabaseUrl = (import.meta as any).env?.VITE_SUPABASE_URL || 'https://vnpqrmrgpgrlkddquald.supabase.co';
 
-// Credenciais configuradas para o projeto vnpqrmrgpgrlkddquald
-export const supabaseUrl = 'https://vnpqrmrgpgrlkddquald.supabase.co';
-
-// Chave pública (Anon Key) extraída do seu snapshot
-export const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZucHFybXJncGdybGtkZHF1YWxkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA4MzYwNjIsImV4cCI6MjA4NjQxMjA2Mn0.Cjw6wUkGAWpbeTWp15wcBeAydHmloZoVHBxFXKFa9z0'; 
+export const supabaseAnonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZucHFybXJncGdybGtkZHF1YWxkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA4MzYwNjIsImV4cCI6MjA4NjQxMjA2Mn0.Cjw6wUkGAWpbeTWp15wcBeAydHmloZoVHBxFXKFa9z0'; 
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
