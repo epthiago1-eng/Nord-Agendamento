@@ -14,6 +14,7 @@ const Agenda: React.FC = () => {
   const navigate = useNavigate();
   const userRole = localStorage.getItem('user_role') || 'ADMIN';
   const userProId = localStorage.getItem('user_pro_id') || '';
+  const userName = localStorage.getItem('user_name') || 'Profissional';
   
   const gridContainerRef = useRef<HTMLDivElement>(null);
   const dayStripRef = useRef<HTMLDivElement>(null);
@@ -84,11 +85,23 @@ const Agenda: React.FC = () => {
 
   useEffect(() => {
     const fetchPros = async () => {
-        const { data } = await db.professionals().select('*').eq('status', 'Ativo').order('name');
-        if (data && data.length > 0) {
-            setProfessionalsList(data);
-            if (userRole === 'COLLABORATOR' && userProId) setSelectedPros([userProId]);
-            else setSelectedPros([data[0].id]);
+        // Tenta buscar lista. Se falhar ou estiver vazia, ainda precisamos configurar o ID do colaborador
+        let prosData: any[] = [];
+        try {
+            const { data } = await db.professionals().select('*').eq('status', 'Ativo').order('name');
+            prosData = data || [];
+            setProfessionalsList(prosData);
+        } catch (e) {
+            console.error('Erro ao buscar profissionais:', e);
+        }
+
+        // Lógica de Seleção Inicial
+        if (userRole === 'COLLABORATOR' && userProId) {
+            // Se for colaborador, força o ID dele mesmo que não tenha vindo na lista (ex: permissões)
+            setSelectedPros([userProId]);
+        } else if (prosData.length > 0) {
+            // Se for Admin, seleciona o primeiro
+            setSelectedPros([prosData[0].id]);
         }
     };
     fetchPros();
@@ -245,51 +258,64 @@ const Agenda: React.FC = () => {
                 <div className="absolute inset-0 z-0 pointer-events-none">
                     {hours.map((_, i) => <div key={i} className="absolute left-0 right-0 border-b border-gray-50" style={{ top: `${i * HOUR_HEIGHT}px`, height: '1px' }} />)}
                 </div>
-                {selectedPros.map((proId, index) => {
-                    const proDetails = professionalsList.find(p => p.id === proId);
-                    const isLast = index === selectedPros.length - 1;
-                    const proAppointments = appointments.filter(a => a.professionalId === proId);
-                    const proBlocks = blocks.filter(b => b.professional_id === proId);
-                    return (
-                        <div key={proId} className={`flex-1 relative ${!isLast ? 'border-r border-gray-200' : ''}`}>
-                            {selectedPros.length > 1 && (
+                
+                {/* RENDERIZAÇÃO DAS COLUNAS DOS PROFISSIONAIS */}
+                {selectedPros.length === 0 ? (
+                    <div className="flex-1 flex items-center justify-center p-8 text-center text-gray-400 text-xs uppercase font-bold">
+                        Nenhum profissional selecionado
+                    </div>
+                ) : (
+                    selectedPros.map((proId, index) => {
+                        // Tenta encontrar detalhes na lista, ou usa fallback se for colaborador que não carregou a lista
+                        const proDetails = professionalsList.find(p => p.id === proId) || { name: userName };
+                        const isLast = index === selectedPros.length - 1;
+                        
+                        // Filtra agendamentos para este ID
+                        const proAppointments = appointments.filter(a => a.professionalId === proId);
+                        const proBlocks = blocks.filter(b => b.professional_id === proId);
+                        
+                        return (
+                            <div key={proId} className={`flex-1 relative ${!isLast ? 'border-r border-gray-200' : ''}`}>
+                                {/* Header do Profissional (Sticky) */}
                                 <div className="sticky top-0 z-30 bg-white/95 backdrop-blur-sm border-b border-gray-100 py-2 text-center shadow-sm">
-                                    <span className="text-[10px] font-black text-blue-900 uppercase tracking-widest block truncate px-2">{proDetails?.name || 'Profissional'}</span>
+                                    <span className="text-[10px] font-black text-blue-900 uppercase tracking-widest block truncate px-2">
+                                        {proDetails.name || 'Agenda'}
+                                    </span>
                                 </div>
-                            )}
-                            <div className="relative h-full">
-                                {proAppointments.map((apt) => {
-                                    const isLate = isAppointmentOverdue(apt);
-                                    return (
-                                    <div key={apt.id} onClick={() => navigate(`/appointment-checkout/${apt.id}`)} className={`absolute left-1 right-1 rounded-xl p-2 border-l-4 shadow-sm transition-all active:scale-[0.98] cursor-pointer z-10 overflow-hidden flex flex-col justify-center ${apt.status === 'Confirmado' ? (isLate ? 'bg-red-50 border-red-500 ring-1 ring-red-100' : 'bg-blue-50 border-blue-500') : apt.status === 'Atendimento Realizado' ? 'bg-green-50 border-green-500' : 'bg-gray-50 border-gray-400 opacity-60'}`} style={{ top: `${getPosition(apt.time)}px`, height: `${Math.max(getHeight(apt.duration), 30)}px` }}>
-                                        <div className="flex justify-between items-start w-full">
-                                            <h4 className={`font-bold text-[11px] truncate leading-tight ${isLate ? 'text-red-700' : 'text-gray-900'}`}>{apt.clientName}</h4>
-                                            {isLate && <Clock size={12} className="text-red-500 shrink-0 animate-pulse" />}
-                                        </div>
-                                        <div className="flex items-center gap-1 mt-0.5">
-                                            <p className={`text-[9px] font-black uppercase opacity-70 ${isLate ? 'text-red-600' : ''}`}>{apt.time}</p>
-                                            <span className="text-[8px] opacity-50 truncate max-w-[80px]">• {apt.services[0]}</span>
-                                        </div>
-                                    </div>
-                                )})}
-                                {proBlocks.map((blk) => {
-                                    const startTime = blk.start_at.split('T')[1].substring(0, 5);
-                                    const endTime = blk.end_at.split('T')[1].substring(0, 5);
-                                    const startPos = getPosition(startTime);
-                                    const endPos = getPosition(endTime);
-                                    return (
-                                        <div key={blk.id} onClick={() => { setSelectedBlock(blk); setEditBlockDesc(blk.description || ''); }} className="absolute left-0 right-0 bg-gray-100/80 border-y border-gray-200 z-10 flex items-center justify-center cursor-pointer hover:bg-red-50/80 transition-colors group" style={{ top: `${startPos}px`, height: `${Math.max(endPos - startPos, 20)}px`, backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 5px, rgba(0,0,0,0.03) 5px, rgba(0,0,0,0.03) 10px)' }}>
-                                            <div className="flex items-center gap-2">
-                                                <span className="bg-white px-2 py-1 rounded-full text-[9px] font-bold text-gray-400 shadow-sm uppercase tracking-widest border border-gray-200 group-hover:text-red-500 transition-colors">{blk.description || 'Bloqueado'}</span>
-                                                <Edit2 size={12} className="text-gray-400 group-hover:text-red-500 transition-colors" />
+                                <div className="relative h-full">
+                                    {proAppointments.map((apt) => {
+                                        const isLate = isAppointmentOverdue(apt);
+                                        return (
+                                        <div key={apt.id} onClick={() => navigate(`/appointment-checkout/${apt.id}`)} className={`absolute left-1 right-1 rounded-xl p-2 border-l-4 shadow-sm transition-all active:scale-[0.98] cursor-pointer z-10 overflow-hidden flex flex-col justify-center ${apt.status === 'Confirmado' ? (isLate ? 'bg-red-50 border-red-500 ring-1 ring-red-100' : 'bg-blue-50 border-blue-500') : apt.status === 'Atendimento Realizado' ? 'bg-green-50 border-green-500' : 'bg-gray-50 border-gray-400 opacity-60'}`} style={{ top: `${getPosition(apt.time)}px`, height: `${Math.max(getHeight(apt.duration), 30)}px` }}>
+                                            <div className="flex justify-between items-start w-full">
+                                                <h4 className={`font-bold text-[11px] truncate leading-tight ${isLate ? 'text-red-700' : 'text-gray-900'}`}>{apt.clientName}</h4>
+                                                {isLate && <Clock size={12} className="text-red-500 shrink-0 animate-pulse" />}
+                                            </div>
+                                            <div className="flex items-center gap-1 mt-0.5">
+                                                <p className={`text-[9px] font-black uppercase opacity-70 ${isLate ? 'text-red-600' : ''}`}>{apt.time}</p>
+                                                <span className="text-[8px] opacity-50 truncate max-w-[80px]">• {apt.services[0]}</span>
                                             </div>
                                         </div>
-                                    );
-                                })}
+                                    )})}
+                                    {proBlocks.map((blk) => {
+                                        const startTime = blk.start_at.split('T')[1].substring(0, 5);
+                                        const endTime = blk.end_at.split('T')[1].substring(0, 5);
+                                        const startPos = getPosition(startTime);
+                                        const endPos = getPosition(endTime);
+                                        return (
+                                            <div key={blk.id} onClick={() => { setSelectedBlock(blk); setEditBlockDesc(blk.description || ''); }} className="absolute left-0 right-0 bg-gray-100/80 border-y border-gray-200 z-10 flex items-center justify-center cursor-pointer hover:bg-red-50/80 transition-colors group" style={{ top: `${startPos}px`, height: `${Math.max(endPos - startPos, 20)}px`, backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 5px, rgba(0,0,0,0.03) 5px, rgba(0,0,0,0.03) 10px)' }}>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="bg-white px-2 py-1 rounded-full text-[9px] font-bold text-gray-400 shadow-sm uppercase tracking-widest border border-gray-200 group-hover:text-red-500 transition-colors">{blk.description || 'Bloqueado'}</span>
+                                                    <Edit2 size={12} className="text-gray-400 group-hover:text-red-500 transition-colors" />
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
                             </div>
-                        </div>
-                    );
-                })}
+                        );
+                    })
+                )}
             </div>
           </div>
         )}

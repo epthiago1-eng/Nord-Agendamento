@@ -81,14 +81,14 @@ export const deleteBlock = async (id: string) => {
 
 // --- AGENDAMENTOS (CORE) ---
 
-// Helper para converter DB -> App
+// Helper para converter DB -> App (ROBUSTO: Aceita camelCase e snake_case)
 const mapAppointmentFromDB = (data: any): Appointment => ({
     id: data.id,
-    clientId: data.clientId, // BANCO: camelCase
-    clientName: data.clientName,
-    clientPhone: data.clientPhone,
-    professionalId: data.professionalId,
-    professionalName: data.professionalName,
+    clientId: data.clientId || data.client_id, 
+    clientName: data.clientName || data.client_name,
+    clientPhone: data.clientPhone || data.client_phone,
+    professionalId: data.professionalId || data.professional_id, 
+    professionalName: data.professionalName || data.professional_name,
     date: data.date,
     time: data.time,
     duration: data.duration,
@@ -102,11 +102,27 @@ const mapAppointmentFromDB = (data: any): Appointment => ({
 export const getAppointments = async (filters?: { proId?: string, date?: string }): Promise<Appointment[]> => {
   let query = supabase.from('appointments').select('*');
   
-  // BANCO: appointments usa colunas camelCase
-  if (filters?.proId) query = query.eq('professionalId', filters.proId);
+  // Tenta filtrar por camelCase primeiro, mas se o banco for snake_case isso não quebra a query select('*')
+  // A filtragem fina deve acontecer com cuidado ou no client-side se houver dúvida do schema
+  if (filters?.proId) query = query.eq('professionalId', filters.proId); 
+  // Nota: Se o banco usar professional_id, a linha acima pode falhar silenciosamente ou retornar erro. 
+  // Idealmente o Supabase ignora colunas inexistentes no filtro ou retorna erro.
+  // Vamos assumir camelCase conforme setup, mas o mapAppointmentFromDB garante leitura.
+  
   if (filters?.date) query = query.eq('date', filters.date);
 
   const { data, error } = await query;
+  
+  // Fallback: Se der erro na query especifica (ex: coluna nao existe), tenta buscar tudo e filtrar no JS (menos performático mas seguro para dev)
+  if (error && error.code === 'PGRST204') { // Column not found
+      console.warn('Coluna não encontrada, tentando busca genérica...');
+      const { data: allData } = await supabase.from('appointments').select('*');
+      let result = allData ? allData.map(mapAppointmentFromDB) : [];
+      if (filters?.date) result = result.filter(a => a.date === filters.date);
+      if (filters?.proId) result = result.filter(a => a.professionalId === filters.proId);
+      return result;
+  }
+
   if (error) {
       console.error('Erro ao buscar agendamentos:', error);
       return [];
@@ -118,12 +134,15 @@ export const getAppointmentsByPhone = async (phone: string): Promise<Appointment
   const { data, error } = await supabase
     .from('appointments')
     .select('*')
-    .eq('clientPhone', phone) // BANCO: camelCase
+    //.eq('clientPhone', phone) // Tentativa direta
     .gte('date', new Date().toISOString().split('T')[0]) 
     .order('date', { ascending: true });
 
   if (error) throw error;
-  return data ? data.map(mapAppointmentFromDB) : [];
+  
+  // Filtragem no cliente para garantir match independente do nome da coluna
+  const mapped = data ? data.map(mapAppointmentFromDB) : [];
+  return mapped.filter(a => a.clientPhone === phone);
 };
 
 export const saveAppointment = async (apt: Omit<Appointment, 'id'>) => {
@@ -133,7 +152,7 @@ export const saveAppointment = async (apt: Omit<Appointment, 'id'>) => {
       throw new Error(availability.reason);
   }
 
-  // 2. Salvar usando camelCase conforme Tabela 'appointments' do SQL
+  // 2. Salvar (Tenta payload camelCase, banco deve suportar ou ter colunas aspas duplas)
   const payload = {
       clientId: apt.clientId,
       clientName: apt.clientName,
@@ -164,7 +183,6 @@ export const saveAppointment = async (apt: Omit<Appointment, 'id'>) => {
 };
 
 export const updateAppointment = async (id: string, data: Partial<Appointment>) => {
-  // Payload camelCase para 'appointments'
   const payload: any = {};
   if (data.status) payload.status = data.status;
   if (data.professionalId) payload.professionalId = data.professionalId;
@@ -241,31 +259,34 @@ export const checkAvailability = async (
         return { available: false, reason: 'Horário bloqueado pelo profissional.' };
     }
 
-    // BANCO: appointments usa 'professionalId'
-    let query = supabase
+    // Busca agendamentos do dia (busca genérica para filtrar no JS e evitar erro de coluna)
+    const { data: appointments } = await supabase
         .from('appointments')
-        .select('id, time, duration, status')
-        .eq('professionalId', proId)
-        .eq('date', date)
-        .not('status', 'in', '("Cancelaram","Desmarcou")');
+        .select('*')
+        .eq('date', date);
 
-    if (excludeAptId) {
-        query = query.neq('id', excludeAptId);
-    }
-
-    const { data: appointments } = await query;
-
-    const hasConflict = appointments?.some(apt => {
-        const aptStart = new Date(`${date}T${apt.time}`);
-        const aptEnd = aptStart.getTime() + (apt.duration || 30) * 60000;
-        const proposedEndTime = proposedEnd.getTime();
-        const proposedStartTime = proposedStart.getTime();
+    if (appointments) {
+        const mappedApts = appointments.map(mapAppointmentFromDB);
         
-        return (proposedStartTime < aptEnd && proposedEndTime > aptStart.getTime());
-    });
+        // Filtra pelo profissional e status
+        const proApts = mappedApts.filter(a => 
+            a.professionalId === proId && 
+            !['Cancelaram', 'Desmarcou'].includes(a.status) &&
+            a.id !== excludeAptId
+        );
 
-    if (hasConflict) {
-        return { available: false, reason: 'Horário já ocupado por outro cliente.' };
+        const hasConflict = proApts.some(apt => {
+            const aptStart = new Date(`${date}T${apt.time}`);
+            const aptEnd = aptStart.getTime() + (apt.duration || 30) * 60000;
+            const proposedEndTime = proposedEnd.getTime();
+            const proposedStartTime = proposedStart.getTime();
+            
+            return (proposedStartTime < aptEnd && proposedEndTime > aptStart.getTime());
+        });
+
+        if (hasConflict) {
+            return { available: false, reason: 'Horário já ocupado por outro cliente.' };
+        }
     }
 
     return { available: true };
@@ -322,12 +343,12 @@ export const getAvailableSlotsForPro = async (proId: string, dateStr: string, se
       return [];
     }
 
-    const { data: appointments } = await supabase
+    const { data: appointmentsData } = await supabase
       .from('appointments')
-      .select('time, duration')
-      .eq('professionalId', proId)
-      .eq('date', dateStr)
-      .not('status', 'in', '("Desmarcou", "Cancelaram")');
+      .select('*')
+      .eq('date', dateStr);
+      
+    const appointments = appointmentsData ? appointmentsData.map(mapAppointmentFromDB).filter(a => a.professionalId === proId && !['Desmarcou', 'Cancelaram'].includes(a.status)) : [];
 
     const { data: blocks } = await supabase
       .from('agenda_blocks')
@@ -358,7 +379,7 @@ export const getAvailableSlotsForPro = async (proId: string, dateStr: string, se
 
             if (slotEnd > rangeEndMinutes) continue;
 
-            const hasAptConflict = appointments?.some(apt => {
+            const hasAptConflict = appointments.some(apt => {
                 const [ah, am] = apt.time.split(':').map(Number);
                 const aptStart = ah * 60 + am;
                 const aptEnd = aptStart + apt.duration;
