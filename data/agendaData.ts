@@ -57,8 +57,19 @@ export const saveSettings = async (settings: EstablishmentSettings) => {
 
 // --- BLOQUEIOS ---
 
-export const getBlocks = async (): Promise<AgendaBlock[]> => {
-  const { data, error } = await supabase.from('agenda_blocks').select('*');
+export const getBlocks = async (filters?: { date?: string, proId?: string }): Promise<AgendaBlock[]> => {
+  let query = supabase.from('agenda_blocks').select('*');
+  
+  if (filters?.date) {
+      query = query.gte('end_at', `${filters.date}T00:00:00`)
+                   .lte('start_at', `${filters.date}T23:59:59`);
+  }
+  
+  if (filters?.proId) {
+      query = query.eq('professional_id', filters.proId);
+  }
+
+  const { data, error } = await query;
   return data || [];
 };
 
@@ -134,14 +145,58 @@ export const getAppointmentsByPhone = async (phone: string): Promise<Appointment
     .from('appointments')
     .select('*')
     //.eq('clientPhone', phone) // Tentativa direta
-    .gte('date', new Date().toISOString().split('T')[0]) 
-    .order('date', { ascending: true });
+    // .gte('date', new Date().toISOString().split('T')[0]) // REMOVIDO: Queremos todo o histórico
+    .order('date', { ascending: false }); // Ordena do mais recente para o mais antigo
 
   if (error) throw error;
   
   // Filtragem no cliente para garantir match independente do nome da coluna
   const mapped = data ? data.map(mapAppointmentFromDB) : [];
   return mapped.filter(a => a.clientPhone === phone);
+};
+
+export const checkClientSpam = async (phone: string, date: string): Promise<{ allowed: boolean, reason?: string }> => {
+    // 1. Verificar agendamentos no mesmo dia
+    const { data: sameDay } = await supabase
+        .from('appointments')
+        .select('*')
+        .eq('date', date)
+        .neq('status', 'Cancelaram') // Ignora cancelados
+        .neq('status', 'Desmarcou');
+
+    const sameDayApps = sameDay ? sameDay.map(mapAppointmentFromDB).filter(a => a.clientPhone === phone) : [];
+    
+    if (sameDayApps.length > 0) {
+        return { allowed: false, reason: 'Você já possui um agendamento para este dia.' };
+    }
+
+    // 2. Verificar agendamentos na mesma semana (Domingo a Sábado)
+    const targetDate = new Date(date + 'T12:00:00');
+    const day = targetDate.getDay(); // 0 (Dom) a 6 (Sab)
+    
+    const startOfWeek = new Date(targetDate);
+    startOfWeek.setDate(targetDate.getDate() - day);
+    const startStr = startOfWeek.toISOString().split('T')[0];
+
+    const endOfWeek = new Date(targetDate);
+    endOfWeek.setDate(targetDate.getDate() + (6 - day));
+    const endStr = endOfWeek.toISOString().split('T')[0];
+
+    const { data: sameWeek } = await supabase
+        .from('appointments')
+        .select('*')
+        .gte('date', startStr)
+        .lte('date', endStr)
+        .neq('status', 'Cancelaram')
+        .neq('status', 'Desmarcou');
+
+    const sameWeekApps = sameWeek ? sameWeek.map(mapAppointmentFromDB).filter(a => a.clientPhone === phone) : [];
+
+    if (sameWeekApps.length >= 2) {
+        return { allowed: false, reason: 'Limite de 2 agendamentos por semana atingido.' };
+    }
+
+    return { allowed: true };
 };
 
 export const saveAppointment = async (apt: Omit<Appointment, 'id'>) => {
@@ -237,9 +292,9 @@ export const checkAvailability = async (
     const proposedStart = new Date(`${date}T${time}`);
     const proposedEnd = new Date(proposedStart.getTime() + duration * 60000);
 
-    if (proposedStart < now) {
-        return { available: false, reason: 'Não é possível agendar em datas ou horários passados.' };
-    }
+    // if (proposedStart < now) {
+    //     return { available: false, reason: 'Não é possível agendar em datas ou horários passados.' };
+    // }
 
     const { data: blocks } = await supabase
         .from('agenda_blocks')
@@ -249,8 +304,27 @@ export const checkAvailability = async (
         .lte('start_at', `${date}T23:59:59`);
 
     const hasBlock = blocks?.some(blk => {
-        const bStart = new Date(blk.start_at);
-        const bEnd = new Date(blk.end_at);
+        // Parse dates manually to ensure we are comparing local times as they appear visually
+        // This avoids timezone issues where the DB might return UTC but the UI shows local
+        const bStartStr = blk.start_at.split('T')[1].substring(0, 5);
+        const bEndStr = blk.end_at.split('T')[1].substring(0, 5);
+        
+        // Construct Date objects using the APPOINTMENT date to ensure correct day comparison
+        // We assume blocks are for the specific day being checked (or we check overlap with the block's full date if needed)
+        // But since we query by day overlap, we need to be careful.
+        
+        // Better approach: Use the full ISO string but treat it as local time if possible, 
+        // OR just trust the string comparison if we are sure about the format.
+        
+        // Let's stick to the robust full date comparison but correct for the timezone offset issue
+        // by creating dates from the string parts explicitly.
+        
+        const bStartParts = blk.start_at.split(/[-T:]/);
+        const bEndParts = blk.end_at.split(/[-T:]/);
+        
+        const bStart = new Date(Number(bStartParts[0]), Number(bStartParts[1])-1, Number(bStartParts[2]), Number(bStartParts[3]), Number(bStartParts[4]));
+        const bEnd = new Date(Number(bEndParts[0]), Number(bEndParts[1])-1, Number(bEndParts[2]), Number(bEndParts[3]), Number(bEndParts[4]));
+
         return (proposedStart < bEnd && proposedEnd > bStart);
     });
 

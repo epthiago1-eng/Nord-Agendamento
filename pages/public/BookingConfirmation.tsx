@@ -92,10 +92,10 @@ const BookingConfirmation: React.FC = () => {
                 <span className="text-[10px] font-black text-blue-900 uppercase tracking-widest block mb-2">Serviços Selecionados</span>
                 <div className="space-y-1">
                     {appointment.services.map((s: string, i: number) => (
-                        <p key={i} className="text-xs font-bold text-gray-600 flex items-center gap-2">
+                        <div key={i} className="text-xs font-bold text-gray-600 flex items-center gap-2">
                             <div className="w-1.5 h-1.5 rounded-full bg-blue-900" />
                             {s}
-                        </p>
+                        </div>
                     ))}
                 </div>
             </div>

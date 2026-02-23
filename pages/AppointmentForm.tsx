@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
   ChevronLeft, Search, UserPlus, X, Check, Scissors, 
-  UserCheck, Mail, Loader2, AlertTriangle, AlertCircle, Calendar
+  UserCheck, Mail, Loader2, AlertTriangle, AlertCircle, Calendar, User
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { checkAvailability, saveAppointment } from '../data/agendaData';
@@ -76,14 +76,22 @@ const AppointmentForm: React.FC = () => {
     const fetchData = async () => {
         setLoading(true);
         try {
-            const { data: pros } = await db.professionals().select('*').eq('status', 'Ativo');
-            if (pros) {
-                setProfessionalsList(pros);
+            const { data: allPros } = await db.professionals().select('*').eq('status', 'Ativo');
+            
+            // Busca Perfis ADMIN para filtrar
+            const { data: adminProfiles } = await db.profiles().select('professional_id').eq('role', 'ADMIN');
+            const adminIds = new Set(adminProfiles?.map(p => p.professional_id).filter(Boolean));
+
+            if (allPros) {
+                // Filtra profissionais que são ADMIN
+                const visiblePros = allPros.filter(p => !adminIds.has(p.id));
+                setProfessionalsList(visiblePros);
+                
                 const userProId = localStorage.getItem('user_pro_id');
                 if (userRole === 'COLLABORATOR' && userProId) {
                     setSelectedProId(userProId);
-                } else if (pros.length > 0) {
-                    setSelectedProId(pros[0].id);
+                } else if (visiblePros.length > 0) {
+                    setSelectedProId(visiblePros[0].id);
                 }
             }
 
@@ -329,18 +337,29 @@ const AppointmentForm: React.FC = () => {
             {userRole === 'ADMIN' && (
             <div>
                 <label className="text-[11px] font-black text-gray-400 uppercase tracking-widest block mb-2 px-1">Profissional</label>
-                <div className="grid grid-cols-3 gap-3">
+                <div className="flex gap-3 overflow-x-auto pb-2 no-scrollbar">
                 {professionalsList.map(p => (
                     <button
                     key={p.id}
                     onClick={() => setSelectedProId(p.id)}
-                    className={`py-3 rounded-xl border-2 font-black text-[10px] uppercase transition-all ${
+                    className={`flex items-center gap-2 pr-4 pl-1 py-1 rounded-full border transition-all active:scale-95 shrink-0 ${
                         selectedProId === p.id 
-                        ? 'bg-blue-900 border-blue-900 text-white shadow-lg' 
-                        : 'bg-white border-gray-100 text-gray-400'
+                        ? 'bg-white border-blue-900 shadow-sm ring-1 ring-blue-900' 
+                        : 'bg-white border-gray-200 opacity-60'
                     }`}
                     >
-                    {p.name}
+                    <div className="w-8 h-8 rounded-full bg-gray-200 overflow-hidden shrink-0">
+                        {p.avatar ? (
+                            <img src={p.avatar} alt={p.name} className="w-full h-full object-cover" />
+                        ) : (
+                            <div className="w-full h-full flex items-center justify-center bg-blue-100 text-blue-900">
+                                <User size={14} />
+                            </div>
+                        )}
+                    </div>
+                    <span className={`text-[11px] font-bold uppercase tracking-tight ${selectedProId === p.id ? 'text-blue-900' : 'text-gray-500'}`}>
+                        {p.name.split(' ')[0]}
+                    </span>
                     </button>
                 ))}
                 </div>
@@ -388,7 +407,7 @@ const AppointmentForm: React.FC = () => {
                     <input 
                         type="date" 
                         value={formData.date}
-                        min={formatDateSafe(new Date())} 
+                        // min={formatDateSafe(new Date())} 
                         onChange={(e) => setFormData({...formData, date: e.target.value})}
                         className="w-full bg-gray-50 border border-gray-100 rounded-2xl py-4 px-4 outline-none font-bold text-gray-700 text-sm shadow-inner"
                     />

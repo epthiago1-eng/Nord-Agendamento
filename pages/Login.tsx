@@ -84,7 +84,7 @@ const Login: React.FC = () => {
             <img 
               src={logoUrl} 
               alt={appName} 
-              className="w-full h-full object-cover p-1"
+              className="w-full h-full object-cover scale-110"
             />
           </div>
           <div className="text-center px-4">

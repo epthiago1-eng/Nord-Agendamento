@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, Calendar, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
+import { ChevronLeft, Calendar, CheckCircle2, AlertCircle, Loader2, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { saveBlock } from '../data/agendaData';
 import { db } from '../supabase';
@@ -12,6 +12,7 @@ const AgendaBlockForm: React.FC = () => {
 
   const [loading, setLoading] = useState(false);
   const [professionals, setProfessionals] = useState<any[]>([]);
+  const [conflictError, setConflictError] = useState<{clientName: string, time: string, date: string, duration: number} | null>(null);
   
   // Se for admin, pode escolher. Se colaborador, fixa no próprio ID.
   const [selectedProId, setSelectedProId] = useState(userRole === 'COLLABORATOR' ? userProId : '');
@@ -28,11 +29,19 @@ const AgendaBlockForm: React.FC = () => {
   useEffect(() => {
     if (userRole === 'ADMIN') {
         const fetchPros = async () => {
-            const { data } = await db.professionals().select('*').eq('status', 'Ativo');
-            if (data) {
-                setProfessionals(data);
+            const { data: allPros } = await db.professionals().select('*').eq('status', 'Ativo');
+            
+            // Busca Perfis ADMIN para filtrar
+            const { data: adminProfiles } = await db.profiles().select('professional_id').eq('role', 'ADMIN');
+            const adminIds = new Set(adminProfiles?.map(p => p.professional_id).filter(Boolean));
+            
+            if (allPros) {
+                // Filtra profissionais que são ADMIN
+                const visiblePros = allPros.filter(p => !adminIds.has(p.id));
+                setProfessionals(visiblePros);
+                
                 // Se ainda não selecionou ninguém, seleciona o primeiro
-                if (data.length > 0 && !selectedProId) setSelectedProId(data[0].id);
+                if (visiblePros.length > 0 && !selectedProId) setSelectedProId(visiblePros[0].id);
             }
         };
         fetchPros();
@@ -95,7 +104,12 @@ const AgendaBlockForm: React.FC = () => {
       });
 
       if (conflict) {
-          alert(`Bloqueio NÃO permitido!\n\nConflito com agendamento:\nCliente: ${conflict.clientName}\nHorário: ${conflict.time} - ${new Date(new Date(`${conflict.date}T${conflict.time}`).getTime() + (conflict.duration || 30)*60000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`);
+          setConflictError({
+              clientName: conflict.clientName,
+              time: conflict.time,
+              date: conflict.date,
+              duration: conflict.duration || 30
+          });
           setLoading(false);
           return;
       }
@@ -221,6 +235,45 @@ const AgendaBlockForm: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {conflictError && (
+        <div className="fixed inset-0 bg-black/60 z-[300] flex items-center justify-center p-6 backdrop-blur-sm animate-in fade-in">
+            <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-6 shadow-2xl space-y-5 animate-in zoom-in-95">
+                <div className="flex justify-between items-center px-1">
+                    <div className="flex items-center gap-2">
+                        <AlertCircle size={24} className="text-red-500" />
+                        <h3 className="text-red-600 font-black uppercase tracking-widest text-xs">Conflito Detectado</h3>
+                    </div>
+                    <button onClick={() => setConflictError(null)} className="text-gray-400 p-1 hover:text-gray-600 transition-colors">
+                        <X size={24} />
+                    </button>
+                </div>
+                
+                <div className="bg-red-50 p-4 rounded-2xl border border-red-100 space-y-3">
+                    <p className="text-sm font-bold text-red-800">
+                        Não é possível bloquear este horário pois já existe um agendamento.
+                    </p>
+                    
+                    <div className="bg-white p-3 rounded-xl border border-red-100 shadow-sm">
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Cliente</p>
+                        <p className="text-sm font-black text-gray-800 mb-2">{conflictError.clientName}</p>
+                        
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Horário</p>
+                        <p className="text-sm font-black text-gray-800">
+                            {conflictError.time} - {new Date(new Date(`${conflictError.date}T${conflictError.time}`).getTime() + (conflictError.duration || 30)*60000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                        </p>
+                    </div>
+                </div>
+
+                <button 
+                    onClick={() => setConflictError(null)} 
+                    className="w-full bg-red-600 text-white font-black py-4 rounded-2xl uppercase tracking-widest text-xs shadow-lg active:scale-95 transition-all"
+                >
+                    Entendi
+                </button>
+            </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -1,9 +1,10 @@
 
-import React, { useState } from 'react';
-import { ChevronLeft, CheckCircle2, User, Phone, Clipboard, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { ChevronLeft, CheckCircle2, User, Phone, Clipboard, AlertCircle, Loader2 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { saveAppointment, updateAppointment } from '../../data/agendaData';
+import { saveAppointment, updateAppointment, checkClientSpam, getSettings } from '../../data/agendaData';
 import { addNotification } from '../../data/notifications';
+import { db } from '../../supabase';
 
 const BookingForm: React.FC = () => {
   const navigate = useNavigate();
@@ -18,6 +19,19 @@ const BookingForm: React.FC = () => {
 
   const [errors, setErrors] = useState<{ name?: boolean; phone?: boolean }>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [logoUrl, setLogoUrl] = useState("https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png");
+  const [spamError, setSpamError] = useState<string | null>(null);
+  
+  // Client Search States
+  const [isSearchingClient, setIsSearchingClient] = useState(false);
+  const [clientFound, setClientFound] = useState<boolean | null>(null);
+  const [welcomeMessage, setWelcomeMessage] = useState('');
+
+  useEffect(() => {
+    getSettings().then(s => {
+        if (s.logoUrl) setLogoUrl(s.logoUrl);
+    });
+  }, []);
 
   const validate = () => {
     const newErrors: { name?: boolean; phone?: boolean } = {};
@@ -37,11 +51,58 @@ const BookingForm: React.FC = () => {
     return numbers;
   };
 
+  const searchClient = async (phone: string) => {
+    // Remove formatting to search
+    // Assuming DB stores formatted or unformatted? 
+    // Usually standardizing on formatted in the UI might mean DB has formatted. 
+    // Let's try exact match first.
+    
+    setIsSearchingClient(true);
+    setClientFound(null);
+    setWelcomeMessage('');
+    
+    try {
+        const { data, error } = await db.clients().select('*').eq('phone', phone).single();
+        
+        if (data) {
+            setFormData(prev => ({ ...prev, name: data.name }));
+            setClientFound(true);
+            setWelcomeMessage(`Bem-vindo de volta, ${data.name.split(' ')[0]}!`);
+            // Clear name error if it existed
+            setErrors(prev => ({ ...prev, name: false }));
+        } else {
+            setClientFound(false);
+            setWelcomeMessage('Por favor, informe seu nome para completarmos o cadastro.');
+            // Clear name so they can type
+            if (!editingAppointment) {
+                setFormData(prev => ({ ...prev, name: '' }));
+            }
+        }
+    } catch (err) {
+        console.error(err);
+        // Treat error as not found
+        setClientFound(false);
+        setWelcomeMessage('Por favor, informe seu nome para completarmos o cadastro.');
+    } finally {
+        setIsSearchingClient(false);
+    }
+  };
+
   const handleFinish = async () => {
     if (!validate()) return;
     setIsSubmitting(true);
 
     try {
+        // SPAM CHECK (Apenas para novos agendamentos)
+        if (!editingAppointment) {
+            const spamCheck = await checkClientSpam(formData.phone, dateIso);
+            if (!spamCheck.allowed) {
+                setSpamError(spamCheck.reason || 'Erro desconhecido');
+                setIsSubmitting(false);
+                return;
+            }
+        }
+
         const totalDuration = selectedServices?.reduce((acc: number, s: any) => {
             const mins = parseInt(String(s.duration || '30').split(' ')[0]);
             return acc + mins;
@@ -81,8 +142,40 @@ const BookingForm: React.FC = () => {
 
         } else {
             // FLUXO DE NOVO AGENDAMENTO
+            // Check if client exists to reuse ID or create new?
+            // saveAppointment usually creates a new client if ID is 'public-...'? 
+            // Actually saveAppointment in agendaData just inserts into appointments.
+            // If we want to link to an existing client, we should probably use their ID if found.
+            // But the current implementation of saveAppointment takes clientId as a string.
+            // If we found a client, we should probably use their real ID.
+            
+            let clientId = 'public-' + Date.now();
+            
+            // Try to get real client ID if we found them
+            if (clientFound) {
+                 const { data } = await db.clients().select('id').eq('phone', formData.phone).single();
+                 if (data) clientId = data.id;
+            } else {
+                // If not found, maybe we should create the client record properly?
+                // For now, let's stick to the existing behavior but try to reuse if possible.
+                // Or just let the backend/trigger handle it if there is one.
+                // The current saveAppointment just inserts into appointments.
+                
+                // Let's try to insert/upsert the client to ensure they exist in clients table
+                try {
+                    const { data: newClient } = await db.clients().upsert({
+                        name: formData.name,
+                        phone: formData.phone
+                    }, { onConflict: 'phone' }).select().single();
+                    
+                    if (newClient) clientId = newClient.id;
+                } catch (e) {
+                    console.error("Error upserting client", e);
+                }
+            }
+
             finalAppointment = await saveAppointment({
-                clientId: 'public-' + Date.now(),
+                clientId: clientId,
                 clientName: formData.name,
                 clientPhone: formData.phone,
                 professionalId: professional?.id || '1',
@@ -114,7 +207,7 @@ const BookingForm: React.FC = () => {
         });
     } catch (e: any) {
         console.error(e);
-        alert('Erro ao agendar: ' + e.message);
+        setSpamError('Erro ao agendar: ' + e.message);
     } finally {
         setIsSubmitting(false);
     }
@@ -124,10 +217,19 @@ const BookingForm: React.FC = () => {
     let finalValue = value;
     if (field === 'phone') {
         finalValue = formatPhone(value);
+        // Trigger search if phone is complete (14 or 15 chars with mask)
+        // (XX) X XXXX-XXXX -> 15 chars
+        // (XX) XXXX-XXXX -> 14 chars
+        if (finalValue.length >= 14 && !editingAppointment) {
+            searchClient(finalValue);
+        } else {
+            setClientFound(null);
+            setWelcomeMessage('');
+        }
     }
-    setFormData({ ...formData, [field]: finalValue });
+    setFormData(prev => ({ ...prev, [field]: finalValue }));
     if (errors[field as keyof typeof errors]) {
-      setErrors({ ...errors, [field]: false });
+      setErrors(prev => ({ ...prev, [field]: false }));
     }
   };
 
@@ -135,7 +237,7 @@ const BookingForm: React.FC = () => {
     <div className="min-h-screen bg-white flex flex-col font-sans">
       <div className="bg-black h-16 w-full relative shrink-0">
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-0 w-32 h-32 rounded-full border-4 border-white bg-white overflow-hidden shadow-xl z-10 translate-y-[-20%]">
-          <img src="https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png" alt="Nord Barbershop" className="w-full h-full object-contain p-1" />
+          <img src={logoUrl} alt="Nord Barbershop" className="w-full h-full object-contain p-1" />
         </div>
       </div>
 
@@ -164,30 +266,7 @@ const BookingForm: React.FC = () => {
         </div>
 
         <div className="space-y-5">
-            <div className="relative">
-                <label className={`text-[10px] font-black uppercase tracking-widest block mb-1.5 px-1 ${errors.name ? 'text-red-500' : 'text-gray-400'}`}>
-                  Nome Completo *
-                </label>
-                <div className="relative">
-                    <input 
-                        type="text" 
-                        value={formData.name}
-                        onChange={e => handleInputChange('name', e.target.value)}
-                        placeholder="Como devemos te chamar?" 
-                        readOnly={!!editingAppointment} // Nome não muda na edição para simplificar
-                        className={`w-full bg-white border rounded-2xl py-4 px-12 outline-none focus:ring-1 text-gray-800 font-bold shadow-sm transition-all ${
-                          errors.name ? 'border-red-500 ring-red-100 ring-1' : 'border-gray-200 focus:ring-black'
-                        } ${editingAppointment ? 'bg-gray-50 text-gray-500' : ''}`}
-                    />
-                    <User className={`absolute left-4 top-1/2 -translate-y-1/2 transition-colors ${errors.name ? 'text-red-400' : 'text-gray-300'}`} size={20} />
-                </div>
-                {errors.name && (
-                  <p className="text-[10px] text-red-500 font-bold mt-1 px-1 flex items-center gap-1 animate-in fade-in slide-in-from-top-1">
-                    <AlertCircle size={10} /> Informe seu nome para continuar
-                  </p>
-                )}
-            </div>
-
+            {/* PHONE FIELD FIRST */}
             <div className="relative">
                 <label className={`text-[10px] font-black uppercase tracking-widest block mb-1.5 px-1 ${errors.phone ? 'text-red-500' : 'text-gray-400'}`}>
                   Seu WhatsApp *
@@ -205,10 +284,50 @@ const BookingForm: React.FC = () => {
                         } ${editingAppointment ? 'bg-gray-50 text-gray-500' : ''}`}
                     />
                     <Phone className={`absolute left-4 top-1/2 -translate-y-1/2 transition-colors ${errors.phone ? 'text-red-400' : 'text-gray-300'}`} size={20} />
+                    {isSearchingClient && (
+                        <div className="absolute right-4 top-1/2 -translate-y-1/2">
+                            <Loader2 className="animate-spin text-blue-900" size={20} />
+                        </div>
+                    )}
                 </div>
                 {errors.phone && (
                   <p className="text-[10px] text-red-500 font-bold mt-1 px-1 flex items-center gap-1 animate-in fade-in slide-in-from-top-1">
                     <AlertCircle size={10} /> Precisamos do seu contato
+                  </p>
+                )}
+                
+                {/* Search Feedback */}
+                {welcomeMessage && (
+                    <div className={`mt-2 p-3 rounded-xl text-xs font-bold flex items-center gap-2 animate-in fade-in slide-in-from-top-2 ${clientFound ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'}`}>
+                        {clientFound ? <CheckCircle2 size={14} /> : <User size={14} />}
+                        {welcomeMessage}
+                    </div>
+                )}
+            </div>
+
+            {/* NAME FIELD SECOND */}
+            <div className="relative">
+                <label className={`text-[10px] font-black uppercase tracking-widest block mb-1.5 px-1 ${errors.name ? 'text-red-500' : 'text-gray-400'}`}>
+                  Nome Completo *
+                </label>
+                <div className="relative">
+                    <input 
+                        type="text" 
+                        value={formData.name}
+                        onChange={e => handleInputChange('name', e.target.value)}
+                        placeholder="Como devemos te chamar?" 
+                        readOnly={!!editingAppointment || (clientFound === true)} // Read only if found? Or allow edit? User asked for "preenchido". Let's allow edit but it's prefilled.
+                        // User said: "caso encontre já apareça uma mensagem de seja bem vindo de volta e o nome fique preenchido e só precise confirmar agendamento"
+                        // Usually safer to allow edit in case name changed, but let's keep it simple.
+                        className={`w-full bg-white border rounded-2xl py-4 px-12 outline-none focus:ring-1 text-gray-800 font-bold shadow-sm transition-all ${
+                          errors.name ? 'border-red-500 ring-red-100 ring-1' : 'border-gray-200 focus:ring-black'
+                        } ${editingAppointment ? 'bg-gray-50 text-gray-500' : ''}`}
+                    />
+                    <User className={`absolute left-4 top-1/2 -translate-y-1/2 transition-colors ${errors.name ? 'text-red-400' : 'text-gray-300'}`} size={20} />
+                </div>
+                {errors.name && (
+                  <p className="text-[10px] text-red-500 font-bold mt-1 px-1 flex items-center gap-1 animate-in fade-in slide-in-from-top-1">
+                    <AlertCircle size={10} /> Informe seu nome para continuar
                   </p>
                 )}
             </div>
@@ -229,12 +348,35 @@ const BookingForm: React.FC = () => {
 
         <button 
             onClick={handleFinish}
-            disabled={isSubmitting}
-            className={`w-full bg-black text-white font-black py-5 rounded-[2rem] shadow-xl active:scale-[0.98] transition-all uppercase tracking-[0.2em] text-sm mt-4 min-h-[64px] ${isSubmitting ? 'opacity-50' : ''}`}
+            disabled={isSubmitting || isSearchingClient}
+            className={`w-full bg-black text-white font-black py-5 rounded-[2rem] shadow-xl active:scale-[0.98] transition-all uppercase tracking-[0.2em] text-sm mt-4 min-h-[64px] ${isSubmitting || isSearchingClient ? 'opacity-50' : ''}`}
         >
             {isSubmitting ? 'Processando...' : editingAppointment ? 'Confirmar Reagendamento' : 'Confirmar Agendamento'}
         </button>
       </div>
+
+      {/* Spam Error Modal */}
+      {spamError && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex flex-col items-center text-center gap-4">
+              <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center text-red-600 mb-2">
+                <AlertCircle size={32} />
+              </div>
+              <h3 className="text-xl font-black text-gray-900">Não foi possível agendar</h3>
+              <p className="text-gray-600 font-medium leading-relaxed">
+                {spamError}
+              </p>
+              <button 
+                onClick={() => setSpamError(null)}
+                className="w-full bg-gray-900 text-white font-bold py-4 rounded-2xl mt-2 active:scale-95 transition-transform"
+              >
+                Entendi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

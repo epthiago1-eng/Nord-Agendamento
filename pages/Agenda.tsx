@@ -31,8 +31,10 @@ const Agenda: React.FC = () => {
 
   const [selectedBlock, setSelectedBlock] = useState<AgendaBlock | null>(null);
   const [editBlockDesc, setEditBlockDesc] = useState('');
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   
-  const HOUR_HEIGHT = 80;
+  const HOUR_HEIGHT = 120;
   const START_HOUR = 8;
   const hours = Array.from({ length: 14 }, (_, i) => START_HOUR + i);
 
@@ -131,7 +133,7 @@ const Agenda: React.FC = () => {
       const dateStr = formatDateSafe(selectedDate); // Uso da função segura
       const [apts, blks] = await Promise.all([
         getAppointments({ date: dateStr }),
-        getBlocks()
+        getBlocks({ date: dateStr })
       ]);
       setAppointments(apts || []);
       setBlocks(blks || []);
@@ -198,6 +200,23 @@ const Agenda: React.FC = () => {
     const m = now.getMinutes();
     return getPosition(`${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`);
   }, [now]);
+
+  const handleDeleteBlock = async () => {
+    if (!selectedBlock) return;
+    
+    setIsDeleting(true);
+    try {
+        await deleteBlock(selectedBlock.id);
+        setSelectedBlock(null);
+        fetchData();
+    } catch (error) {
+        console.error('Erro ao excluir bloqueio:', error);
+        // alert('Erro ao excluir bloqueio. Tente novamente.');
+    } finally {
+        setIsDeleting(false);
+        setShowDeleteConfirm(false);
+    }
+  };
 
   return (
     <div className="flex flex-col h-full bg-[#fcfaff] relative overflow-hidden">
@@ -304,18 +323,18 @@ const Agenda: React.FC = () => {
                                         {proDetails.name || 'Agenda'}
                                     </span>
                                 </div>
-                                <div className="relative h-full">
+                                <div className="absolute inset-0 w-full h-full">
                                     {proAppointments.map((apt) => {
                                         const isLate = isAppointmentOverdue(apt);
                                         return (
-                                        <div key={apt.id} onClick={() => navigate(`/appointment-checkout/${apt.id}`)} className={`absolute left-1 right-1 rounded-xl p-2 border-l-4 shadow-sm transition-all active:scale-[0.98] cursor-pointer z-10 overflow-hidden flex flex-col justify-center ${apt.status === 'Confirmado' ? (isLate ? 'bg-red-50 border-red-500 ring-1 ring-red-100' : 'bg-blue-50 border-blue-500') : apt.status === 'Atendimento Realizado' ? 'bg-green-50 border-green-500' : 'bg-gray-50 border-gray-400 opacity-60'}`} style={{ top: `${getPosition(apt.time)}px`, height: `${Math.max(getHeight(apt.duration), 30)}px` }}>
+                                        <div key={apt.id} onClick={() => navigate(`/appointment-checkout/${apt.id}`)} className={`absolute left-1 right-1 rounded-xl p-2 border-l-4 shadow-sm transition-all active:scale-[0.98] cursor-pointer z-10 overflow-hidden flex flex-col justify-center ${apt.status === 'Confirmado' ? (isLate ? 'bg-red-50 border-red-500 ring-1 ring-red-100' : 'bg-blue-50 border-blue-500') : apt.status === 'Atendimento Realizado' ? 'bg-green-50 border-green-500' : 'bg-gray-50 border-gray-400 opacity-60'}`} style={{ top: `${getPosition(apt.time)}px`, height: `${Math.max(getHeight(apt.duration), 40)}px` }}>
                                             <div className="flex justify-between items-start w-full">
-                                                <h4 className={`font-bold text-[11px] truncate leading-tight ${isLate ? 'text-red-700' : 'text-gray-900'}`}>{apt.clientName}</h4>
+                                                <h4 className={`font-bold text-[12px] truncate leading-tight ${isLate ? 'text-red-700' : 'text-blue-950'}`}>{apt.clientName}</h4>
                                                 {isLate && <Clock size={12} className="text-red-500 shrink-0 animate-pulse" />}
                                             </div>
                                             <div className="flex items-center gap-1 mt-0.5">
-                                                <p className={`text-[9px] font-black uppercase opacity-70 ${isLate ? 'text-red-600' : ''}`}>{apt.time}</p>
-                                                <span className="text-[8px] opacity-50 truncate max-w-[80px]">• {apt.services[0]}</span>
+                                                <p className={`text-[10px] font-black uppercase ${isLate ? 'text-red-600' : 'text-blue-800'}`}>{apt.time}</p>
+                                                <span className={`text-[10px] truncate max-w-[120px] font-medium ${isLate ? 'text-red-500' : 'text-blue-700/80'}`}>• {apt.services[0]}</span>
                                             </div>
                                         </div>
                                     )})}
@@ -377,8 +396,20 @@ const Agenda: React.FC = () => {
                     <input type="text" value={editBlockDesc} onChange={(e) => setEditBlockDesc(e.target.value)} className="w-full bg-white border border-gray-200 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-red-500 font-bold text-gray-700" />
                 </div>
                 <div className="flex flex-col gap-3 pt-2">
-                    <button onClick={async () => { try { await updateBlock(selectedBlock.id, { description: editBlockDesc }); setSelectedBlock(null); fetchData(); } catch(e) { alert('Erro ao atualizar'); } }} className="w-full bg-blue-900 text-white font-black py-5 rounded-2xl uppercase tracking-widest text-xs shadow-lg active:scale-95 transition-all min-h-[64px]">Salvar Alterações</button>
-                    <button onClick={async () => { if(confirm('Excluir bloqueio?')) { try { await deleteBlock(selectedBlock.id); setSelectedBlock(null); fetchData(); } catch(e) { alert('Erro ao excluir'); } } }} className="w-full bg-red-50 text-red-600 font-black py-5 rounded-2xl uppercase tracking-widest text-xs active:scale-95 transition-all flex items-center justify-center gap-2 min-h-[64px]"><Trash2 size={16} /> Excluir Bloqueio</button>
+                    {!showDeleteConfirm ? (
+                        <>
+                            <button onClick={async () => { try { await updateBlock(selectedBlock.id, { description: editBlockDesc }); setSelectedBlock(null); fetchData(); } catch(e) { console.error(e); } }} className="w-full bg-blue-900 text-white font-black py-5 rounded-2xl uppercase tracking-widest text-xs shadow-lg active:scale-95 transition-all min-h-[64px]">Salvar Alterações</button>
+                            <button onClick={() => setShowDeleteConfirm(true)} className="w-full bg-red-50 text-red-600 font-black py-5 rounded-2xl uppercase tracking-widest text-xs active:scale-95 transition-all flex items-center justify-center gap-2 min-h-[64px]"><Trash2 size={16} /> Excluir Bloqueio</button>
+                        </>
+                    ) : (
+                        <div className="flex gap-3">
+                             <button onClick={() => setShowDeleteConfirm(false)} className="flex-1 bg-gray-100 text-gray-600 font-black py-5 rounded-2xl uppercase tracking-widest text-xs active:scale-95 transition-all min-h-[64px]">Cancelar</button>
+                             <button onClick={handleDeleteBlock} disabled={isDeleting} className="flex-1 bg-red-600 text-white font-black py-5 rounded-2xl uppercase tracking-widest text-xs active:scale-95 transition-all flex items-center justify-center gap-2 min-h-[64px] disabled:opacity-50 disabled:pointer-events-none">
+                                {isDeleting ? <Loader2 className="animate-spin" size={16} /> : <Trash2 size={16} />}
+                                {isDeleting ? 'Excluindo...' : 'Confirmar'}
+                            </button>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>

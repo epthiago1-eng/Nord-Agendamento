@@ -294,6 +294,30 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                   products: selectedProducts,
                   total_value: finalValue
                 };
+
+                // Lógica para encurtar o card se finalizar antes do previsto (liberar agenda)
+                try {
+                    const now = new Date();
+                    // Ajuste fuso horário simples para pegar YYYY-MM-DD local
+                    const localDate = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+                    
+                    if (appointment.date === localDate) {
+                        const [h, m] = appointment.time.split(':').map(Number);
+                        const startDate = new Date(now);
+                        startDate.setHours(h, m, 0, 0);
+                        
+                        const diffMs = now.getTime() - startDate.getTime();
+                        const diffMinutes = Math.floor(diffMs / 60000);
+                        
+                        // Se duração real for menor que a agendada (e positiva), atualiza
+                        // Mínimo de 15 min para não sumir do grid
+                        if (diffMinutes > 0 && diffMinutes < (appointment.duration || 30)) {
+                            aptUpdate.duration = Math.max(15, diffMinutes);
+                        }
+                    }
+                } catch (e) {
+                    console.error("Erro ao calcular nova duração", e);
+                }
                 
                 await db.appointments().update(aptUpdate).eq('id', appointment.id);
 
