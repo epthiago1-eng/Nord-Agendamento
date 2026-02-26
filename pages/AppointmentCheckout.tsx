@@ -339,17 +339,12 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                   status: 'Atendimento Realizado',
                   services: selectedServices.map(s => s.name),
                   products: selectedProducts,
-                  totalValue: finalValue,
                   total_value: finalValue,
                   payment_method: paymentMethod,
                   others_value: totals.others,
-                  othersValue: totals.others,
                   others_description: othersDescription,
-                  othersDescription: othersDescription,
                   discount_value: totals.discount,
-                  discountValue: totals.discount,
-                  tip_value: totals.tip,
-                  tipValue: totals.tip
+                  tip_value: totals.tip
                 };
 
                 // Lógica para encurtar o card se finalizar antes do previsto (liberar agenda)

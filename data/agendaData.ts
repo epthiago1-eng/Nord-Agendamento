@@ -224,7 +224,7 @@ export const saveAppointment = async (apt: Omit<Appointment, 'id'>) => {
       status: apt.status,
       services: apt.services,
       products: apt.products || [],
-      totalValue: apt.totalValue || 0,
+      total_value: apt.totalValue || 0,
       others_value: (apt as any).others_value || 0,
       others_description: (apt as any).others_description || null,
       discount_value: (apt as any).discount_value || 0,
@@ -251,7 +251,7 @@ export const updateAppointment = async (id: string, data: Partial<Appointment>) 
   if (data.status) payload.status = data.status;
   if (data.professionalId) payload.professionalId = data.professionalId;
   if (data.professionalName) payload.professionalName = data.professionalName;
-  if (data.totalValue !== undefined) payload.totalValue = data.totalValue;
+  if (data.totalValue !== undefined) payload.total_value = data.totalValue;
   if ((data as any).others_value !== undefined) payload.others_value = (data as any).others_value;
   if ((data as any).others_description !== undefined) payload.others_description = (data as any).others_description;
   if ((data as any).discount_value !== undefined) payload.discount_value = (data as any).discount_value;
