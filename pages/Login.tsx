@@ -143,15 +143,7 @@ const Login: React.FC = () => {
             )}
           </button>
 
-          <div className="text-center pt-2">
-            <button 
-                type="button"
-                onClick={() => navigate('/register')}
-                className="text-white/50 text-[10px] uppercase font-bold tracking-widest hover:text-white transition-colors border-b border-transparent hover:border-white pb-0.5"
-            >
-                Não tem conta? Cadastrar Barbearia
-            </button>
-          </div>
+
         </form>
 
         <p className="text-gray-600 text-[10px] font-medium text-center uppercase tracking-tighter">

@@ -4,7 +4,7 @@ import {
   ChevronLeft, ShoppingBag, ClipboardList, Plus, Trash2, 
   DollarSign, CheckCircle2, User, Clock, Calendar, Scissors, Box,
   ArrowRightLeft, AlertTriangle, X, Loader2, UserX, XCircle, LogOut,
-  MessageCircle
+  MessageCircle, Coins, Tag, PlusCircle, Percent
 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { getAppointments, updateAppointment, Appointment, deleteAppointment, transferAppointment } from '../data/agendaData';
@@ -33,6 +33,13 @@ const AppointmentCheckout: React.FC = () => {
   const [selectedServices, setSelectedServices] = useState<any[]>([]);
   const [selectedProducts, setSelectedProducts] = useState<{id: string, name: string, price: number, quantity: number, code?: string}[]>([]);
   
+  // Gorjetas, Outros e Descontos
+  const [tipValue, setTipValue] = useState('');
+  const [othersValue, setOthersValue] = useState('');
+  const [othersDescription, setOthersDescription] = useState('');
+  const [discountValue, setDiscountValue] = useState('');
+  const [discountType, setDiscountType] = useState<'fixed' | 'percentage'>('fixed');
+
   // Controle de Pagamento
   const [paymentValue, setPaymentValue] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('');
@@ -80,7 +87,8 @@ const AppointmentCheckout: React.FC = () => {
             
             const methods = payMethodsRes.data || [];
             setDbPaymentMethods(methods);
-            if (methods.length > 0) setPaymentMethod(methods[0].name);
+            // Removido auto-seleção para forçar escolha manual
+            // if (methods.length > 0) setPaymentMethod(methods[0].name);
 
             // Carregar Agendamento
             const appointments = await getAppointments();
@@ -99,6 +107,18 @@ const AppointmentCheckout: React.FC = () => {
                 // Mapear produtos
                 if (apt.products && Array.isArray(apt.products)) {
                     setSelectedProducts(apt.products);
+                }
+
+                // Inicializar valores de gorjeta, outros e descontos se existirem
+                if (apt.tip_value) setTipValue(apt.tip_value.toString().replace('.', ','));
+                if (apt.others_value) setOthersValue(apt.others_value.toString().replace('.', ','));
+                if (apt.others_description) setOthersDescription(apt.others_description);
+                if (apt.discount_value) {
+                    setDiscountValue(apt.discount_value.toString().replace('.', ','));
+                    setDiscountType('fixed'); // Assume fixo ao carregar, ou poderíamos salvar o tipo também
+                }
+                if (apt.payment_method) {
+                    setPaymentMethod(apt.payment_method);
                 }
             }
         } catch (err) {
@@ -121,8 +141,30 @@ const AppointmentCheckout: React.FC = () => {
   const totals = useMemo(() => {
     const sTotal = selectedServices.reduce((sum, s) => sum + s.price, 0);
     const pTotal = selectedProducts.reduce((sum, p) => sum + (p.price * p.quantity), 0);
-    return { services: sTotal, products: pTotal, total: sTotal + pTotal };
-  }, [selectedServices, selectedProducts]);
+    const oTotal = parseFloat(othersValue.replace(',', '.')) || 0;
+    
+    const subtotal = sTotal + pTotal + oTotal;
+    
+    const dVal = parseFloat(discountValue.replace(',', '.')) || 0;
+    let discountAmount = 0;
+    if (discountType === 'fixed') {
+        discountAmount = dVal;
+    } else {
+        discountAmount = subtotal * (dVal / 100);
+    }
+    
+    const tip = parseFloat(tipValue.replace(',', '.')) || 0;
+    
+    return { 
+        services: sTotal, 
+        products: pTotal, 
+        others: oTotal,
+        subtotal,
+        discount: discountAmount,
+        tip,
+        total: Math.max(0, subtotal - discountAmount) + tip 
+    };
+  }, [selectedServices, selectedProducts, othersValue, discountValue, discountType, tipValue]);
 
   // Atualiza valor sugerido de pagamento quando total muda
   useEffect(() => {
@@ -280,6 +322,11 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
   const handleFinalize = () => {
     if (!appointment) return;
 
+    if (!paymentMethod) {
+        alert('Por favor, selecione uma forma de pagamento.');
+        return;
+    }
+
     triggerConfirm(
         'Finalizar Atendimento',
         'Confirmar recebimento e atualizar o financeiro?',
@@ -292,7 +339,17 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                   status: 'Atendimento Realizado',
                   services: selectedServices.map(s => s.name),
                   products: selectedProducts,
-                  total_value: finalValue
+                  totalValue: finalValue,
+                  total_value: finalValue,
+                  payment_method: paymentMethod,
+                  others_value: totals.others,
+                  othersValue: totals.others,
+                  others_description: othersDescription,
+                  othersDescription: othersDescription,
+                  discount_value: totals.discount,
+                  discountValue: totals.discount,
+                  tip_value: totals.tip,
+                  tipValue: totals.tip
                 };
 
                 // Lógica para encurtar o card se finalizar antes do previsto (liberar agenda)
@@ -319,7 +376,12 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                     console.error("Erro ao calcular nova duração", e);
                 }
                 
-                await db.appointments().update(aptUpdate).eq('id', appointment.id);
+                const { error: updateError } = await db.appointments().update(aptUpdate).eq('id', appointment.id);
+                
+                if (updateError) {
+                    console.error("Erro ao atualizar agendamento:", updateError);
+                    throw new Error(`Erro ao atualizar agendamento: ${updateError.message}. Verifique se as colunas others_value, others_description, discount_value e tip_value existem no banco de dados.`);
+                }
 
                 // Prepara transações
                 const transactionsToSync = [];
@@ -366,6 +428,61 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                     }
                 }
 
+                // Adiciona Outros Itens
+                if (totals.others > 0) {
+                    transactionsToSync.push({
+                        operation: 'VENDA' as any,
+                        type: 'OUTROS' as any,
+                        item: othersDescription || 'Outros Itens',
+                        unit_price: totals.others,
+                        quantity: 1,
+                        val: totals.others,
+                        client_supplier: appointment.clientName,
+                        payment_method: paymentMethod,
+                        pro: appointment.professionalName,
+                        professional_id: appointment.professionalId,
+                        date: appointment.date,
+                        status: 'Pago' as any
+                    });
+                }
+
+                // Adiciona Desconto
+                if (totals.discount > 0) {
+                    transactionsToSync.push({
+                        operation: 'VENDA' as any,
+                        type: 'OUTROS' as any,
+                        item: 'Desconto Concedido',
+                        unit_price: -totals.discount,
+                        quantity: 1,
+                        val: -totals.discount,
+                        client_supplier: appointment.clientName,
+                        payment_method: paymentMethod,
+                        pro: appointment.professionalName,
+                        professional_id: appointment.professionalId,
+                        date: appointment.date,
+                        status: 'Pago' as any
+                    });
+                }
+
+                // Adiciona Gorjeta
+                if (totals.tip > 0) {
+                    transactionsToSync.push({
+                        operation: 'VENDA' as any,
+                        type: 'OUTROS' as any,
+                        item: 'Gorjeta (100% Profissional)',
+                        unit_price: totals.tip,
+                        quantity: 1,
+                        val: totals.tip,
+                        client_supplier: appointment.clientName,
+                        payment_method: paymentMethod,
+                        pro: appointment.professionalName,
+                        professional_id: appointment.professionalId,
+                        date: appointment.date,
+                        status: 'Pago' as any,
+                        category: 'Gorjeta' // Categoria para identificar e excluir do balanço se necessário
+                    });
+                }
+
                 await syncAppointmentTransactions(appointment.id, transactionsToSync);
 
                 if (appointment.clientId) {
@@ -376,9 +493,9 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                 alert('Atendimento finalizado com sucesso!');
                 navigate('/agenda');
 
-            } catch (err) {
+            } catch (err: any) {
                 console.error(err);
-                alert('Erro ao finalizar atendimento.');
+                alert(err.message || 'Erro ao finalizar atendimento.');
             } finally {
                 setProcessing(false);
             }
@@ -518,8 +635,108 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
           </div>
         </div>
 
+        {/* OUTROS E GORJETAS */}
+        <div className="bg-white p-6 rounded-[2.5rem] border border-gray-100 shadow-sm space-y-4">
+          <div className="flex items-center gap-2 text-blue-900 mb-2">
+            <PlusCircle size={18} />
+            <h3 className="text-xs font-black uppercase tracking-widest">Outros e Gorjetas</h3>
+          </div>
+          
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <label className="text-[9px] font-black text-gray-400 uppercase ml-1">Outros (R$)</label>
+              <input 
+                type="text" 
+                value={othersValue} 
+                onChange={e => setOthersValue(e.target.value)}
+                placeholder="0,00"
+                className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-blue-900 font-bold text-gray-700"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[9px] font-black text-gray-400 uppercase ml-1">Gorjeta (R$)</label>
+              <div className="relative">
+                <input 
+                  type="text" 
+                  value={tipValue} 
+                  onChange={e => setTipValue(e.target.value)}
+                  placeholder="0,00"
+                  className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-8 outline-none focus:ring-1 focus:ring-blue-900 font-bold text-gray-700"
+                />
+                <Coins className="absolute left-2.5 top-1/2 -translate-y-1/2 text-yellow-500" size={14} />
+              </div>
+            </div>
+          </div>
+          
+          <div className="space-y-1">
+            <label className="text-[9px] font-black text-gray-400 uppercase ml-1">Descrição do Item "Outros"</label>
+            <input 
+              type="text" 
+              value={othersDescription} 
+              onChange={e => setOthersDescription(e.target.value)}
+              placeholder="Ex: Pomada, Cerveja, etc."
+              className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-blue-900 text-xs font-medium"
+            />
+          </div>
+        </div>
+
+        {/* DESCONTOS */}
+        <div className="bg-white p-6 rounded-[2.5rem] border border-gray-100 shadow-sm space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-red-600">
+              <Tag size={18} />
+              <h3 className="text-xs font-black uppercase tracking-widest">Desconto</h3>
+            </div>
+            <div className="flex bg-gray-100 p-1 rounded-xl">
+              <button 
+                onClick={() => setDiscountType('fixed')}
+                className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase transition-all ${discountType === 'fixed' ? 'bg-white text-blue-900 shadow-sm' : 'text-gray-400'}`}
+              >
+                R$
+              </button>
+              <button 
+                onClick={() => setDiscountType('percentage')}
+                className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase transition-all ${discountType === 'percentage' ? 'bg-white text-blue-900 shadow-sm' : 'text-gray-400'}`}
+              >
+                %
+              </button>
+            </div>
+          </div>
+          
+          <div className="relative">
+            <input 
+              type="text" 
+              value={discountValue} 
+              onChange={e => setDiscountValue(e.target.value)}
+              placeholder={discountType === 'fixed' ? "0,00" : "0"}
+              className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-10 outline-none focus:ring-1 focus:ring-red-500 font-bold text-red-600"
+            />
+            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-red-400">
+              {discountType === 'fixed' ? <DollarSign size={16} /> : <Percent size={16} />}
+            </div>
+          </div>
+        </div>
+
         {/* RESUMO E PAGAMENTO */}
         <div className="bg-white p-6 rounded-[2.5rem] border border-gray-100 shadow-md space-y-3">
+          <div className="space-y-2 border-b border-gray-50 pb-3">
+            <div className="flex justify-between text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">
+              <span>Subtotal</span>
+              <span>R$ {totals.subtotal.toFixed(2).replace('.', ',')}</span>
+            </div>
+            {totals.discount > 0 && (
+              <div className="flex justify-between text-[10px] font-bold text-red-500 uppercase tracking-widest px-1">
+                <span>Desconto</span>
+                <span>- R$ {totals.discount.toFixed(2).replace('.', ',')}</span>
+              </div>
+            )}
+            {totals.tip > 0 && (
+              <div className="flex justify-between text-[10px] font-bold text-yellow-600 uppercase tracking-widest px-1">
+                <span>Gorjeta</span>
+                <span>+ R$ {totals.tip.toFixed(2).replace('.', ',')}</span>
+              </div>
+            )}
+          </div>
           <div className="flex justify-between items-center pt-2 px-1">
             <span className="text-sm font-black text-gray-900 uppercase tracking-widest">Total Geral</span>
             <span className="text-2xl font-black text-blue-900">R$ {totals.total.toFixed(2).replace('.', ',')}</span>
@@ -533,8 +750,13 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
               <DollarSign className="absolute left-4 top-1/2 -translate-y-1/2 text-blue-900" size={24} />
           </div>
           <div className="relative">
-              <label className="text-[9px] font-black text-gray-400 uppercase absolute -top-2 left-4 bg-white px-1 z-10">Forma de Pagamento</label>
-              <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} className="w-full bg-white border border-gray-100 rounded-2xl py-4 px-4 outline-none appearance-none font-bold text-gray-700">
+              <label className="text-[9px] font-black text-gray-400 uppercase absolute -top-2 left-4 bg-white px-1 z-10">Forma de Pagamento *</label>
+              <select 
+                value={paymentMethod} 
+                onChange={e => setPaymentMethod(e.target.value)} 
+                className={`w-full bg-white border rounded-2xl py-4 px-4 outline-none appearance-none font-bold transition-colors ${!paymentMethod ? 'border-red-200 text-red-400 ring-2 ring-red-50' : 'border-gray-100 text-gray-700'}`}
+              >
+                <option value="">Selecione o Meio de Pagamento...</option>
                 {dbPaymentMethods.map(pm => (<option key={pm.id} value={pm.name}>{pm.name}</option>))}
               </select>
           </div>

@@ -90,6 +90,11 @@ export interface Appointment {
   services: string[];
   products?: { id: string, name: string, price: number, quantity: number }[]; // Novo campo: Lista de produtos
   totalValue?: number;
+  others_value?: number;
+  discount_value?: number;
+  tip_value?: number;
+  others_description?: string;
+  payment_method?: string;
 }
 
 export interface Transaction {

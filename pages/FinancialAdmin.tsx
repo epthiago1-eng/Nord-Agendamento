@@ -154,7 +154,10 @@ const FinancialAdmin: React.FC = () => {
     filteredData.forEach(t => {
       // Totais Gerais
       if (t.operation === 'VENDA') {
-        income += t.val;
+        // Gorjetas não entram no faturamento bruto da empresa (balanço)
+        if (t.category !== 'Gorjeta') {
+          income += t.val;
+        }
       } else {
         expense += Math.abs(t.val);
       }
@@ -163,12 +166,19 @@ const FinancialAdmin: React.FC = () => {
       const dayLabel = new Date(t.date + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
       if (!chartMap[dayLabel]) chartMap[dayLabel] = { name: dayLabel, entrada: 0, saida: 0 };
       
-      if (t.operation === 'VENDA') chartMap[dayLabel].entrada += t.val;
-      else chartMap[dayLabel].saida += Math.abs(t.val);
+      if (t.operation === 'VENDA') {
+        if (t.category !== 'Gorjeta') {
+          chartMap[dayLabel].entrada += t.val;
+        }
+      } else {
+        chartMap[dayLabel].saida += Math.abs(t.val);
+      }
 
-      // Produção por Barbeiro (Apenas Vendas)
+      // Produção por Barbeiro (Apenas Vendas, excluindo gorjetas do faturamento da empresa)
       if (t.operation === 'VENDA' && t.pro) {
-        proMap[t.pro] = (proMap[t.pro] || 0) + t.val;
+        if (t.category !== 'Gorjeta') {
+          proMap[t.pro] = (proMap[t.pro] || 0) + t.val;
+        }
       }
 
       // Top Produtos

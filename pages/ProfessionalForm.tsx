@@ -135,6 +135,17 @@ const ProfessionalForm: React.FC = () => {
         </div>
 
         <div>
+          <label className="text-sm font-medium text-gray-700 block mb-1.5">E-mail</label>
+          <input 
+            type="email" 
+            value={formData.email}
+            onChange={(e) => setFormData({...formData, email: e.target.value})}
+            placeholder="exemplo@email.com"
+            className="w-full bg-white border border-gray-200 rounded-lg py-3.5 px-4 outline-none focus:ring-1 focus:ring-blue-500"
+          />
+        </div>
+
+        <div>
           <label className="text-sm font-medium text-gray-700 block mb-1.5">Celular (WhatsApp)</label>
           <input 
             type="tel" 

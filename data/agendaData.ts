@@ -106,6 +106,11 @@ const mapAppointmentFromDB = (data: any): Appointment => ({
     services: data.services || [],
     products: data.products || [],
     totalValue: data.totalValue !== undefined ? data.totalValue : data.total_value,
+    others_value: data.others_value !== undefined ? data.others_value : data.othersValue,
+    others_description: data.others_description !== undefined ? data.others_description : data.othersDescription,
+    discount_value: data.discount_value !== undefined ? data.discount_value : data.discountValue,
+    tip_value: data.tip_value !== undefined ? data.tip_value : data.tipValue,
+    payment_method: data.payment_method || data.paymentMethod,
     observation: data.observation
 });
 
@@ -220,6 +225,11 @@ export const saveAppointment = async (apt: Omit<Appointment, 'id'>) => {
       services: apt.services,
       products: apt.products || [],
       totalValue: apt.totalValue || 0,
+      others_value: (apt as any).others_value || 0,
+      others_description: (apt as any).others_description || null,
+      discount_value: (apt as any).discount_value || 0,
+      tip_value: (apt as any).tip_value || 0,
+      payment_method: apt.payment_method || null,
       observation: apt.observation
   };
 
@@ -242,6 +252,11 @@ export const updateAppointment = async (id: string, data: Partial<Appointment>) 
   if (data.professionalId) payload.professionalId = data.professionalId;
   if (data.professionalName) payload.professionalName = data.professionalName;
   if (data.totalValue !== undefined) payload.totalValue = data.totalValue;
+  if ((data as any).others_value !== undefined) payload.others_value = (data as any).others_value;
+  if ((data as any).others_description !== undefined) payload.others_description = (data as any).others_description;
+  if ((data as any).discount_value !== undefined) payload.discount_value = (data as any).discount_value;
+  if ((data as any).tip_value !== undefined) payload.tip_value = (data as any).tip_value;
+  if (data.payment_method !== undefined) payload.payment_method = data.payment_method;
   if (data.services) payload.services = data.services;
   if (data.products) payload.products = data.products;
 
