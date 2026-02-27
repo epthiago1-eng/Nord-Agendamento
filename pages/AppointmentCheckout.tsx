@@ -380,15 +380,28 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
 
                 // Prepara transações
                 const transactionsToSync = [];
+                
+                // Lógica de Distribuição de Desconto
+                // O desconto deve ser aplicado proporcionalmente aos itens (Serviços, Produtos e Outros)
+                // A Gorjeta NÃO sofre desconto.
+                
+                const grossTotalItems = totals.services + totals.products + totals.others;
+                const netTotalItems = Math.max(0, grossTotalItems - totals.discount);
+                
+                // Fator de desconto (se houver itens para aplicar)
+                const discountFactor = grossTotalItems > 0 ? (netTotalItems / grossTotalItems) : 1;
+
                 for (const s of selectedServices) {
+                    const netPrice = s.price * discountFactor;
                     transactionsToSync.push({
                         operation: 'VENDA' as any,
                         type: 'SERVIÇO' as any,
+                        category: 'Serviço',
                         code: s.code || 'S999',
                         item: s.name,
-                        unit_price: s.price,
+                        unit_price: netPrice, // Valor líquido
                         quantity: 1,
-                        val: s.price,
+                        val: netPrice, // Valor líquido para comissão correta
                         client_supplier: appointment.clientName,
                         payment_method: paymentMethod,
                         pro: appointment.professionalName,
@@ -399,14 +412,17 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                 }
                 for (const p of selectedProducts) {
                     const totalP = p.price * p.quantity;
+                    const netTotalP = totalP * discountFactor;
+                    
                     transactionsToSync.push({
                         operation: 'VENDA' as any,
                         type: 'PRODUTO' as any,
+                        category: 'Produto',
                         code: p.code || 'P999',
                         item: p.name,
-                        unit_price: p.price,
+                        unit_price: netTotalP / p.quantity, // Unitário líquido aproximado
                         quantity: p.quantity,
-                        val: totalP,
+                        val: netTotalP, // Total líquido
                         client_supplier: appointment.clientName,
                         payment_method: paymentMethod,
                         pro: appointment.professionalName,
@@ -423,15 +439,17 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                     }
                 }
 
-                // Adiciona Outros Itens
+                // Adiciona Outros Itens (Com desconto aplicado)
                 if (totals.others > 0) {
+                    const netOthers = totals.others * discountFactor;
                     transactionsToSync.push({
                         operation: 'VENDA' as any,
                         type: 'OUTROS' as any,
+                        category: 'Outros',
                         item: othersDescription || 'Outros Itens',
-                        unit_price: totals.others,
+                        unit_price: netOthers,
                         quantity: 1,
-                        val: totals.others,
+                        val: netOthers,
                         client_supplier: appointment.clientName,
                         payment_method: paymentMethod,
                         pro: appointment.professionalName,
@@ -441,29 +459,12 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                     });
                 }
 
-                // Adiciona Desconto
-                if (totals.discount > 0) {
-                    transactionsToSync.push({
-                        operation: 'VENDA' as any,
-                        type: 'OUTROS' as any,
-                        item: 'Desconto Concedido',
-                        unit_price: -totals.discount,
-                        quantity: 1,
-                        val: -totals.discount,
-                        client_supplier: appointment.clientName,
-                        payment_method: paymentMethod,
-                        pro: appointment.professionalName,
-                        professional_id: appointment.professionalId,
-                        date: appointment.date,
-                        status: 'Pago' as any
-                    });
-                }
-
-                // Adiciona Gorjeta
+                // Adiciona Gorjeta (SEM DESCONTO, TIPO ESPECÍFICO)
                 if (totals.tip > 0) {
                     transactionsToSync.push({
                         operation: 'VENDA' as any,
-                        type: 'OUTROS' as any,
+                        type: 'GORJETA' as any, // Tipo específico para fácil identificação
+                        category: 'Gorjeta',
                         item: 'Gorjeta (100% Profissional)',
                         unit_price: totals.tip,
                         quantity: 1,
@@ -473,8 +474,7 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                         pro: appointment.professionalName,
                         professional_id: appointment.professionalId,
                         date: appointment.date,
-                        status: 'Pago' as any,
-                        category: 'Gorjeta' // Categoria para identificar e excluir do balanço se necessário
+                        status: 'Pago' as any
                     });
                 }
 

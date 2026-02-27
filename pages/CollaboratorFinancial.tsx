@@ -159,7 +159,7 @@ const CollaboratorFinancial: React.FC = () => {
     const refYear = referenceDate.getFullYear();
     const today = new Date().toISOString().split('T')[0];
     
-    let daily = 0, dailyCount = 0, monthServ = 0, monthProd = 0;
+    let daily = 0, dailyCount = 0, monthServ = 0, monthProd = 0, monthTips = 0;
     let pendingCommission = 0;
     let receivedCommission = 0;
     
@@ -176,21 +176,28 @@ const CollaboratorFinancial: React.FC = () => {
           dailyCount++;
         }
 
-        const serviceId = servicesMap[t.item];
-        const config = commConfigs.find(c => c.service_id === serviceId);
-        
         let commValue = 0;
-        if (config) {
-            commValue = config.commission_type === 'percent' 
-                ? t.val * (config.commission_value / 100)
-                : config.commission_value;
+        
+        // Se for gorjeta, o valor integral é do profissional
+        if (t.category === 'Gorjeta' || t.type === 'GORJETA') {
+            commValue = t.val;
         } else {
-            const rate = (t.category === 'Serviço' || t.type === 'SERVIÇO') ? 0.4 : 0.1;
-            commValue = t.val * rate;
+            const serviceId = servicesMap[t.item];
+            const config = commConfigs.find(c => c.service_id === serviceId);
+            
+            if (config) {
+                commValue = config.commission_type === 'percent' 
+                    ? t.val * (config.commission_value / 100)
+                    : config.commission_value;
+            } else {
+                const rate = (t.category === 'Serviço' || t.type === 'SERVIÇO') ? 0.4 : 0.1;
+                commValue = t.val * rate;
+            }
         }
 
         if (inRefMonth) {
-            if (t.category === 'Serviço' || t.type === 'SERVIÇO') monthServ += t.val;
+            if (t.category === 'Gorjeta' || t.type === 'GORJETA') monthTips += t.val;
+            else if (t.category === 'Serviço' || t.type === 'SERVIÇO') monthServ += t.val;
             else monthProd += t.val;
 
             if (t.commission_paid) receivedCommission += commValue;
@@ -198,7 +205,7 @@ const CollaboratorFinancial: React.FC = () => {
         }
     });
 
-    return { daily, dailyCount, monthServ, monthProd, pendingCommission, receivedCommission };
+    return { daily, dailyCount, monthServ, monthProd, monthTips, pendingCommission, receivedCommission };
   }, [transactions, commConfigs, servicesMap, proName, proId, referenceDate]);
 
   if (loading) {
@@ -270,7 +277,7 @@ const CollaboratorFinancial: React.FC = () => {
                     </div>
                     <div className="text-right">
                         <p className="text-[9px] font-bold text-blue-300 uppercase tracking-widest mb-0.5">Produção Total</p>
-                        <p className="text-lg font-bold">R$ {(myStats.pendingCommission + myStats.receivedCommission).toFixed(2).replace('.', ',')}</p>
+                        <p className="text-lg font-bold">R$ {(myStats.monthServ + myStats.monthProd + myStats.monthTips).toFixed(2).replace('.', ',')}</p>
                     </div>
                 </div>
             </div>
@@ -407,6 +414,13 @@ const CollaboratorFinancial: React.FC = () => {
                         <span className="text-sm font-bold text-gray-700 tracking-tight">Produtos</span>
                     </div>
                     <span className="font-black text-gray-900">R$ {myStats.monthProd.toFixed(2).replace('.', ',')}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <div className="bg-green-50 p-2 rounded-xl text-green-500"><Wallet size={18} /></div>
+                        <span className="text-sm font-bold text-gray-700 tracking-tight">Gorjetas</span>
+                    </div>
+                    <span className="font-black text-gray-900">R$ {myStats.monthTips.toFixed(2).replace('.', ',')}</span>
                 </div>
             </div>
         </div>

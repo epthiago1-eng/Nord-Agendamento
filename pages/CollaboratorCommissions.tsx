@@ -56,7 +56,7 @@ const CollaboratorCommissions: React.FC = () => {
   // Cálculo de Comissão Idêntico ao do ADM
   const calculateCommission = (t: Transaction) => {
     // Se for gorjeta, o colaborador recebe 100% integralmente
-    if (t.category === 'Gorjeta') {
+    if (t.category === 'Gorjeta' || t.type === 'GORJETA') {
         return t.val;
     }
 
