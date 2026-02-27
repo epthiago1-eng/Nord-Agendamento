@@ -122,6 +122,16 @@ export interface Transaction {
   professional_id?: string;
   appointment_id?: string; // Vínculo para evitar duplicidade
   commission_paid?: boolean;
+  commission_amount?: number; // Valor final da comissão (calculado ou manual)
+  commission_rate?: number; // Taxa usada (%)
+  original_value?: number; // Valor original (sem desconto)
+  discount_value?: number; // Valor do desconto
+  appointment_total?: number; // Total pago pelo cliente (denormalizado)
+  appointment_tip?: number; // Gorjeta do agendamento (denormalizado)
+  
+  // Campos de Override (mantidos para compatibilidade com lógica anterior)
+  commission_value?: number; 
+  commission_type?: 'percent' | 'fixed';
 }
 
 export interface AppNotification {

@@ -19,6 +19,9 @@ interface AttendanceGroup {
   observation?: string;
   services: { name: string; price: number; commission: number }[];
   products: { name: string; price: number; commission: number; quantity: number }[];
+  tips: { name: string; price: number; commission: number }[];
+  others: { name: string; price: number; commission: number }[];
+  discounts: { name: string; price: number }[];
 }
 
 const CollaboratorAttendanceLog: React.FC = () => {
@@ -39,14 +42,41 @@ const CollaboratorAttendanceLog: React.FC = () => {
   const [sortOrder, setSortOrder] = useState<'date' | 'commission'>('date');
   const [showFilters, setShowFilters] = useState(false);
 
+  const [defaultCommission, setDefaultCommission] = useState<number | null>(null);
+
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
       try {
         // 1. Busca configurações de comissão para cálculo preciso
         if (proId) {
-          const { data: configs } = await db.professionalServices().select('*').eq('professional_id', proId);
-          if (configs) setCommissionConfigs(configs);
+          // Precisamos fazer um join com a tabela de serviços para pegar o nome
+          const { data: configs, error } = await db.professionalServices()
+            .select(`
+              *,
+              services (
+                name
+              )
+            `)
+            .eq('professional_id', proId);
+            
+          if (configs) {
+             // Mapeia para um formato mais fácil de usar
+             const mappedConfigs = configs.map((c: any) => ({
+                ...c,
+                service_name: c.services?.name // Garante que temos o nome do serviço
+             }));
+             setCommissionConfigs(mappedConfigs);
+
+             if (mappedConfigs.length > 0) {
+                // Heurística: Se a maioria das comissões for X, assume X como padrão
+                const rates = mappedConfigs.map((c: any) => c.commission_percentage || c.commission_value); // commission_value é o nome da coluna no schema
+                const mode = rates.sort((a: number,b: number) =>
+                    rates.filter((v: number) => v===a).length - rates.filter((v: number) => v===b).length
+                ).pop();
+                if (mode) setDefaultCommission(mode);
+             }
+          }
         }
 
         // 2. Busca todas as transações (Vendas) do profissional
@@ -65,10 +95,52 @@ const CollaboratorAttendanceLog: React.FC = () => {
   }, [proName, proId]);
 
   const calculateCommission = (t: Transaction) => {
-    // Busca config específica ou usa padrão 40% serviço / 10% produto
-    // Nota: Como não temos o service_id aqui direto na transação, 
-    // tentamos encontrar pela descrição ou usamos o padrão.
-    // Para simplificar esta visualização, usaremos o padrão salvo no layout anterior
+    // 1. Se houver comissão sobrescrita no banco, usa ela (prioridade máxima)
+    if (t.commission_value !== undefined && t.commission_value !== null) {
+        return t.commission_type === 'percent' 
+            ? (t.total_value || t.val) * (t.commission_value / 100)
+            : t.commission_value;
+    }
+
+    // 2. Se já tiver o valor calculado salvo na transação, usa ele (Novo Padrão)
+    if (t.commission_amount !== undefined && t.commission_amount !== null) {
+        return t.commission_amount;
+    }
+
+    // 3. Se for gorjeta, o colaborador recebe 100% integralmente
+    if (t.category === 'Gorjeta' || t.type === 'GORJETA') {
+        return t.val;
+    }
+
+    // 4. Se for OUTROS, retorna 0 (Pendente) a menos que tenha sido sobrescrito acima
+    if (t.type === 'OUTROS' || t.category === 'Outros') {
+        return 0;
+    }
+
+    // 4. Lógica Refeita de Consulta de Serviço:
+    
+    // Normalização
+    const normalizedItem = t.item ? t.item.trim().toLowerCase() : '';
+
+    // Busca exata ou aproximada nas configurações carregadas
+    const configMatch = commissionConfigs.find(c => c.service_name && c.service_name.trim().toLowerCase() === normalizedItem);
+    
+    if (configMatch) {
+         const value = Number(configMatch.commission_value);
+         
+         if (configMatch.commission_type === 'fixed') {
+            return value;
+         } else {
+            return (t.total_value || t.val) * (value / 100);
+         }
+    }
+
+    // 5. Se não achou específica, usa a comissão padrão inferida (moda)
+    if (defaultCommission !== null) {
+        return (t.total_value || t.val) * (defaultCommission / 100);
+    }
+
+    // 6. Fallback final (40% serviço, 10% produto)
     const rate = (t.type === 'SERVIÇO' || t.category === 'Serviço') ? 0.4 : 0.1;
     return (t.total_value || t.val) * rate;
   };
@@ -90,7 +162,10 @@ const CollaboratorAttendanceLog: React.FC = () => {
           totalCommission: 0,
           paymentMethod: t.payment_method,
           services: [],
-          products: []
+          products: [],
+          tips: [],
+          others: [],
+          discounts: []
         };
       }
 
@@ -99,8 +174,17 @@ const CollaboratorAttendanceLog: React.FC = () => {
 
       if (t.type === 'SERVIÇO' || t.category === 'Serviço') {
         groups[id].services.push({ name: t.item, price: (t.total_value || t.val), commission: comm });
-      } else {
+      } else if (t.type === 'PRODUTO' || t.category === 'Produto') {
         groups[id].products.push({ name: t.item, price: (t.total_value || t.val), commission: comm, quantity: t.quantity || 1 });
+      } else if (t.type === 'GORJETA' || t.category === 'Gorjeta') {
+        groups[id].tips.push({ name: t.item, price: (t.total_value || t.val), commission: comm });
+      } else if (t.type === 'OUTROS' || t.category === 'Outros') {
+        // Verifica se é desconto (valor negativo)
+        if ((t.total_value || t.val) < 0) {
+            groups[id].discounts.push({ name: t.item, price: (t.total_value || t.val) });
+        } else {
+            groups[id].others.push({ name: t.item, price: (t.total_value || t.val), commission: comm });
+        }
       }
     });
 
@@ -281,6 +365,66 @@ const CollaboratorAttendanceLog: React.FC = () => {
                                                 <div className="text-right">
                                                     <p className="font-bold text-gray-900">R$ {p.price.toFixed(2)}</p>
                                                     <p className="text-[8px] text-green-600 font-black">COM: R$ {p.commission.toFixed(2)}</p>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {/* Outros Serviços/Itens */}
+                                {att.others.length > 0 && (
+                                    <div className="space-y-2">
+                                        <div className="flex items-center gap-2 text-purple-600 pl-1">
+                                            <Clipboard size={14} />
+                                            <span className="text-[9px] font-black uppercase tracking-widest">Outros Itens</span>
+                                        </div>
+                                        {att.others.map((o, idx) => (
+                                            <div key={idx} className="flex justify-between items-center text-xs font-medium text-gray-600 bg-white border border-gray-50 p-3 rounded-xl shadow-sm">
+                                                <span>{o.name}</span>
+                                                <div className="text-right">
+                                                    <p className="font-bold text-gray-900">R$ {o.price.toFixed(2)}</p>
+                                                    {o.commission === 0 ? (
+                                                        <p className="text-[8px] text-red-500 font-black uppercase tracking-wider">Pendente (ADM)</p>
+                                                    ) : (
+                                                        <p className="text-[8px] text-green-600 font-black">COM: R$ {o.commission.toFixed(2)}</p>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {/* Gorjetas */}
+                                {att.tips.length > 0 && (
+                                    <div className="space-y-2">
+                                        <div className="flex items-center gap-2 text-green-600 pl-1">
+                                            <DollarSign size={14} />
+                                            <span className="text-[9px] font-black uppercase tracking-widest">Gorjetas (100%)</span>
+                                        </div>
+                                        {att.tips.map((t, idx) => (
+                                            <div key={idx} className="flex justify-between items-center text-xs font-medium text-gray-600 bg-white border border-gray-50 p-3 rounded-xl shadow-sm">
+                                                <span>{t.name}</span>
+                                                <div className="text-right">
+                                                    <p className="font-bold text-gray-900">R$ {t.price.toFixed(2)}</p>
+                                                    <p className="text-[8px] text-green-600 font-black">COM: R$ {t.commission.toFixed(2)}</p>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {/* Descontos */}
+                                {att.discounts.length > 0 && (
+                                    <div className="space-y-2">
+                                        <div className="flex items-center gap-2 text-red-600 pl-1">
+                                            <DollarSign size={14} />
+                                            <span className="text-[9px] font-black uppercase tracking-widest">Descontos Aplicados</span>
+                                        </div>
+                                        {att.discounts.map((d, idx) => (
+                                            <div key={idx} className="flex justify-between items-center text-xs font-medium text-gray-600 bg-white border border-gray-50 p-3 rounded-xl shadow-sm">
+                                                <span>{d.name}</span>
+                                                <div className="text-right">
+                                                    <p className="font-bold text-red-600">R$ {d.price.toFixed(2)}</p>
                                                 </div>
                                             </div>
                                         ))}

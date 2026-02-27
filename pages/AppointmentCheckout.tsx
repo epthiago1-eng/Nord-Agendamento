@@ -50,6 +50,12 @@ const AppointmentCheckout: React.FC = () => {
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [transferTargetId, setTransferTargetId] = useState('');
 
+  // Custom Item (Outros)
+  const [showCustomItemModal, setShowCustomItemModal] = useState(false);
+  const [customItemType, setCustomItemType] = useState<'SERVICE' | 'PRODUCT'>('SERVICE');
+  const [customItemName, setCustomItemName] = useState('');
+  const [customItemPrice, setCustomItemPrice] = useState('');
+
   const [confirmConfig, setConfirmConfig] = useState<{
     show: boolean,
     title: string,
@@ -99,6 +105,21 @@ const AppointmentCheckout: React.FC = () => {
                 
                 // Mapear serviços do agendamento
                 const initialServices = apt.services.map(sName => {
+                    // Verifica se é um serviço customizado com preço embutido (ex: "Corte Especial|50.00")
+                    if (sName.includes('|')) {
+                        const [name, priceStr] = sName.split('|');
+                        const price = parseFloat(priceStr);
+                        if (!isNaN(price)) {
+                            return { 
+                                id: `custom-${Math.random().toString(36).substr(2, 9)}`, 
+                                name: name, 
+                                duration: 30, 
+                                price: price, 
+                                code: 'S-OUT' 
+                            };
+                        }
+                    }
+
                     const found = servicesRes.data?.find(s => s.name === sName);
                     return found || { id: Math.random().toString(), name: sName, duration: 30, price: 0, code: 'S00' };
                 });
@@ -319,6 +340,37 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
     setShowAddProduct(false);
   };
 
+  const handleAddCustomItem = () => {
+    if (!customItemName || !customItemPrice) {
+        alert('Preencha o nome e o valor do item.');
+        return;
+    }
+
+    // Corrige o parsing do preço: substitui vírgula por ponto
+    const price = parseFloat(customItemPrice.replace(',', '.'));
+    
+    if (isNaN(price) || price < 0) {
+        alert('Valor inválido.');
+        return;
+    }
+
+    const newItem = {
+        id: `custom-${Date.now()}`,
+        name: customItemName,
+        price: price,
+        code: customItemType === 'SERVICE' ? 'S-OUT' : 'P-OUT',
+        quantity: 1
+    };
+
+    if (customItemType === 'SERVICE') {
+        setSelectedServices(prev => [...prev, newItem]);
+    } else {
+        setSelectedProducts(prev => [...prev, newItem]);
+    }
+
+    setShowCustomItemModal(false);
+  };
+
   const handleFinalize = () => {
     if (!appointment) return;
 
@@ -337,7 +389,47 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                 
                 const aptUpdate: any = {
                   status: 'Atendimento Realizado',
-                  services: selectedServices.map(s => s.name),
+                  services: selectedServices.map(s => {
+                      // Se for item customizado, salva objeto completo ou string especial?
+                      // O schema diz 'services ARRAY'. Normalmente array de strings (nomes).
+                      // Se salvarmos apenas o nome, perdemos o preço customizado se ele diferir do cadastro (ou se não existir cadastro).
+                      // O ideal seria salvar um JSONB ou ARRAY de objetos, mas o schema atual é ARRAY (text[] provavelmente).
+                      // Como o usuário relatou que "ao clicar novamente para ver o valor estava constando zero",
+                      // isso significa que ao recarregar o agendamento, o sistema busca o serviço pelo NOME na tabela de serviços.
+                      // Se o serviço não existe (customizado), ele cai no fallback: { price: 0 }.
+                      
+                      // SOLUÇÃO: Precisamos salvar os detalhes dos serviços customizados em algum lugar.
+                      // O campo 'products' é JSONB, mas 'services' é ARRAY.
+                      // Podemos usar o campo 'others_description' para salvar metadados? Não, é gambiarra.
+                      // O correto seria alterar o schema de services para JSONB, mas não posso alterar schema agora sem permissão explícita/migration complexa.
+                      
+                      // WORKAROUND: Vamos salvar os serviços customizados dentro do campo 'products' (que é JSONB) com uma flag is_service=true?
+                      // Ou melhor: Vamos salvar no campo 'observation' ou criar um padrão de string: "NOME|PRECO".
+                      // Mas isso quebraria a visualização em outros lugares.
+                      
+                      // Vamos verificar como 'products' é salvo. É um JSONB array.
+                      // Se o usuário aceitar, podemos salvar serviços customizados como "Produtos" especiais no banco, mas classificados como serviço na UI.
+                      
+                      // Mas espere, o usuário disse: "quero saber como isso estpa sendo tratado e para onde está sendo armazenado no supabase. e quero o valor ficando salvo e persistente"
+                      
+                      // O problema é aqui:
+                      // const initialServices = apt.services.map(sName => {
+                      //    const found = servicesRes.data?.find(s => s.name === sName);
+                      //    return found || { id: Math.random().toString(), name: sName, duration: 30, price: 0, code: 'S00' };
+                      // });
+                      
+                      // Quando carregamos, se não acha no banco, põe preço 0.
+                      // Como o serviço customizado não está no banco, ele fica com 0.
+                      
+                      // Solução Robusta sem alterar schema (se possível):
+                      // Salvar o preço junto com o nome no array de strings? "Corte Especial|50.00"
+                      // E no carregamento, fazer o parse.
+                      
+                      if (s.id.startsWith('custom-')) {
+                          return `${s.name}|${s.price.toFixed(2)}`;
+                      }
+                      return s.name;
+                  }),
                   products: selectedProducts,
                   total_value: finalValue,
                   payment_method: paymentMethod,
@@ -378,6 +470,11 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                     throw new Error(`Erro ao atualizar agendamento: ${updateError.message}. Verifique se as colunas others_value, others_description, discount_value e tip_value existem no banco de dados.`);
                 }
 
+                // Busca configurações de comissão do profissional
+                const { data: commissionConfigs } = await db.professionalServices()
+                    .select('*')
+                    .eq('professional_id', appointment.professionalId);
+
                 // Prepara transações
                 const transactionsToSync = [];
                 
@@ -392,16 +489,54 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                 const discountFactor = grossTotalItems > 0 ? (netTotalItems / grossTotalItems) : 1;
 
                 for (const s of selectedServices) {
+                    const originalPrice = s.price;
                     const netPrice = s.price * discountFactor;
+                    const discountAmount = originalPrice - netPrice;
+
+                    // Cálculo da Comissão
+                    let commissionAmount = 0;
+                    let commissionRate = 0;
+
+                    // Verifica se é serviço customizado (Outros)
+                    if (s.id.startsWith('custom-')) {
+                        commissionAmount = 0; // Pendente (ADM)
+                        commissionRate = 0;
+                    } else {
+                        // Busca configuração específica
+                        const config = commissionConfigs?.find((c: any) => c.service_id === s.id);
+                        if (config) {
+                            if (config.commission_type === 'fixed') {
+                                commissionAmount = Number(config.commission_value);
+                                commissionRate = 0; // Fixo
+                            } else {
+                                commissionRate = Number(config.commission_value);
+                                commissionAmount = netPrice * (commissionRate / 100);
+                            }
+                        } else {
+                            // Fallback Padrão Serviço (40%)
+                            commissionRate = 40;
+                            commissionAmount = netPrice * 0.4;
+                        }
+                    }
+
                     transactionsToSync.push({
                         operation: 'VENDA' as any,
                         type: 'SERVIÇO' as any,
                         category: 'Serviço',
                         code: s.code || 'S999',
-                        item: s.name,
+                        item: s.name, // Nome limpo
                         unit_price: netPrice, // Valor líquido
                         quantity: 1,
                         val: netPrice, // Valor líquido para comissão correta
+                        
+                        // Novos Campos Detalhados
+                        original_value: originalPrice,
+                        discount_value: discountAmount,
+                        commission_amount: commissionAmount,
+                        commission_rate: commissionRate,
+                        appointment_total: totals.total,
+                        appointment_tip: totals.tip,
+
                         client_supplier: appointment.clientName,
                         payment_method: paymentMethod,
                         pro: appointment.professionalName,
@@ -411,9 +546,14 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                     });
                 }
                 for (const p of selectedProducts) {
-                    const totalP = p.price * p.quantity;
-                    const netTotalP = totalP * discountFactor;
+                    const originalTotal = p.price * p.quantity;
+                    const netTotalP = originalTotal * discountFactor;
+                    const discountAmountP = originalTotal - netTotalP;
                     
+                    // Comissão Produto (Padrão 10%)
+                    const commissionRateP = 10;
+                    const commissionAmountP = netTotalP * 0.1;
+
                     transactionsToSync.push({
                         operation: 'VENDA' as any,
                         type: 'PRODUTO' as any,
@@ -423,6 +563,15 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                         unit_price: netTotalP / p.quantity, // Unitário líquido aproximado
                         quantity: p.quantity,
                         val: netTotalP, // Total líquido
+                        
+                        // Novos Campos Detalhados
+                        original_value: originalTotal,
+                        discount_value: discountAmountP,
+                        commission_amount: commissionAmountP,
+                        commission_rate: commissionRateP,
+                        appointment_total: totals.total,
+                        appointment_tip: totals.tip,
+
                         client_supplier: appointment.clientName,
                         payment_method: paymentMethod,
                         pro: appointment.professionalName,
@@ -441,7 +590,10 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
 
                 // Adiciona Outros Itens (Com desconto aplicado)
                 if (totals.others > 0) {
+                    const originalOthers = totals.others;
                     const netOthers = totals.others * discountFactor;
+                    const discountOthers = originalOthers - netOthers;
+
                     transactionsToSync.push({
                         operation: 'VENDA' as any,
                         type: 'OUTROS' as any,
@@ -450,6 +602,15 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                         unit_price: netOthers,
                         quantity: 1,
                         val: netOthers,
+
+                        // Novos Campos Detalhados
+                        original_value: originalOthers,
+                        discount_value: discountOthers,
+                        commission_amount: 0, // Pendente (ADM)
+                        commission_rate: 0,
+                        appointment_total: totals.total,
+                        appointment_tip: totals.tip,
+
                         client_supplier: appointment.clientName,
                         payment_method: paymentMethod,
                         pro: appointment.professionalName,
@@ -469,6 +630,15 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                         unit_price: totals.tip,
                         quantity: 1,
                         val: totals.tip,
+
+                        // Novos Campos Detalhados
+                        original_value: totals.tip,
+                        discount_value: 0,
+                        commission_amount: totals.tip, // 100% para o profissional
+                        commission_rate: 100,
+                        appointment_total: totals.total,
+                        appointment_tip: totals.tip,
+
                         client_supplier: appointment.clientName,
                         payment_method: paymentMethod,
                         pro: appointment.professionalName,
@@ -835,6 +1005,20 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
               <button onClick={() => setShowAddService(false)} className="text-gray-400"><X size={24} /></button>
             </div>
             <div className="space-y-2 max-h-[60vh] overflow-y-auto no-scrollbar">
+              <button 
+                  onClick={() => {
+                      setCustomItemType('SERVICE');
+                      setCustomItemName('');
+                      setCustomItemPrice('');
+                      setShowCustomItemModal(true);
+                      setShowAddService(false);
+                  }} 
+                  className="w-full p-4 rounded-2xl border border-blue-200 bg-blue-50 hover:bg-blue-100 flex justify-between text-left transition-colors shadow-sm mb-2"
+              >
+                  <span className="text-sm font-black text-blue-900 uppercase tracking-wide">Outros (Personalizado)</span>
+                  <PlusCircle size={18} className="text-blue-900" />
+              </button>
+
               {dbServices.length === 0 ? (
                   <p className="text-center text-gray-400 italic text-sm py-4">Nenhum serviço disponível.</p>
               ) : dbServices.map(s => (
@@ -861,6 +1045,20 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
               <button onClick={() => setShowAddProduct(false)} className="text-gray-400"><X size={24} /></button>
             </div>
             <div className="space-y-2 max-h-[60vh] overflow-y-auto no-scrollbar">
+              <button 
+                  onClick={() => {
+                      setCustomItemType('PRODUCT');
+                      setCustomItemName('');
+                      setCustomItemPrice('');
+                      setShowCustomItemModal(true);
+                      setShowAddProduct(false);
+                  }} 
+                  className="w-full p-4 rounded-2xl border border-orange-200 bg-orange-50 hover:bg-orange-100 flex justify-between text-left transition-colors shadow-sm mb-2"
+              >
+                  <span className="text-sm font-black text-orange-600 uppercase tracking-wide">Outros (Personalizado)</span>
+                  <PlusCircle size={18} className="text-orange-600" />
+              </button>
+
               {dbProducts.length === 0 ? (
                   <p className="text-center text-gray-400 italic text-sm py-4">Estoque vazio.</p>
               ) : dbProducts.map(p => (
@@ -876,6 +1074,57 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                   <span className="text-xs font-black text-orange-600">R$ {p.sale_price?.toFixed(2)}</span>
                 </button>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+      {/* MODAL CUSTOM ITEM (OUTROS) */}
+      {showCustomItemModal && (
+        <div className="fixed inset-0 bg-black/60 z-[300] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-6 shadow-2xl space-y-4 animate-in zoom-in-95">
+            <div className="flex justify-between items-center px-1">
+              <h3 className={`font-black uppercase tracking-widest text-xs ${customItemType === 'SERVICE' ? 'text-blue-900' : 'text-orange-600'}`}>
+                  Adicionar {customItemType === 'SERVICE' ? 'Serviço' : 'Produto'} (Outros)
+              </h3>
+              <button onClick={() => setShowCustomItemModal(false)} className="text-gray-400"><X size={24} /></button>
+            </div>
+            
+            <div className="space-y-4">
+                <div className="space-y-1">
+                    <label className="text-[9px] font-black text-gray-400 uppercase ml-1">Descrição</label>
+                    <input 
+                        type="text" 
+                        value={customItemName}
+                        onChange={e => setCustomItemName(e.target.value)}
+                        placeholder="Ex: Taxa de deslocamento"
+                        className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-blue-900 text-sm font-bold text-gray-700"
+                        autoFocus
+                    />
+                </div>
+                <div className="space-y-1">
+                    <label className="text-[9px] font-black text-gray-400 uppercase ml-1">Valor (R$)</label>
+                    <input 
+                        type="text" 
+                        value={customItemPrice}
+                        onChange={e => setCustomItemPrice(e.target.value)}
+                        placeholder="0,00"
+                        className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-blue-900 text-sm font-bold text-gray-700"
+                    />
+                </div>
+
+                <div className="bg-yellow-50 p-3 rounded-xl border border-yellow-100 flex gap-2 items-start">
+                    <AlertTriangle size={14} className="text-yellow-600 mt-0.5 shrink-0" />
+                    <p className="text-[10px] text-yellow-800 leading-tight">
+                        Este item será adicionado apenas a este atendimento e não será salvo no cadastro geral.
+                    </p>
+                </div>
+
+                <button 
+                    onClick={handleAddCustomItem}
+                    className={`w-full py-4 rounded-2xl text-white font-black text-xs uppercase tracking-widest shadow-lg active:scale-95 transition-transform ${customItemType === 'SERVICE' ? 'bg-blue-900' : 'bg-orange-500'}`}
+                >
+                    Adicionar Item
+                </button>
             </div>
           </div>
         </div>

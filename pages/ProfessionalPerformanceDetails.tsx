@@ -3,7 +3,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { 
   ChevronLeft, Users, ShoppingBag, ClipboardList, Wallet, 
   Calendar, CheckCircle2, TrendingUp, User, CheckSquare, Square, 
-  DollarSign, X, Loader2
+  DollarSign, X, Loader2, Edit2, AlertCircle, Save
 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { getTransactions, Transaction, processCommissionPayment } from '../data/transactions';
@@ -82,6 +82,30 @@ const ProfessionalPerformanceDetails: React.FC = () => {
   }, [proId]);
 
   const calculateCommission = (transaction: Transaction) => {
+    // 1. Se houver comissão sobrescrita no banco, usa ela (prioridade máxima)
+    if (transaction.commission_value !== undefined && transaction.commission_value !== null) {
+        return transaction.commission_type === 'percent' 
+            ? transaction.val * (transaction.commission_value / 100)
+            : transaction.commission_value;
+    }
+
+    // 2. Se já tiver o valor calculado salvo na transação, usa ele (Novo Padrão)
+    if (transaction.commission_amount !== undefined && transaction.commission_amount !== null) {
+        return transaction.commission_amount;
+    }
+
+    // 3. Se for gorjeta, o colaborador recebe 100% integralmente
+    if (transaction.category === 'Gorjeta' || transaction.type === 'GORJETA') {
+        return transaction.val;
+    }
+
+    // 4. Se for OUTROS, retorna 0 (Pendente) a menos que tenha sido sobrescrito acima
+    // IMPORTANTE: Apenas type === 'OUTROS' deve cair aqui. Serviços normais devem ter fallback.
+    if (transaction.type === 'OUTROS') {
+        return 0;
+    }
+
+    // 5. Busca regra específica do serviço/produto
     const serviceId = servicesMap[transaction.item];
     const config = commissionConfigs.find(c => c.service_id === serviceId);
     let commValue = 0;
@@ -93,7 +117,9 @@ const ProfessionalPerformanceDetails: React.FC = () => {
             commValue = config.commission_value;
         }
     } else {
-        const rate = transaction.category === 'Serviço' ? 0.4 : 0.1;
+        // Fallback Padrão: 40% para Serviços, 10% para Produtos
+        // Se não for OUTROS, aplica regra padrão mesmo sem config específica
+        const rate = (transaction.category === 'Serviço' || transaction.type === 'SERVIÇO') ? 0.4 : 0.1;
         commValue = transaction.val * rate;
     }
     return commValue;
@@ -215,6 +241,13 @@ const ProfessionalPerformanceDetails: React.FC = () => {
         return;
     }
 
+    // Verifica se há itens com comissão pendente (valor 0 e não pago)
+    const pendingItems = stats.log.filter(t => selectedIds.includes(t.id) && t.commissionValue === 0 && !t.commission_paid);
+    if (pendingItems.length > 0) {
+        alert(`Atenção: Existem ${pendingItems.length} itens selecionados com comissão pendente (R$ 0,00). Defina a comissão antes de realizar o pagamento.`);
+        return;
+    }
+
     setProcessing(true);
     try {
         await processCommissionPayment(
@@ -237,6 +270,77 @@ const ProfessionalPerformanceDetails: React.FC = () => {
 
     } catch (err: any) {
         alert('Erro: ' + err.message);
+    } finally {
+        setProcessing(false);
+    }
+  };
+
+  const [editCommissionModal, setEditCommissionModal] = useState<{show: boolean, transaction: Transaction | null, value: string, type: 'percent' | 'fixed'}>({
+    show: false,
+    transaction: null,
+    value: '',
+    type: 'percent'
+  });
+
+  const handleEditCommission = (t: Transaction) => {
+    // Se já foi pago, não deve editar (ou deve avisar)
+    if (t.commission_paid) {
+        alert('Esta comissão já foi paga e não pode ser editada.');
+        return;
+    }
+
+    // Calcula o valor atual para mostrar no input
+    const currentComm = calculateCommission(t);
+    // Tenta inferir se é porcentagem ou fixo baseado no valor salvo, ou padrão percent
+    const initialType = t.commission_type || 'percent';
+    const initialValue = t.commission_value !== undefined ? t.commission_value : (initialType === 'percent' ? (currentComm / t.val) * 100 : currentComm);
+
+    setEditCommissionModal({
+        show: true,
+        transaction: t,
+        value: initialValue ? initialValue.toString() : '',
+        type: initialType
+    });
+  };
+
+  const saveCommissionEdit = async () => {
+    if (!editCommissionModal.transaction || !editCommissionModal.value) return;
+
+    setProcessing(true);
+    try {
+        const val = parseFloat(editCommissionModal.value.replace(',', '.'));
+        if (isNaN(val) || val < 0) {
+            alert('Valor inválido');
+            return;
+        }
+
+        const { error } = await db.transactions()
+            .update({
+                commission_value: val,
+                commission_type: editCommissionModal.type
+            })
+            .eq('id', editCommissionModal.transaction.id);
+
+        if (error) throw error;
+
+        // Notifica o colaborador sobre a atualização da comissão
+        if (editCommissionModal.transaction.professional_id) {
+            await db.notifications().insert({
+                type: 'FINANCEIRO',
+                title: 'Comissão Atualizada',
+                message: `A comissão do item "${editCommissionModal.transaction.item}" foi atualizada para ${editCommissionModal.type === 'percent' ? editCommissionModal.value + '%' : 'R$ ' + editCommissionModal.value}.`,
+                recipient_pro_id: editCommissionModal.transaction.professional_id,
+                link: '/collaborator/financial',
+                read: false,
+                created_at: new Date().toISOString()
+            });
+        }
+
+        setEditCommissionModal({ show: false, transaction: null, value: '', type: 'percent' });
+        loadData(); // Recarrega para atualizar a UI
+        alert('Comissão salva com sucesso!');
+    } catch (err: any) {
+        alert('Erro ao salvar comissão: ' + err.message);
     } finally {
         setProcessing(false);
     }
@@ -344,9 +448,31 @@ const ProfessionalPerformanceDetails: React.FC = () => {
                                 </div>
                                 <div className="pt-2 border-t border-gray-50 flex justify-between items-center text-[10px]">
                                     <span className="font-bold text-gray-400 uppercase tracking-wider">Comissão</span>
-                                    <span className={`font-black px-2 py-0.5 rounded-md ${t.commission_paid ? 'text-green-700 bg-green-100' : 'text-blue-600 bg-blue-50'}`}>
-                                        + R$ {t.commissionValue.toFixed(2).replace('.', ',')}
-                                    </span>
+                                    <div className="flex items-center gap-2">
+                                        {t.commissionValue === 0 && !t.commission_paid ? (
+                                            <button 
+                                                onClick={(e) => { e.stopPropagation(); handleEditCommission(t); }}
+                                                className="bg-red-100 text-red-600 px-2 py-1 rounded-md font-black uppercase tracking-wider hover:bg-red-200 transition-colors flex items-center gap-1"
+                                            >
+                                                <AlertCircle size={10} /> Pendente (Definir)
+                                            </button>
+                                        ) : (
+                                            <div className="flex items-center gap-2">
+                                                {!t.commission_paid && (
+                                                    <button 
+                                                        onClick={(e) => { e.stopPropagation(); handleEditCommission(t); }}
+                                                        className="text-gray-400 hover:text-blue-600 p-1 rounded-full hover:bg-blue-50 transition-colors"
+                                                        title="Editar Comissão"
+                                                    >
+                                                        <Edit2 size={12} />
+                                                    </button>
+                                                )}
+                                                <span className={`font-black px-2 py-0.5 rounded-md ${t.commission_paid ? 'text-green-700 bg-green-100' : 'text-blue-600 bg-blue-50'}`}>
+                                                    + R$ {t.commissionValue.toFixed(2).replace('.', ',')}
+                                                </span>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
                         );
@@ -355,6 +481,78 @@ const ProfessionalPerformanceDetails: React.FC = () => {
             </div>
         </div>
       </div>
+
+      {/* Modal de Edição de Comissão */}
+      {editCommissionModal.show && (
+        <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+            <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-6 shadow-2xl space-y-5 animate-in zoom-in-95">
+                <div className="flex justify-between items-center px-1">
+                    <h3 className="text-blue-900 font-black uppercase tracking-widest text-xs flex items-center gap-2">
+                        <Edit2 size={16} /> Editar Comissão
+                    </h3>
+                    <button onClick={() => setEditCommissionModal({...editCommissionModal, show: false})} className="text-gray-400 p-1"><X size={20} /></button>
+                </div>
+
+                <div className="space-y-4">
+                    <div className="bg-blue-50 p-3 rounded-xl border border-blue-100">
+                        <p className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mb-1">Item</p>
+                        <p className="text-sm font-black text-blue-900">{editCommissionModal.transaction?.item}</p>
+                        <p className="text-[10px] text-blue-500 font-bold mt-1">Valor Venda: R$ {editCommissionModal.transaction?.val.toFixed(2)}</p>
+                    </div>
+
+                    <div className="flex bg-gray-100 p-1 rounded-xl">
+                        <button 
+                            onClick={() => setEditCommissionModal({...editCommissionModal, type: 'percent'})}
+                            className={`flex-1 py-2 rounded-lg text-xs font-black uppercase transition-all ${editCommissionModal.type === 'percent' ? 'bg-white text-blue-900 shadow-sm' : 'text-gray-400'}`}
+                        >
+                            Porcentagem (%)
+                        </button>
+                        <button 
+                            onClick={() => setEditCommissionModal({...editCommissionModal, type: 'fixed'})}
+                            className={`flex-1 py-2 rounded-lg text-xs font-black uppercase transition-all ${editCommissionModal.type === 'fixed' ? 'bg-white text-blue-900 shadow-sm' : 'text-gray-400'}`}
+                        >
+                            Valor Fixo (R$)
+                        </button>
+                    </div>
+
+                    <div>
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2 px-1">
+                            {editCommissionModal.type === 'percent' ? 'Porcentagem da Comissão' : 'Valor da Comissão'}
+                        </label>
+                        <div className="relative">
+                            <input 
+                                type="number" 
+                                value={editCommissionModal.value}
+                                onChange={(e) => setEditCommissionModal({...editCommissionModal, value: e.target.value})}
+                                placeholder="0,00"
+                                className="w-full bg-white border-2 border-blue-100 rounded-xl py-3 px-4 pl-10 font-bold text-gray-700 text-sm outline-none focus:border-blue-500"
+                                autoFocus
+                            />
+                            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold">
+                                {editCommissionModal.type === 'percent' ? '%' : 'R$'}
+                            </span>
+                        </div>
+                    </div>
+
+                    <div className="bg-yellow-50 p-3 rounded-xl border border-yellow-100 flex gap-2 items-start">
+                        <AlertCircle size={14} className="text-yellow-600 mt-0.5 shrink-0" />
+                        <p className="text-[10px] text-yellow-800 leading-tight">
+                            Esta alteração sobrescreve a regra padrão apenas para este lançamento.
+                        </p>
+                    </div>
+
+                    <button 
+                        onClick={saveCommissionEdit}
+                        disabled={processing}
+                        className="w-full bg-blue-900 text-white font-black py-4 rounded-2xl uppercase tracking-widest text-xs shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
+                    >
+                        {processing ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />}
+                        Salvar Comissão
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
 
       {/* Floating Action Bar (Barra de Baixa) */}
       {selectedIds.length > 0 && (

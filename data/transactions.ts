@@ -43,6 +43,18 @@ export const addTransaction = async (transaction: Partial<Transaction> & { metho
     professional_id: (transaction.professional_id && transaction.professional_id.length > 20) ? transaction.professional_id : null,
     appointment_id: transaction.appointment_id,
     
+    // Campos de Comissão Sobrescrita
+    commission_value: transaction.commission_value,
+    commission_type: transaction.commission_type,
+
+    // Novos Campos Detalhados
+    commission_amount: transaction.commission_amount,
+    commission_rate: transaction.commission_rate,
+    original_value: transaction.original_value,
+    discount_value: transaction.discount_value,
+    appointment_total: transaction.appointment_total,
+    appointment_tip: transaction.appointment_tip,
+
     // Campos Legados mantidos apenas se existirem colunas no banco
     category: transaction.category || transaction.type,
     val: transaction.val,

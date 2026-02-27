@@ -55,11 +55,29 @@ const CollaboratorCommissions: React.FC = () => {
 
   // Cálculo de Comissão Idêntico ao do ADM
   const calculateCommission = (t: Transaction) => {
-    // Se for gorjeta, o colaborador recebe 100% integralmente
+    // 1. Se houver comissão sobrescrita no banco, usa ela (prioridade máxima)
+    if (t.commission_value !== undefined && t.commission_value !== null) {
+        return t.commission_type === 'percent' 
+            ? t.val * (t.commission_value / 100)
+            : t.commission_value;
+    }
+
+    // 2. Se já tiver o valor calculado salvo na transação, usa ele (Novo Padrão)
+    if (t.commission_amount !== undefined && t.commission_amount !== null) {
+        return t.commission_amount;
+    }
+
+    // 3. Se for gorjeta, o colaborador recebe 100% integralmente
     if (t.category === 'Gorjeta' || t.type === 'GORJETA') {
         return t.val;
     }
 
+    // 4. Se for OUTROS, retorna 0 (Pendente) a menos que tenha sido sobrescrito acima
+    if (t.type === 'OUTROS') {
+        return 0;
+    }
+
+    // 5. Busca regra específica do serviço/produto
     const serviceId = servicesMap[t.item];
     const config = commissionConfigs.find(c => c.service_id === serviceId);
     
@@ -69,7 +87,7 @@ const CollaboratorCommissions: React.FC = () => {
             : config.commission_value;
     }
     
-    // Fallback padrão se não houver regra específica
+    // 6. Fallback padrão
     const rate = (t.type === 'SERVIÇO' || t.category === 'Serviço') ? 0.4 : 0.1;
     return t.val * rate;
   };
@@ -190,9 +208,15 @@ const CollaboratorCommissions: React.FC = () => {
                   </div>
                   <div className="text-right">
                     <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">Minha Comissão</p>
-                    <p className={`text-lg font-black ${item.commission_paid ? 'text-green-600' : 'text-blue-900'}`}>
-                      R$ {item.commissionValue.toFixed(2).replace('.', ',')}
-                    </p>
+                    {item.commissionValue === 0 && !item.commission_paid ? (
+                        <p className="text-xs font-black text-red-500 uppercase tracking-wider bg-red-50 px-2 py-1 rounded-lg">
+                            Pendente (ADM)
+                        </p>
+                    ) : (
+                        <p className={`text-lg font-black ${item.commission_paid ? 'text-green-600' : 'text-blue-900'}`}>
+                          R$ {item.commissionValue.toFixed(2).replace('.', ',')}
+                        </p>
+                    )}
                   </div>
                 </div>
               </div>

@@ -273,6 +273,15 @@ export const deleteAppointment = async (id: string, reason: string = 'Exclusão 
   if (rawApt) {
       const apt = mapAppointmentFromDB(rawApt);
       
+      // 1. Remove transações financeiras associadas ao agendamento para não sobrar "lixo" financeiro
+      const { error: transError } = await supabase.from('transactions').delete().eq('appointment_id', id);
+      if (transError) {
+          console.error('Erro ao excluir transações do agendamento:', transError);
+          // Não interrompe o fluxo, mas loga o erro. 
+          // Se houver constraint RESTRICT, o delete do appointment abaixo falhará de qualquer forma.
+      }
+
+      // 2. Remove o agendamento
       const { error } = await supabase.from('appointments').delete().eq('id', id);
       if (error) throw error;
 
@@ -282,15 +291,24 @@ export const deleteAppointment = async (id: string, reason: string = 'Exclusão 
           message: `Agendamento de ${apt.clientName} com ${apt.professionalName} em ${apt.date} às ${apt.time} foi apagado. Motivo: ${reason}`
       });
 
+      // Coleta dados para o Log Detalhado
+      const currentUser = localStorage.getItem('user_name') || 'Usuário Desconhecido';
+      const deletionTime = new Date().toLocaleString('pt-BR');
+      const servicesStr = apt.services?.length ? apt.services.join(', ') : 'Sem serviços';
+      const productsStr = apt.products?.length ? apt.products.map((p: any) => `${p.name} (x${p.quantity})`).join(', ') : 'Sem produtos';
+      
+      const logDetails = `[EXCLUSÃO] Cliente: ${apt.clientName} | Agenda: ${apt.date} às ${apt.time} | Prof: ${apt.professionalName} | Svcs: ${servicesStr} | Prods: ${productsStr} | Pagto: ${apt.payment_method || 'Não Inf.'} | Excluído por: ${currentUser} em ${deletionTime}`;
+
       await addTransaction({
           operation: 'VENDA',
           type: 'OUTROS',
-          item: `LOG: Exclusão Agendamento - ${apt.clientName} (${apt.professionalName})`,
+          category: 'Log Exclusão',
+          item: logDetails,
           val: 0,
           date: new Date().toISOString().split('T')[0],
           payment_method: 'Sistema',
           status: 'Pago',
-          pro: 'Sistema'
+          pro: currentUser
       });
   }
 };
