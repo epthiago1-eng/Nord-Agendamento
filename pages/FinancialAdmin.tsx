@@ -31,6 +31,7 @@ const FinancialAdmin: React.FC = () => {
   const [showSangriaModal, setShowSangriaModal] = useState(false);
   const [showAdjustModal, setShowAdjustModal] = useState<{show: boolean, type: 'cash' | 'bank' | null}>({ show: false, type: null });
   const [showPayModal, setShowPayModal] = useState<{show: boolean, proName: string | null, amount: number}>({ show: false, proName: null, amount: 0 });
+  const [showFutureModal, setShowFutureModal] = useState(false);
   const [managerForm, setManagerForm] = useState({ amount: '', description: '', target: 'bank' });
 
   // Estados do Modal
@@ -190,6 +191,7 @@ const FinancialAdmin: React.FC = () => {
     let totalCommissions = 0;
     let pendingCommissions = 0;
     let futureReceivables = 0;
+    const futureTransactions: Transaction[] = [];
     
     // Dados para Gráfico Principal
     const chartMap: Record<string, { name: string, entrada: number, saida: number, lucro: number }> = {};
@@ -216,6 +218,7 @@ const FinancialAdmin: React.FC = () => {
           // A Receber (Futuro) - Exemplo: Cartão de Crédito
           if (t.payment_method?.toLowerCase().includes('crédito') || t.payment_method?.toLowerCase().includes('cartão')) {
               futureReceivables += t.val;
+              futureTransactions.push(t);
           }
         }
       } else {
@@ -284,6 +287,7 @@ const FinancialAdmin: React.FC = () => {
         totalCommissions,
         pendingCommissions,
         futureReceivables,
+        futureTransactions,
         net: income - totalCommissions, // Resultado Líquido (Faturamento - Comissões)
         chartData, 
         prosData, 
@@ -563,7 +567,15 @@ const FinancialAdmin: React.FC = () => {
                     </div>
                 </div>
                 <div>
-                    <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Saldo em Caixa</span>
+                    <div className="flex justify-between items-end">
+                        <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Saldo em Caixa</span>
+                        <button 
+                            onClick={() => document.getElementById('composicao-caixa')?.scrollIntoView({ behavior: 'smooth' })}
+                            className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-2 py-1 rounded-lg hover:bg-blue-100 transition-colors"
+                        >
+                            Detalhar
+                        </button>
+                    </div>
                     <h2 className="text-2xl font-black text-blue-900">R$ {((settings?.cash_balance || 0) + (settings?.bank_balance || 0)).toFixed(2)}</h2>
                     <p className="text-[9px] text-gray-400 font-medium mt-1">Dinheiro disponível para saque ou despesas.</p>
                 </div>
@@ -595,7 +607,7 @@ const FinancialAdmin: React.FC = () => {
         </div>
 
         {/* COMPOSIÇÃO DO CAIXA E OBRIGAÇÕES */}
-        <div className="bg-white p-6 rounded-[2.5rem] border border-gray-100 shadow-sm space-y-6">
+        <div id="composicao-caixa" className="bg-white p-6 rounded-[2.5rem] border border-gray-100 shadow-sm space-y-6">
             <h3 className="text-xs font-black text-gray-900 uppercase tracking-widest flex items-center gap-2">
                 <Landmark size={16} className="text-blue-900" /> Composição do Caixa
             </h3>
@@ -658,9 +670,12 @@ const FinancialAdmin: React.FC = () => {
                     </div>
                     <div className="flex items-center gap-3">
                         <span className="text-sm font-black text-orange-600">R$ {stats.futureReceivables.toFixed(2)}</span>
-                        <div className="text-[10px] font-black text-orange-400 uppercase tracking-widest px-3 py-1.5">
+                        <button 
+                            onClick={() => setShowFutureModal(true)}
+                            className="text-[10px] font-black text-orange-400 uppercase tracking-widest px-3 py-1.5 hover:bg-orange-50 rounded-lg transition-all"
+                        >
                             Detalhar
-                        </div>
+                        </button>
                     </div>
                 </div>
 
@@ -1088,6 +1103,51 @@ const FinancialAdmin: React.FC = () => {
                     >
                         {saving ? <Loader2 className="animate-spin" size={16} /> : 'Confirmar Pagamento'}
                     </button>
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* MODAL DE DETALHES DO A RECEBER */}
+      {showFutureModal && (
+        <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+            <div className="bg-white w-full max-w-lg rounded-[2.5rem] p-6 shadow-2xl space-y-5 animate-in zoom-in-95 max-h-[80vh] flex flex-col">
+                <div className="flex justify-between items-center px-1 shrink-0">
+                    <h3 className="text-orange-600 font-black uppercase tracking-widest text-xs flex items-center gap-2">
+                        <Clock size={16} /> Detalhes: A Receber (Futuro)
+                    </h3>
+                    <button onClick={() => setShowFutureModal(false)} className="text-gray-400 p-1"><X size={20} /></button>
+                </div>
+
+                <div className="bg-orange-50 p-4 rounded-2xl border border-orange-100 shrink-0">
+                    <p className="text-[10px] text-orange-800 font-medium leading-relaxed">
+                        Estas são as vendas realizadas em <b>Cartão de Crédito</b> no período selecionado. O valor total ainda não está disponível em caixa.
+                    </p>
+                </div>
+
+                <div className="overflow-y-auto flex-1 pr-2 custom-scrollbar">
+                    <div className="space-y-2">
+                        {stats.futureTransactions.length > 0 ? (
+                            stats.futureTransactions.map((t, idx) => (
+                                <div key={idx} className="bg-gray-50 p-3 rounded-xl border border-gray-100 flex justify-between items-center">
+                                    <div>
+                                        <p className="text-xs font-bold text-gray-800">{t.item}</p>
+                                        <p className="text-[10px] text-gray-400">{new Date(t.date + 'T00:00:00').toLocaleDateString('pt-BR')} • {t.payment_method}</p>
+                                    </div>
+                                    <span className="text-xs font-black text-orange-600">R$ {t.val.toFixed(2)}</span>
+                                </div>
+                            ))
+                        ) : (
+                            <div className="text-center py-8 text-gray-400 text-xs font-medium">
+                                Nenhuma transação futura encontrada.
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                <div className="pt-4 border-t border-gray-100 flex justify-between items-center shrink-0">
+                    <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Total Futuro</span>
+                    <span className="text-lg font-black text-orange-600">R$ {stats.futureReceivables.toFixed(2)}</span>
                 </div>
             </div>
         </div>
