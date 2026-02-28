@@ -22,18 +22,17 @@ export const getTransactions = async (filters?: { proId?: string, month?: string
 
 export const addTransaction = async (transaction: Partial<Transaction> & { method?: string }) => {
   // Ajusta payload para corresponder às colunas do banco
-  // REMOVIDO 'description' para evitar erro PGRST204
-  const payload = {
+  const payload: any = {
     date: transaction.date,
     operation: transaction.operation || (transaction.val && transaction.val < 0 ? 'COMPRA' : 'VENDA'),
     type: transaction.type || 'OUTROS',
     code: transaction.code || '',
-    item: transaction.item, // Campo correto conforme nova estrutura
+    item: transaction.item,
     
     unit_price: transaction.unit_price || Math.abs(transaction.val || 0),
     cost_value: transaction.cost_value || 0,
     quantity: transaction.quantity || 1,
-    total_value: transaction.val, // Importante: Valor com sinal
+    total_value: transaction.val, 
     
     client_supplier: transaction.client_supplier,
     payment_method: transaction.method || transaction.payment_method,
@@ -59,6 +58,9 @@ export const addTransaction = async (transaction: Partial<Transaction> & { metho
     category: transaction.category || transaction.type,
     val: transaction.val,
   };
+
+  // Remove chaves com valores undefined para evitar erros no Supabase
+  Object.keys(payload).forEach(key => payload[key] === undefined && delete payload[key]);
 
   const { data, error } = await supabase
     .from('transactions')
@@ -86,6 +88,9 @@ export const updateTransaction = async (id: string, updates: Partial<Transaction
   if (updates.item !== undefined) {
       payload.item = updates.item;
   }
+
+  // Remove undefined
+  Object.keys(payload).forEach(key => payload[key] === undefined && delete payload[key]);
 
   const { error } = await supabase
     .from('transactions')
@@ -135,26 +140,24 @@ export const payCommissions = async (transactionIds: string[], totalValue: numbe
 
     const safeProId = (proId && proId.length > 20) ? proId : null;
 
-    const { error: insertError } = await supabase.from('transactions').insert({
-        operation: 'COMPRA', // Saída de dinheiro
-        type: 'DESPESA',
-        category: 'Comissão',
-        item: `Pagamento Comissão - ${proName}`,
-        val: -Math.abs(totalValue),
-        total_value: -Math.abs(totalValue),
-        payment_method: 'Dinheiro', 
-        pro: 'Sistema',
-        professional_id: safeProId, 
-        date: new Date().toISOString().split('T')[0],
-        status: 'Pago'
-    });
-
-    if (insertError) {
+    try {
+        await addTransaction({
+            operation: 'COMPRA', // Saída de dinheiro
+            type: 'DESPESA',
+            category: 'Comissão',
+            item: `Pagamento Comissão - ${proName}`,
+            val: -Math.abs(totalValue),
+            payment_method: 'Dinheiro', 
+            pro: 'Sistema',
+            professional_id: safeProId, 
+            date: new Date().toISOString().split('T')[0],
+            status: 'Pago'
+        });
+    } catch (insertError: any) {
         await supabase.from('transactions').update({ commission_paid: false }).in('id', transactionIds);
         throw new Error(`Erro ao registrar saída financeira: ${insertError.message}`);
     }
 
-    window.dispatchEvent(new Event('transaction_added'));
     return true;
 };
 
@@ -186,29 +189,25 @@ export const processCommissionPayment = async (
     // Descrição detalhada conforme solicitado
     const description = `Comissão - ${proName} (${details.serviceCount} Serv, ${details.productCount} Prod)`;
 
-    const { error: insertError } = await supabase.from('transactions').insert({
-        date: new Date().toISOString().split('T')[0],
-        operation: 'COMPRA', // Saída
-        type: 'DESPESA',
-        category: 'Funcionário', // Categoria solicitada
-        item: description,
-        unit_price: Math.abs(totalValue),
-        quantity: 1,
-        total_value: -Math.abs(totalValue), // Valor negativo
-        val: -Math.abs(totalValue),
-        client_supplier: proName,
-        payment_method: paymentMethod,
-        pro: 'Sistema',
-        professional_id: safeProId,
-        status: 'Pago'
-    });
-
-    if (insertError) {
+    try {
+        await addTransaction({
+            date: new Date().toISOString().split('T')[0],
+            operation: 'COMPRA', // Saída
+            type: 'DESPESA',
+            category: 'Funcionário', // Categoria solicitada
+            item: description,
+            val: -Math.abs(totalValue), // Valor negativo
+            client_supplier: proName,
+            payment_method: paymentMethod,
+            pro: 'Sistema',
+            professional_id: safeProId,
+            status: 'Pago'
+        });
+    } catch (insertError: any) {
         // Rollback manual simples se falhar a inserção
         await supabase.from('transactions').update({ commission_paid: false }).in('id', transactionIds);
         throw new Error(`Erro ao criar despesa: ${insertError.message}`);
     }
 
-    window.dispatchEvent(new Event('transaction_added'));
     return true;
 };

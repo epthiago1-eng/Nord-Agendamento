@@ -58,6 +58,7 @@ import CollaboratorFinancial from './pages/CollaboratorFinancial';
 import CollaboratorAttendanceLog from './pages/CollaboratorAttendanceLog';
 import CollaboratorCommissions from './pages/CollaboratorCommissions';
 import CollaboratorExpenseForm from './pages/CollaboratorExpenseForm';
+import LaunchVale from './pages/LaunchVale';
 
 // Autenticação
 import Login from './pages/Login';
@@ -110,6 +111,7 @@ const App: React.FC = () => {
             <Route path="financial/my-attendance" element={<CollaboratorAttendanceLog />} />
             <Route path="financial/my-commissions" element={<CollaboratorCommissions />} />
             <Route path="financial/expense/new" element={<CollaboratorExpenseForm />} />
+            <Route path="financial/vale/new" element={<LaunchVale />} />
             <Route path="financial/log" element={<FinancialLog />} />
             <Route path="financial/commissions/:proName" element={<CommissionAudit />} />
             <Route path="financial/performance/:id" element={<ProfessionalPerformanceDetails />} />

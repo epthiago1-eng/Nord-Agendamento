@@ -41,7 +41,7 @@ const CollaboratorCommissions: React.FC = () => {
         // 2. Busca transações vinculadas
         const allTrans = await getTransactions();
         const filtered = allTrans.filter(t => 
-          t.operation === 'VENDA' && ((proId && t.professional_id === proId) || (!proId && t.pro === proName))
+          (t.operation === 'VENDA' || t.type === 'VALE') && ((proId && t.professional_id === proId) || (!proId && t.pro === proName))
         );
         setTransactions(filtered);
       } catch (err) {
@@ -55,6 +55,11 @@ const CollaboratorCommissions: React.FC = () => {
 
   // Cálculo de Comissão Idêntico ao do ADM
   const calculateCommission = (t: Transaction) => {
+    // 0. Se for VALE, retorna valor negativo (Dedução)
+    if (t.type === 'VALE') {
+        return -Math.abs(t.val);
+    }
+
     // 1. Se houver comissão sobrescrita no banco, usa ela (prioridade máxima)
     if (t.commission_value !== undefined && t.commission_value !== null) {
         return t.commission_type === 'percent' 
@@ -213,8 +218,8 @@ const CollaboratorCommissions: React.FC = () => {
                             Pendente (ADM)
                         </p>
                     ) : (
-                        <p className={`text-lg font-black ${item.commission_paid ? 'text-green-600' : 'text-blue-900'}`}>
-                          R$ {item.commissionValue.toFixed(2).replace('.', ',')}
+                        <p className={`text-lg font-black ${item.commission_paid ? 'text-green-600' : (item.type === 'VALE' ? 'text-red-500' : 'text-blue-900')}`}>
+                          {item.type === 'VALE' ? '-' : ''} R$ {Math.abs(item.commissionValue).toFixed(2).replace('.', ',')}
                         </p>
                     )}
                   </div>

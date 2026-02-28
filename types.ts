@@ -101,7 +101,7 @@ export interface Transaction {
   id: string;
   date: string;
   operation: 'COMPRA' | 'VENDA'; // Excel Column: OPERAÇÃO
-  type: 'PRODUTO' | 'SERVIÇO' | 'DESPESA' | 'OUTROS' | 'GORJETA'; // Excel Column: TIPO
+  type: 'PRODUTO' | 'SERVIÇO' | 'DESPESA' | 'OUTROS' | 'GORJETA' | 'VALE'; // Excel Column: TIPO
   code?: string; // Excel Column: CÓD
   item: string; // Excel Column: DESCRIÇÃO
   

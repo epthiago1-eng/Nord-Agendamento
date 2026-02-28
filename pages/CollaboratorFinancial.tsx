@@ -165,10 +165,14 @@ const CollaboratorFinancial: React.FC = () => {
     
     const myTrans = transactions.filter(t => 
         (proId && t.professional_id === proId) || (!proId && t.pro === proName)
-    ).filter(t => t.operation === 'VENDA');
+    ).filter(t => t.operation === 'VENDA' || t.type === 'VALE');
 
     // Helper de Cálculo (Mesma lógica das outras telas)
     const calculateCommission = (t: Transaction) => {
+        // 0. Se for VALE, retorna valor negativo (Dedução)
+        if (t.type === 'VALE') {
+            return -Math.abs(t.val);
+        }
         // 1. Override
         if (t.commission_value !== undefined && t.commission_value !== null) {
             return t.commission_type === 'percent' 

@@ -4,7 +4,7 @@ import {
   Users, UserCheck, ClipboardList, FolderOpen, 
   ShoppingBag, Package, Box, 
   CreditCard, FileText, BarChart3, 
-  Building2, Settings, LifeBuoy, LogOut, Zap, History, Receipt
+  Building2, Settings, LifeBuoy, LogOut, Zap, History, Receipt, Banknote
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -39,6 +39,7 @@ const Menu: React.FC = () => {
     { id: 'my-performance', label: 'Meu Financeiro', icon: Zap, path: '/financial' },
     { id: 'my-schedule', label: 'Minha Agenda', icon: FileText, path: '/agenda' },
     { id: 'new-expense', label: 'Lançar Despesa', icon: Receipt, path: '/financial/expense/new' },
+    { id: 'request-vale', label: 'Solicitar Vale', icon: Banknote, path: '/financial/vale/new' },
     { id: 'support', label: 'Suporte', icon: LifeBuoy, path: '/menu' },
   ];
 

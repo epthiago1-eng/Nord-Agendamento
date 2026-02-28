@@ -3,10 +3,10 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { 
   ChevronLeft, Users, ShoppingBag, ClipboardList, Wallet, 
   Calendar, CheckCircle2, TrendingUp, User, CheckSquare, Square, 
-  DollarSign, X, Loader2, Edit2, AlertCircle, Save
+  DollarSign, X, Loader2, Edit2, AlertCircle, Save, Banknote, Trash2
 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { getTransactions, Transaction, processCommissionPayment } from '../data/transactions';
+import { getTransactions, Transaction, processCommissionPayment, addTransaction, deleteTransaction } from '../data/transactions';
 import { db } from '../supabase';
 
 const ProfessionalPerformanceDetails: React.FC = () => {
@@ -64,7 +64,7 @@ const ProfessionalPerformanceDetails: React.FC = () => {
 
       const all = await getTransactions();
       const proTrans = all.filter(t => 
-          t.operation === 'VENDA' && 
+          ((t.operation === 'VENDA') || (t.type === 'VALE')) && 
           (t.professional_id === proId || (pro && t.pro === pro.name))
       );
       setTransactions(proTrans);
@@ -82,6 +82,11 @@ const ProfessionalPerformanceDetails: React.FC = () => {
   }, [proId]);
 
   const calculateCommission = (transaction: Transaction) => {
+    // 0. Se for VALE, retorna valor negativo (Dedução)
+    if (transaction.type === 'VALE') {
+        return -Math.abs(transaction.val);
+    }
+
     // 1. Se houver comissão sobrescrita no banco, usa ela (prioridade máxima)
     if (transaction.commission_value !== undefined && transaction.commission_value !== null) {
         return transaction.commission_type === 'percent' 
@@ -140,6 +145,8 @@ const ProfessionalPerformanceDetails: React.FC = () => {
     
     let grossTotal = 0;
     let commTotal = 0;
+    let grossCommission = 0;
+    let valesTotal = 0;
     let serviceCount = 0;
     let serviceTotal = 0;
     let productCount = 0;
@@ -152,19 +159,24 @@ const ProfessionalPerformanceDetails: React.FC = () => {
     const detailedLog = filtered.map(t => {
         const comm = calculateCommission(t);
         
-        grossTotal += t.val;
-        commTotal += comm;
-        if (t.client_supplier) uniqueClients.add(t.client_supplier);
-
-        if (t.category === 'Serviço' || t.type === 'SERVIÇO') {
-            serviceCount++;
-            serviceTotal += t.val;
-            servicesCounter[t.item] = (servicesCounter[t.item] || 0) + 1;
+        if (t.type === 'VALE') {
+            valesTotal += Math.abs(t.val);
         } else {
-            productCount += (t.quantity || 1);
-            productTotal += t.val;
-            productsCounter[t.item] = (productsCounter[t.item] || 0) + (t.quantity || 1);
+            grossCommission += comm;
+            grossTotal += t.val;
+            if (t.client_supplier) uniqueClients.add(t.client_supplier);
+
+            if (t.category === 'Serviço' || t.type === 'SERVIÇO') {
+                serviceCount++;
+                serviceTotal += t.val;
+                servicesCounter[t.item] = (servicesCounter[t.item] || 0) + 1;
+            } else {
+                productCount += (t.quantity || 1);
+                productTotal += t.val;
+                productsCounter[t.item] = (productsCounter[t.item] || 0) + (t.quantity || 1);
+            }
         }
+        commTotal += comm;
 
         return { ...t, commissionValue: comm, netValue: t.val - comm };
     });
@@ -174,8 +186,10 @@ const ProfessionalPerformanceDetails: React.FC = () => {
 
     return {
         grossTotal,
-        commTotal,
-        netTotal: grossTotal - commTotal,
+        grossCommission,
+        commTotal, // Net Commission
+        valesTotal,
+        netTotal: grossTotal - grossCommission, 
         serviceCount,
         serviceTotal,
         productCount,
@@ -195,6 +209,7 @@ const ProfessionalPerformanceDetails: React.FC = () => {
     const totalCommission = items.reduce((sum, t) => sum + t.commissionValue, 0);
     const totalServices = items.filter(t => t.category === 'Serviço' || t.type === 'SERVIÇO').length;
     const totalProducts = items.filter(t => t.category === 'Produto' || t.type === 'PRODUTO').length;
+    const totalVales = items.filter(t => t.type === 'VALE').length;
     
     // Ordena por data para pegar primeira e última
     const sortedDates = items.map(t => t.date).sort();
@@ -206,6 +221,7 @@ const ProfessionalPerformanceDetails: React.FC = () => {
         count: items.length,
         totalServices,
         totalProducts,
+        totalVales,
         firstDate,
         lastDate
     };
@@ -346,6 +362,74 @@ const ProfessionalPerformanceDetails: React.FC = () => {
     }
   };
 
+    const [showValeModal, setShowValeModal] = useState(false);
+    const [valeAmount, setValeAmount] = useState('');
+    const [valeReason, setValeReason] = useState('');
+    const [valeDate, setValeDate] = useState(new Date().toISOString().split('T')[0]);
+
+    const handleLaunchVale = async () => {
+        if (!valeAmount || !valeReason) {
+            alert('Preencha valor e motivo.');
+            return;
+        }
+        setProcessing(true);
+        try {
+            const val = parseFloat(valeAmount.replace(',', '.'));
+            if (isNaN(val) || val <= 0) {
+                alert('Valor inválido.');
+                return;
+            }
+
+            await addTransaction({
+                type: 'VALE',
+                category: 'Adiantamento',
+                operation: 'COMPRA',
+                val: -Math.abs(val),
+                item: `Vale - ${valeReason}`,
+                professional_id: proId,
+                client_supplier: proDetails?.name || 'Profissional',
+                date: valeDate,
+                status: 'Pago',
+                payment_method: 'Dinheiro'
+            });
+
+            setShowValeModal(false);
+            setValeAmount('');
+            setValeReason('');
+            loadData();
+            alert('Vale lançado com sucesso!');
+        } catch (err: any) {
+            alert('Erro ao lançar vale: ' + err.message);
+        } finally {
+            setProcessing(false);
+        }
+    };
+
+    const [deleteValeModal, setDeleteValeModal] = useState<{show: boolean, id: string | null}>({
+        show: false,
+        id: null
+    });
+
+    const confirmDeleteVale = (id: string) => {
+        setDeleteValeModal({ show: true, id });
+    };
+
+    const handleDeleteVale = async () => {
+        if (!deleteValeModal.id) return;
+        
+        setProcessing(true);
+        try {
+            await deleteTransaction(deleteValeModal.id);
+            loadData();
+            setDeleteValeModal({ show: false, id: null });
+            alert('Vale excluído com sucesso.');
+        } catch (err: any) {
+            alert('Erro ao excluir vale: ' + err.message);
+        } finally {
+            setProcessing(false);
+        }
+    };
+
   return (
     <div className="flex flex-col h-full bg-[#fcfaff] relative">
       <header className="bg-[#1e3a8a] text-white px-4 py-4 flex items-center sticky top-0 z-50 shadow-md">
@@ -387,12 +471,25 @@ const ProfessionalPerformanceDetails: React.FC = () => {
                     <div>
                         <p className="text-[9px] text-blue-300 font-bold uppercase">Comissão (Período)</p>
                         <p className="text-lg font-black text-orange-300">R$ {stats.commTotal.toFixed(2).replace('.', ',')}</p>
+                        {stats.valesTotal > 0 && (
+                            <div className="flex flex-col items-start mt-1 opacity-80">
+                                <span className="text-[8px] text-blue-200 font-bold uppercase">Bruto: R$ {stats.grossCommission.toFixed(2).replace('.', ',')}</span>
+                                <span className="text-[8px] text-red-300 font-bold uppercase">Vales: - R$ {stats.valesTotal.toFixed(2).replace('.', ',')}</span>
+                            </div>
+                        )}
                     </div>
                     <div className="text-right">
                         <p className="text-[9px] text-blue-300 font-bold uppercase">Líquido (Período)</p>
                         <p className="text-lg font-black text-green-300">R$ {stats.netTotal.toFixed(2).replace('.', ',')}</p>
                     </div>
                  </div>
+
+                 <button 
+                    onClick={() => setShowValeModal(true)}
+                    className="w-full mt-4 bg-white/10 hover:bg-white/20 text-white py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-colors flex items-center justify-center gap-2"
+                 >
+                    <Banknote size={16} /> Lançar Vale / Adiantamento
+                 </button>
             </div>
         </div>
 
@@ -443,13 +540,15 @@ const ProfessionalPerformanceDetails: React.FC = () => {
                                         </div>
                                     </div>
                                     <div className="text-right">
-                                        <p className="text-sm font-black text-gray-800">R$ {t.val.toFixed(2).replace('.', ',')}</p>
+                                        <p className={`text-sm font-black ${t.type === 'VALE' ? 'text-red-500' : 'text-gray-800'}`}>
+                                            {t.type === 'VALE' ? '-' : ''} R$ {Math.abs(t.val).toFixed(2).replace('.', ',')}
+                                        </p>
                                     </div>
                                 </div>
                                 <div className="pt-2 border-t border-gray-50 flex justify-between items-center text-[10px]">
-                                    <span className="font-bold text-gray-400 uppercase tracking-wider">Comissão</span>
+                                    <span className="font-bold text-gray-400 uppercase tracking-wider">{t.type === 'VALE' ? 'Dedução' : 'Comissão'}</span>
                                     <div className="flex items-center gap-2">
-                                        {t.commissionValue === 0 && !t.commission_paid ? (
+                                        {t.commissionValue === 0 && !t.commission_paid && t.type !== 'VALE' ? (
                                             <button 
                                                 onClick={(e) => { e.stopPropagation(); handleEditCommission(t); }}
                                                 className="bg-red-100 text-red-600 px-2 py-1 rounded-md font-black uppercase tracking-wider hover:bg-red-200 transition-colors flex items-center gap-1"
@@ -458,7 +557,7 @@ const ProfessionalPerformanceDetails: React.FC = () => {
                                             </button>
                                         ) : (
                                             <div className="flex items-center gap-2">
-                                                {!t.commission_paid && (
+                                                {!t.commission_paid && t.type !== 'VALE' && (
                                                     <button 
                                                         onClick={(e) => { e.stopPropagation(); handleEditCommission(t); }}
                                                         className="text-gray-400 hover:text-blue-600 p-1 rounded-full hover:bg-blue-50 transition-colors"
@@ -467,8 +566,17 @@ const ProfessionalPerformanceDetails: React.FC = () => {
                                                         <Edit2 size={12} />
                                                     </button>
                                                 )}
-                                                <span className={`font-black px-2 py-0.5 rounded-md ${t.commission_paid ? 'text-green-700 bg-green-100' : 'text-blue-600 bg-blue-50'}`}>
-                                                    + R$ {t.commissionValue.toFixed(2).replace('.', ',')}
+                                                {t.type === 'VALE' && (
+                                                    <button 
+                                                        onClick={(e) => { e.stopPropagation(); confirmDeleteVale(t.id); }}
+                                                        className="text-gray-400 hover:text-red-600 p-1 rounded-full hover:bg-red-50 transition-colors mr-1"
+                                                        title="Excluir Vale"
+                                                    >
+                                                        <Trash2 size={14} />
+                                                    </button>
+                                                )}
+                                                <span className={`font-black px-2 py-0.5 rounded-md ${t.commission_paid ? 'text-green-700 bg-green-100' : (t.type === 'VALE' ? 'text-red-600 bg-red-50' : 'text-blue-600 bg-blue-50')}`}>
+                                                    {t.type === 'VALE' ? '-' : '+'} R$ {Math.abs(t.commissionValue).toFixed(2).replace('.', ',')}
                                                 </span>
                                             </div>
                                         )}
@@ -481,6 +589,102 @@ const ProfessionalPerformanceDetails: React.FC = () => {
             </div>
         </div>
       </div>
+
+      {/* Modal de Confirmação de Exclusão de Vale */}
+      {deleteValeModal.show && (
+        <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+            <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-6 shadow-2xl space-y-5 animate-in zoom-in-95">
+                <div className="flex justify-between items-center px-1">
+                    <h3 className="text-red-600 font-black uppercase tracking-widest text-xs flex items-center gap-2">
+                        <Trash2 size={16} /> Excluir Vale
+                    </h3>
+                    <button onClick={() => setDeleteValeModal({ show: false, id: null })} className="text-gray-400 p-1"><X size={20} /></button>
+                </div>
+
+                <div className="space-y-4">
+                    <div className="bg-red-50 p-4 rounded-2xl border border-red-100 flex gap-3 items-start">
+                        <AlertCircle size={20} className="text-red-600 shrink-0 mt-0.5" />
+                        <p className="text-xs text-red-800 font-medium leading-relaxed">
+                            Tem certeza que deseja excluir este vale? Esta ação não pode ser desfeita e o valor será removido dos cálculos.
+                        </p>
+                    </div>
+
+                    <div className="flex gap-3">
+                        <button 
+                            onClick={() => setDeleteValeModal({ show: false, id: null })}
+                            className="flex-1 bg-gray-100 text-gray-500 font-bold py-3.5 rounded-2xl uppercase tracking-widest text-xs hover:bg-gray-200 transition-colors"
+                        >
+                            Cancelar
+                        </button>
+                        <button 
+                            onClick={handleDeleteVale}
+                            disabled={processing}
+                            className="flex-1 bg-red-600 text-white font-black py-3.5 rounded-2xl uppercase tracking-widest text-xs shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2 hover:bg-red-700"
+                        >
+                            {processing ? <Loader2 className="animate-spin" size={16} /> : <Trash2 size={16} />}
+                            Excluir
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* Modal de Lançar Vale */}
+      {showValeModal && (
+        <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+            <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-6 shadow-2xl space-y-5 animate-in zoom-in-95">
+                <div className="flex justify-between items-center px-1">
+                    <h3 className="text-blue-900 font-black uppercase tracking-widest text-xs flex items-center gap-2">
+                        <Banknote size={16} /> Lançar Vale
+                    </h3>
+                    <button onClick={() => setShowValeModal(false)} className="text-gray-400 p-1"><X size={20} /></button>
+                </div>
+
+                <div className="space-y-4">
+                    <div>
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2 px-1">Data</label>
+                        <input 
+                            type="date" 
+                            value={valeDate}
+                            onChange={(e) => setValeDate(e.target.value)}
+                            className="w-full bg-white border-2 border-blue-100 rounded-xl py-3 px-4 font-bold text-gray-700 text-sm outline-none focus:border-blue-500"
+                        />
+                    </div>
+                    <div>
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2 px-1">Valor (R$)</label>
+                        <input 
+                            type="number" 
+                            value={valeAmount}
+                            onChange={(e) => setValeAmount(e.target.value)}
+                            placeholder="0,00"
+                            className="w-full bg-white border-2 border-blue-100 rounded-xl py-3 px-4 font-bold text-gray-700 text-lg outline-none focus:border-blue-500"
+                            autoFocus
+                        />
+                    </div>
+                    <div>
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2 px-1">Motivo</label>
+                        <input 
+                            type="text" 
+                            value={valeReason}
+                            onChange={(e) => setValeReason(e.target.value)}
+                            placeholder="Ex: Adiantamento"
+                            className="w-full bg-white border-2 border-blue-100 rounded-xl py-3 px-4 font-bold text-gray-700 text-sm outline-none focus:border-blue-500"
+                        />
+                    </div>
+
+                    <button 
+                        onClick={handleLaunchVale}
+                        disabled={processing}
+                        className="w-full bg-blue-900 text-white font-black py-4 rounded-2xl uppercase tracking-widest text-xs shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
+                    >
+                        {processing ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />}
+                        Confirmar Lançamento
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
 
       {/* Modal de Edição de Comissão */}
       {editCommissionModal.show && (
@@ -606,6 +810,10 @@ const ProfessionalPerformanceDetails: React.FC = () => {
                         <div className="text-center flex-1">
                             <span className="block text-xl font-black text-orange-500">{selectionSummary.totalProducts}</span>
                             <span className="text-[8px] font-bold text-gray-400 uppercase">Produtos</span>
+                        </div>
+                        <div className="text-center flex-1 border-l border-gray-200">
+                            <span className="block text-xl font-black text-red-500">{selectionSummary.totalVales}</span>
+                            <span className="text-[8px] font-bold text-gray-400 uppercase">Vales</span>
                         </div>
                     </div>
                 </div>
