@@ -57,6 +57,8 @@ export interface EstablishmentSettings {
   logoUrl?: string;
   name: string;
   slotInterval: number;
+  cash_balance?: number;
+  bank_balance?: number;
 }
 
 export interface ServiceGroup {

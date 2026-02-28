@@ -36,7 +36,9 @@ export const getSettings = async (): Promise<EstablishmentSettings> => {
       secondaryColor: data.secondary_color || data.secondaryColor || '#000000',
       name: data.name || 'Nord Barbershop',
       logoUrl: data.logo_url || data.logoUrl || '',
-      slotInterval: data.slot_interval || data.slotInterval || 15
+      slotInterval: data.slot_interval || data.slotInterval || 15,
+      cash_balance: data.cash_balance || 0,
+      bank_balance: data.bank_balance || 0
   };
 };
 
@@ -48,7 +50,9 @@ export const saveSettings = async (settings: EstablishmentSettings) => {
       secondary_color: settings.secondaryColor,
       name: settings.name,
       logo_url: settings.logoUrl,
-      slot_interval: settings.slotInterval
+      slot_interval: settings.slotInterval,
+      cash_balance: settings.cash_balance || 0,
+      bank_balance: settings.bank_balance || 0
   };
 
   const { error } = await supabase.from('settings').upsert(payload);

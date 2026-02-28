@@ -4,12 +4,14 @@ import {
   ChevronLeft, ChevronRight, Calendar, Filter, 
   TrendingUp, TrendingDown, DollarSign, Users, 
   ShoppingBag, Trash2, Edit2, AlertCircle, BarChart3, Eye, X, Save, Loader2,
-  FileSpreadsheet
+  FileSpreadsheet, ArrowLeftRight, MinusCircle, Wallet2, Banknote, Landmark, Clock, CheckCircle2
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { getTransactions, deleteTransaction, updateTransaction, Transaction } from '../data/transactions';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { getTransactions, deleteTransaction, updateTransaction, Transaction, addTransaction } from '../data/transactions';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LineChart, Line } from 'recharts';
 import { db } from '../supabase'; // Import db to fetch professionals
+import { getSettings, saveSettings } from '../data/agendaData';
+import { EstablishmentSettings } from '../types';
 
 const FinancialAdmin: React.FC = () => {
   const navigate = useNavigate();
@@ -19,6 +21,17 @@ const FinancialAdmin: React.FC = () => {
   const [selectedPro, setSelectedPro] = useState('all');
   const [loading, setLoading] = useState(true);
   const [professionalsMap, setProfessionalsMap] = useState<Record<string, string>>({}); // Name -> ID mapping
+  const [settings, setSettings] = useState<EstablishmentSettings | null>(null);
+  const [allProfessionals, setAllProfessionals] = useState<any[]>([]);
+  const [commissionConfigs, setCommissionConfigs] = useState<any[]>([]);
+  const [servicesMap, setServicesMap] = useState<Record<string, string>>({});
+
+  // Estados dos Modals Gerenciais
+  const [showTransferModal, setShowTransferModal] = useState(false);
+  const [showSangriaModal, setShowSangriaModal] = useState(false);
+  const [showAdjustModal, setShowAdjustModal] = useState<{show: boolean, type: 'cash' | 'bank' | null}>({ show: false, type: null });
+  const [showPayModal, setShowPayModal] = useState<{show: boolean, proName: string | null, amount: number}>({ show: false, proName: null, amount: 0 });
+  const [managerForm, setManagerForm] = useState({ amount: '', description: '', target: 'bank' });
 
   // Estados do Modal
   const [editingTx, setEditingTx] = useState<Transaction | null>(null);
@@ -30,15 +43,32 @@ const FinancialAdmin: React.FC = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const data = await getTransactions();
-      setAllTransactions(data);
+      const [txData, settingsData, prosRes, servicesRes, configsRes] = await Promise.all([
+          getTransactions(),
+          getSettings(),
+          db.professionals().select('*'),
+          db.services().select('id, name'),
+          db.professionalServices().select('*')
+      ]);
+
+      setAllTransactions(txData);
+      setSettings(settingsData);
       
-      // Carregar mapa de profissionais para navegação correta
-      const { data: pros } = await db.professionals().select('id, name');
-      if (pros) {
+      if (prosRes.data) {
+          setAllProfessionals(prosRes.data);
           const map: Record<string, string> = {};
-          pros.forEach(p => map[p.name] = p.id);
+          prosRes.data.forEach(p => map[p.name] = p.id);
           setProfessionalsMap(map);
+      }
+
+      if (servicesRes.data) {
+          const map: Record<string, string> = {};
+          servicesRes.data.forEach(s => map[s.name] = s.id);
+          setServicesMap(map);
+      }
+
+      if (configsRes.data) {
+          setCommissionConfigs(configsRes.data);
       }
     } finally {
       setLoading(false);
@@ -134,16 +164,38 @@ const FinancialAdmin: React.FC = () => {
     link.click();
   };
 
+  const calculateCommission = (transaction: Transaction) => {
+    if (transaction.type === 'VALE') return -Math.abs(transaction.val);
+    if (transaction.commission_value !== undefined && transaction.commission_value !== null) {
+        return transaction.commission_type === 'percent' 
+            ? transaction.val * (transaction.commission_value / 100)
+            : transaction.commission_value;
+    }
+    if (transaction.commission_amount !== undefined && transaction.commission_amount !== null) return transaction.commission_amount;
+    if (transaction.category === 'Gorjeta' || transaction.type === 'GORJETA') return transaction.val;
+    if (transaction.type === 'OUTROS') return 0;
+    const serviceId = servicesMap[transaction.item];
+    const config = commissionConfigs.find(c => c.service_id === serviceId && c.professional_id === (transaction.professional_id || professionalsMap[transaction.pro || '']));
+    if (config) {
+        return config.commission_type === 'percent' ? transaction.val * (config.commission_value / 100) : config.commission_value;
+    }
+    const rate = (transaction.category === 'Serviço' || transaction.type === 'SERVIÇO') ? 0.4 : 0.1;
+    return transaction.val * rate;
+  };
+
   // --- CÁLCULOS ESTATÍSTICOS ---
   const stats = useMemo(() => {
     let income = 0;
     let expense = 0;
+    let totalCommissions = 0;
+    let pendingCommissions = 0;
+    let futureReceivables = 0;
     
     // Dados para Gráfico Principal
-    const chartMap: Record<string, { name: string, entrada: number, saida: number }> = {};
+    const chartMap: Record<string, { name: string, entrada: number, saida: number, lucro: number }> = {};
     
     // Dados para Produção de Barbeiros
-    const proMap: Record<string, number> = {};
+    const proMap: Record<string, { gross: number, commission: number, pending: number }> = {};
 
     // Dados para Top Produtos
     const productsMap: Record<string, number> = {};
@@ -152,11 +204,19 @@ const FinancialAdmin: React.FC = () => {
     const clientsMap: Record<string, number> = {};
 
     filteredData.forEach(t => {
+      const comm = calculateCommission(t);
+
       // Totais Gerais
       if (t.operation === 'VENDA') {
-        // Gorjetas não entram no faturamento bruto da empresa (balanço)
         if (t.category !== 'Gorjeta' && t.type !== 'GORJETA') {
           income += t.val;
+          totalCommissions += comm;
+          if (!t.commission_paid) pendingCommissions += comm;
+          
+          // A Receber (Futuro) - Exemplo: Cartão de Crédito
+          if (t.payment_method?.toLowerCase().includes('crédito') || t.payment_method?.toLowerCase().includes('cartão')) {
+              futureReceivables += t.val;
+          }
         }
       } else {
         expense += Math.abs(t.val);
@@ -164,20 +224,25 @@ const FinancialAdmin: React.FC = () => {
 
       // Chart Data (Agrupado por dia)
       const dayLabel = new Date(t.date + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-      if (!chartMap[dayLabel]) chartMap[dayLabel] = { name: dayLabel, entrada: 0, saida: 0 };
+      if (!chartMap[dayLabel]) chartMap[dayLabel] = { name: dayLabel, entrada: 0, saida: 0, lucro: 0 };
       
       if (t.operation === 'VENDA') {
         if (t.category !== 'Gorjeta' && t.type !== 'GORJETA') {
           chartMap[dayLabel].entrada += t.val;
+          chartMap[dayLabel].lucro += (t.val - comm);
         }
       } else {
         chartMap[dayLabel].saida += Math.abs(t.val);
+        chartMap[dayLabel].lucro -= Math.abs(t.val);
       }
 
-      // Produção por Barbeiro (Apenas Vendas, excluindo gorjetas do faturamento da empresa)
+      // Produção por Barbeiro
       if (t.operation === 'VENDA' && t.pro) {
         if (t.category !== 'Gorjeta' && t.type !== 'GORJETA') {
-          proMap[t.pro] = (proMap[t.pro] || 0) + t.val;
+          if (!proMap[t.pro]) proMap[t.pro] = { gross: 0, commission: 0, pending: 0 };
+          proMap[t.pro].gross += t.val;
+          proMap[t.pro].commission += comm;
+          if (!t.commission_paid) proMap[t.pro].pending += comm;
         }
       }
 
@@ -200,7 +265,7 @@ const FinancialAdmin: React.FC = () => {
     });
 
     const prosData = Object.entries(proMap)
-      .map(([name, value]) => ({ name, value }))
+      .map(([name, data]) => ({ name, value: data.gross, commission: data.commission, pending: data.pending }))
       .sort((a, b) => b.value - a.value);
 
     const topProducts = Object.entries(productsMap)
@@ -213,8 +278,19 @@ const FinancialAdmin: React.FC = () => {
       .sort((a, b) => b.count - a.count)
       .slice(0, 5);
 
-    return { income, expense, net: income - expense, chartData, prosData, topProducts, topClients };
-  }, [filteredData]);
+    return { 
+        income, 
+        expense, 
+        totalCommissions,
+        pendingCommissions,
+        futureReceivables,
+        net: income - totalCommissions, // Resultado Líquido (Faturamento - Comissões)
+        chartData, 
+        prosData, 
+        topProducts, 
+        topClients 
+    };
+  }, [filteredData, commissionConfigs, servicesMap, professionalsMap]);
 
   // --- AÇÕES DO MODAL ---
   const handleOpenEdit = (t: Transaction) => {
@@ -259,6 +335,119 @@ const FinancialAdmin: React.FC = () => {
         loadData();
     } catch (err) {
         console.error(err);
+    } finally {
+        setSaving(false);
+    }
+  };
+
+  // --- AÇÕES GERENCIAIS ---
+  const handleManagerAction = async (type: 'transfer' | 'sangria' | 'adjust') => {
+    if (!settings) return;
+    setSaving(true);
+    try {
+        const amount = parseFloat(managerForm.amount.replace(',', '.')) || 0;
+        let newSettings = { ...settings };
+        let txItem = '';
+        let txVal = 0;
+
+        if (type === 'transfer') {
+            if (managerForm.target === 'bank') {
+                // Caixa -> Banco
+                newSettings.cash_balance = (newSettings.cash_balance || 0) - amount;
+                newSettings.bank_balance = (newSettings.bank_balance || 0) + amount;
+                txItem = `Transferência: Caixa -> Banco (${managerForm.description})`;
+            } else {
+                // Banco -> Caixa
+                newSettings.bank_balance = (newSettings.bank_balance || 0) - amount;
+                newSettings.cash_balance = (newSettings.cash_balance || 0) + amount;
+                txItem = `Transferência: Banco -> Caixa (${managerForm.description})`;
+            }
+            txVal = 0; // Transferência interna não altera saldo global, mas registra log
+        } else if (type === 'sangria') {
+            newSettings.cash_balance = (newSettings.cash_balance || 0) - amount;
+            txItem = `Sangria: ${managerForm.description}`;
+            txVal = -amount;
+        } else if (type === 'adjust') {
+            if (showAdjustModal.type === 'cash') {
+                newSettings.cash_balance = amount;
+                txItem = `Ajuste de Saldo: Caixa Físico`;
+            } else {
+                newSettings.bank_balance = amount;
+                txItem = `Ajuste de Saldo: Conta Corrente`;
+            }
+            txVal = 0;
+        }
+
+        await saveSettings(newSettings);
+        
+        if (txItem) {
+            await addTransaction({
+                operation: 'COMPRA',
+                type: 'OUTROS',
+                category: 'Gerencial',
+                item: txItem,
+                val: txVal,
+                date: new Date().toISOString().split('T')[0],
+                payment_method: 'Sistema',
+                status: 'Pago',
+                pro: 'Admin'
+            });
+        }
+
+        setShowTransferModal(false);
+        setShowSangriaModal(false);
+        setShowAdjustModal({ show: false, type: null });
+        setManagerForm({ amount: '', description: '', target: 'bank' });
+        loadData();
+        alert('Operação realizada com sucesso!');
+    } catch (err: any) {
+        alert('Erro ao realizar operação: ' + err.message);
+    } finally {
+        setSaving(false);
+    }
+  };
+
+  const handlePayCommissions = async () => {
+    if (!showPayModal.proName || !settings) return;
+    setSaving(true);
+    try {
+        const proName = showPayModal.proName;
+        const amount = showPayModal.amount;
+
+        // 1. Atualiza transações do profissional no período para 'Pago'
+        const toUpdate = filteredData.filter(t => t.pro === proName && !t.commission_paid && t.operation === 'VENDA');
+        
+        await Promise.all(toUpdate.map(t => 
+            updateTransaction(t.id, { commission_paid: true })
+        ));
+
+        // 2. Registra saída do caixa/banco
+        let newSettings = { ...settings };
+        if (managerForm.target === 'bank') {
+            newSettings.bank_balance = (newSettings.bank_balance || 0) - amount;
+        } else {
+            newSettings.cash_balance = (newSettings.cash_balance || 0) - amount;
+        }
+        await saveSettings(newSettings);
+
+        // 3. Registra log de saída
+        await addTransaction({
+            operation: 'COMPRA',
+            type: 'DESPESA',
+            category: 'Comissão',
+            item: `Pagamento de Comissão: ${proName} (Período)`,
+            val: -amount,
+            date: new Date().toISOString().split('T')[0],
+            payment_method: managerForm.target === 'bank' ? 'Transferência' : 'Dinheiro',
+            status: 'Pago',
+            pro: 'Admin'
+        });
+
+        setShowPayModal({ show: false, proName: null, amount: 0 });
+        loadData();
+        alert(`Comissões de ${proName} pagas com sucesso!`);
+    } catch (err: any) {
+        alert('Erro ao pagar comissões: ' + err.message);
     } finally {
         setSaving(false);
     }
@@ -348,71 +537,264 @@ const FinancialAdmin: React.FC = () => {
             </div>
         </div>
 
-        {/* CARDS DE RESUMO */}
-        <div className="grid grid-cols-3 gap-2">
-            <div className="bg-green-50 p-3 rounded-2xl border border-green-100 text-center">
-                <div className="flex justify-center text-green-600 mb-1"><TrendingUp size={18} /></div>
-                <span className="text-[9px] font-black text-green-800 uppercase block">Entradas</span>
-                <span className="text-sm font-black text-green-700">R$ {Math.abs(stats.income).toFixed(0)}</span>
+        {/* CARDS DE RESUMO - NOVA VERSÃO GERENCIAL */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {/* Card A: SALDO EM CAIXA */}
+            <div className="bg-white p-5 rounded-[2rem] border border-gray-100 shadow-sm space-y-3">
+                <div className="flex justify-between items-start">
+                    <div className="bg-blue-50 p-2 rounded-xl text-blue-600">
+                        <Wallet2 size={20} />
+                    </div>
+                    <div className="flex gap-1">
+                        <button 
+                            onClick={() => setShowTransferModal(true)}
+                            className="p-1.5 bg-gray-50 text-gray-400 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                            title="Transferir"
+                        >
+                            <ArrowLeftRight size={14} />
+                        </button>
+                        <button 
+                            onClick={() => setShowSangriaModal(true)}
+                            className="p-1.5 bg-gray-50 text-gray-400 rounded-lg hover:bg-red-50 hover:text-red-600 transition-colors"
+                            title="Sangria"
+                        >
+                            <MinusCircle size={14} />
+                        </button>
+                    </div>
+                </div>
+                <div>
+                    <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Saldo em Caixa</span>
+                    <h2 className="text-2xl font-black text-blue-900">R$ {((settings?.cash_balance || 0) + (settings?.bank_balance || 0)).toFixed(2)}</h2>
+                    <p className="text-[9px] text-gray-400 font-medium mt-1">Dinheiro disponível para saque ou despesas.</p>
+                </div>
             </div>
-            <div className="bg-red-50 p-3 rounded-2xl border border-red-100 text-center">
-                <div className="flex justify-center text-red-500 mb-1"><TrendingDown size={18} /></div>
-                <span className="text-[9px] font-black text-red-800 uppercase block">Saídas</span>
-                <span className="text-sm font-black text-red-700">R$ {stats.expense.toFixed(0)}</span>
+
+            {/* Card B: FATURAMENTO BRUTO */}
+            <div className="bg-white p-5 rounded-[2rem] border border-gray-100 shadow-sm space-y-3">
+                <div className="bg-green-50 p-2 rounded-xl text-green-600 w-fit">
+                    <TrendingUp size={20} />
+                </div>
+                <div>
+                    <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Faturamento Bruto</span>
+                    <h2 className="text-2xl font-black text-green-600">R$ {stats.income.toFixed(2)}</h2>
+                    <p className="text-[9px] text-gray-400 font-medium mt-1">Total de serviços + produtos no período.</p>
+                </div>
             </div>
-            <div className={`p-3 rounded-2xl border text-center ${stats.net >= 0 ? 'bg-blue-50 border-blue-100' : 'bg-orange-50 border-orange-100'}`}>
-                <div className={`flex justify-center mb-1 ${stats.net >= 0 ? 'text-blue-600' : 'text-orange-500'}`}><DollarSign size={18} /></div>
-                <span className={`text-[9px] font-black uppercase block ${stats.net >= 0 ? 'text-blue-800' : 'text-orange-800'}`}>Saldo</span>
-                <span className={`text-sm font-black ${stats.net >= 0 ? 'text-blue-700' : 'text-orange-700'}`}>R$ {stats.net.toFixed(0)}</span>
+
+            {/* Card C: RESULTADO LÍQUIDO */}
+            <div className="bg-white p-5 rounded-[2rem] border border-gray-100 shadow-sm space-y-3">
+                <div className="bg-orange-50 p-2 rounded-xl text-orange-600 w-fit">
+                    <DollarSign size={20} />
+                </div>
+                <div>
+                    <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Resultado Líquido</span>
+                    <h2 className="text-2xl font-black text-orange-600">R$ {stats.net.toFixed(2)}</h2>
+                    <p className="text-[9px] text-gray-400 font-medium mt-1">Lucro bruto (Faturamento - Comissões).</p>
+                </div>
             </div>
         </div>
 
-        {/* GRÁFICO DE ENTRADAS VS SAÍDAS */}
-        <div className="bg-white p-5 rounded-[2rem] border border-gray-100 shadow-sm">
-            <h3 className="text-xs font-black text-gray-900 uppercase tracking-widest mb-4 flex items-center gap-2">
-                <BarChart3 size={16} className="text-blue-900" /> Fluxo do Período
+        {/* COMPOSIÇÃO DO CAIXA E OBRIGAÇÕES */}
+        <div className="bg-white p-6 rounded-[2.5rem] border border-gray-100 shadow-sm space-y-6">
+            <h3 className="text-xs font-black text-gray-900 uppercase tracking-widest flex items-center gap-2">
+                <Landmark size={16} className="text-blue-900" /> Composição do Caixa
             </h3>
-            <div className="h-48 w-full min-h-[192px]">
+            
+            <div className="space-y-4">
+                {/* Caixa Físico */}
+                <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100">
+                    <div className="flex items-center gap-3">
+                        <div className="bg-white p-2 rounded-xl text-gray-600 shadow-sm">
+                            <Banknote size={18} />
+                        </div>
+                        <div>
+                            <p className="text-xs font-bold text-gray-800">Caixa Físico</p>
+                            <p className="text-[10px] text-gray-400">Dinheiro em mãos</p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <span className="text-sm font-black text-gray-900">R$ {(settings?.cash_balance || 0).toFixed(2)}</span>
+                        <button 
+                            onClick={() => setShowAdjustModal({ show: true, type: 'cash' })}
+                            className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-3 py-1.5 rounded-lg active:scale-95 transition-all"
+                        >
+                            Ajustar
+                        </button>
+                    </div>
+                </div>
+
+                {/* Conta Corrente */}
+                <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100">
+                    <div className="flex items-center gap-3">
+                        <div className="bg-white p-2 rounded-xl text-gray-600 shadow-sm">
+                            <Landmark size={18} />
+                        </div>
+                        <div>
+                            <p className="text-xs font-bold text-gray-800">Conta Corrente</p>
+                            <p className="text-[10px] text-gray-400">Saldo bancário</p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <span className="text-sm font-black text-gray-900">R$ {(settings?.bank_balance || 0).toFixed(2)}</span>
+                        <button 
+                            onClick={() => setShowAdjustModal({ show: true, type: 'bank' })}
+                            className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-3 py-1.5 rounded-lg active:scale-95 transition-all"
+                        >
+                            Ajustar
+                        </button>
+                    </div>
+                </div>
+
+                {/* A Receber (Futuro) */}
+                <div className="flex items-center justify-between p-4 bg-orange-50/50 rounded-2xl border border-orange-100/50">
+                    <div className="flex items-center gap-3">
+                        <div className="bg-white p-2 rounded-xl text-orange-600 shadow-sm">
+                            <Clock size={18} />
+                        </div>
+                        <div>
+                            <p className="text-xs font-bold text-gray-800">A Receber (Futuro)</p>
+                            <p className="text-[10px] text-gray-400">Vendas no cartão/prazo</p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <span className="text-sm font-black text-orange-600">R$ {stats.futureReceivables.toFixed(2)}</span>
+                        <div className="text-[10px] font-black text-orange-400 uppercase tracking-widest px-3 py-1.5">
+                            Detalhar
+                        </div>
+                    </div>
+                </div>
+
+                {/* A Pagar (Comissões) */}
+                <div className="flex items-center justify-between p-4 bg-red-50/50 rounded-2xl border border-red-100/50">
+                    <div className="flex items-center gap-3">
+                        <div className="bg-white p-2 rounded-xl text-red-600 shadow-sm">
+                            <Users size={18} />
+                        </div>
+                        <div>
+                            <p className="text-xs font-bold text-gray-800">A Pagar (Comissões)</p>
+                            <p className="text-[10px] text-gray-400">Comprometido com equipe</p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <span className="text-sm font-black text-red-600">R$ {stats.pendingCommissions.toFixed(2)}</span>
+                        <button 
+                            onClick={() => {
+                                const el = document.getElementById('equipe-producao');
+                                el?.scrollIntoView({ behavior: 'smooth' });
+                            }}
+                            className="text-[10px] font-black text-red-600 uppercase tracking-widest bg-red-50 px-3 py-1.5 rounded-lg active:scale-95 transition-all"
+                        >
+                            Ver Profissionais
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {/* GRÁFICO DE RESULTADO LÍQUIDO DIÁRIO */}
+        <div className="bg-white p-6 rounded-[2.5rem] border border-gray-100 shadow-sm">
+            <h3 className="text-xs font-black text-gray-900 uppercase tracking-widest mb-6 flex items-center gap-2">
+                <BarChart3 size={16} className="text-blue-900" /> Fluxo de Resultado (Lucro Diário)
+            </h3>
+            <div className="h-64 w-full">
                 <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={stats.chartData}>
+                    <LineChart data={stats.chartData}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
                         <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#9ca3af'}} />
+                        <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#9ca3af'}} />
                         <Tooltip 
-                            contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}}
-                            cursor={{fill: '#f8fafc'}}
+                            contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
+                            cursor={{stroke: '#1e3a8a', strokeWidth: 1}}
                         />
-                        <Bar dataKey="entrada" name="Entradas" fill="#22c55e" radius={[4, 4, 0, 0]} barSize={8} />
-                        <Bar dataKey="saida" name="Saídas" fill="#ef4444" radius={[4, 4, 0, 0]} barSize={8} />
-                    </BarChart>
+                        <Line 
+                            type="monotone" 
+                            dataKey="lucro" 
+                            name="Lucro Líquido" 
+                            stroke="#1e3a8a" 
+                            strokeWidth={3} 
+                            dot={{ r: 4, fill: '#1e3a8a', strokeWidth: 2, stroke: '#fff' }}
+                            activeDot={{ r: 6, strokeWidth: 0 }}
+                        />
+                    </LineChart>
                 </ResponsiveContainer>
             </div>
         </div>
 
-        {/* PRODUÇÃO POR BARBEIRO - CLICÁVEL PARA DETALHES */}
+        {/* PRODUÇÃO DA EQUIPE - DETALHADO */}
         {selectedPro === 'all' && (
-            <div className="bg-white p-5 rounded-[2rem] border border-gray-100 shadow-sm">
-                <h3 className="text-xs font-black text-gray-900 uppercase tracking-widest mb-4 flex items-center gap-2">
-                    <Users size={16} className="text-blue-900" /> Produção da Equipe
-                </h3>
-                <div className="space-y-3">
-                    {stats.prosData.map((pro, idx) => (
-                        <div 
-                            key={idx} 
-                            onClick={() => handleProClick(pro.name)}
-                            className="space-y-1 cursor-pointer group active:opacity-70 transition-opacity"
-                        >
-                            <div className="flex justify-between text-xs font-bold text-gray-700 group-hover:text-blue-900">
-                                <span>{pro.name || 'Sem nome'}</span>
-                                <span>R$ {pro.value.toFixed(2)}</span>
-                            </div>
-                            <div className="h-2 w-full bg-gray-100 rounded-full overflow-hidden">
-                                <div 
-                                    className="h-full bg-blue-900 rounded-full group-hover:bg-blue-700 transition-colors" 
-                                    style={{ width: `${(pro.value / (stats.income || 1)) * 100}%` }} 
-                                />
-                            </div>
-                        </div>
-                    ))}
+            <div id="equipe-producao" className="bg-white p-6 rounded-[2.5rem] border border-gray-100 shadow-sm space-y-6">
+                <div className="flex justify-between items-center">
+                    <h3 className="text-xs font-black text-gray-900 uppercase tracking-widest flex items-center gap-2">
+                        <Users size={16} className="text-blue-900" /> Produção da Equipe
+                    </h3>
+                </div>
+                
+                <div className="overflow-x-auto">
+                    <table className="w-full text-left border-separate border-spacing-y-2">
+                        <thead>
+                            <tr className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                                <th className="px-4 py-2">Profissional</th>
+                                <th className="px-4 py-2 text-right">Produção</th>
+                                <th className="px-4 py-2 text-right">Comissão</th>
+                                <th className="px-4 py-2 text-right">A Pagar</th>
+                                <th className="px-4 py-2"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {stats.prosData.map((pro, idx) => (
+                                <tr key={idx} className="bg-gray-50 rounded-2xl group hover:bg-blue-50/50 transition-colors">
+                                    <td className="px-4 py-4 rounded-l-2xl">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold text-xs">
+                                                {pro.name.charAt(0)}
+                                            </div>
+                                            <span className="text-xs font-bold text-gray-800">{pro.name}</span>
+                                        </div>
+                                    </td>
+                                    <td className="px-4 py-4 text-right text-xs font-bold text-gray-600">
+                                        R$ {pro.value.toFixed(2)}
+                                    </td>
+                                    <td className="px-4 py-4 text-right text-xs font-medium text-gray-400">
+                                        {((pro.commission / (pro.value || 1)) * 100).toFixed(0)}%
+                                    </td>
+                                    <td className="px-4 py-4 text-right">
+                                        <span className={`text-xs font-black ${pro.pending > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                            R$ {pro.pending.toFixed(2)}
+                                        </span>
+                                    </td>
+                                    <td className="px-4 py-4 text-right rounded-r-2xl">
+                                        <div className="flex items-center justify-end gap-1">
+                                            {pro.pending > 0 && (
+                                                <button 
+                                                    onClick={(e) => { e.stopPropagation(); setShowPayModal({ show: true, proName: pro.name, amount: pro.pending }); }}
+                                                    className="p-2 text-green-600 hover:bg-white rounded-xl transition-colors"
+                                                    title="Pagar Comissões"
+                                                >
+                                                    <CheckCircle2 size={16} />
+                                                </button>
+                                            )}
+                                            <button 
+                                                onClick={() => handleProClick(pro.name)}
+                                                className="p-2 text-blue-600 hover:bg-white rounded-xl transition-colors"
+                                                title="Ver Detalhes"
+                                            >
+                                                <Eye size={16} />
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                        <tfoot>
+                            <tr className="text-xs font-black text-gray-900">
+                                <td className="px-4 py-4">TOTAIS</td>
+                                <td className="px-4 py-4 text-right">R$ {stats.income.toFixed(2)}</td>
+                                <td className="px-4 py-4 text-right"></td>
+                                <td className="px-4 py-4 text-right text-red-600">R$ {stats.pendingCommissions.toFixed(2)}</td>
+                                <td></td>
+                            </tr>
+                        </tfoot>
+                    </table>
                 </div>
             </div>
         )}
@@ -498,6 +880,218 @@ const FinancialAdmin: React.FC = () => {
         </div>
 
       </div>
+
+      {/* MODAL DE TRANSFERÊNCIA */}
+      {showTransferModal && (
+        <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+            <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-6 shadow-2xl space-y-5 animate-in zoom-in-95">
+                <div className="flex justify-between items-center px-1">
+                    <h3 className="text-blue-900 font-black uppercase tracking-widest text-xs flex items-center gap-2">
+                        <ArrowLeftRight size={16} /> Transferir Entre Contas
+                    </h3>
+                    <button onClick={() => setShowTransferModal(false)} className="text-gray-400 p-1"><X size={20} /></button>
+                </div>
+
+                <div className="space-y-4">
+                    <div className="flex bg-gray-50 p-1 rounded-2xl border border-gray-100">
+                        <button 
+                            onClick={() => setManagerForm({...managerForm, target: 'bank'})}
+                            className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase transition-all ${managerForm.target === 'bank' ? 'bg-white text-blue-900 shadow-sm' : 'text-gray-400'}`}
+                        >
+                            Caixa → Banco
+                        </button>
+                        <button 
+                            onClick={() => setManagerForm({...managerForm, target: 'cash'})}
+                            className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase transition-all ${managerForm.target === 'cash' ? 'bg-white text-blue-900 shadow-sm' : 'text-gray-400'}`}
+                        >
+                            Banco → Caixa
+                        </button>
+                    </div>
+
+                    <div>
+                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1.5 px-1">Valor (R$)</label>
+                        <input 
+                            type="text" 
+                            placeholder="0,00"
+                            value={managerForm.amount}
+                            onChange={(e) => setManagerForm({...managerForm, amount: e.target.value})}
+                            className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-blue-900 font-black text-gray-800 text-sm"
+                        />
+                    </div>
+
+                    <div>
+                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1.5 px-1">Motivo / Descrição</label>
+                        <input 
+                            type="text" 
+                            placeholder="Ex: Depósito do dia"
+                            value={managerForm.description}
+                            onChange={(e) => setManagerForm({...managerForm, description: e.target.value})}
+                            className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-blue-900 font-bold text-gray-700 text-sm"
+                        />
+                    </div>
+
+                    <button 
+                        onClick={() => handleManagerAction('transfer')}
+                        disabled={saving}
+                        className="w-full bg-blue-900 text-white font-black py-4 rounded-2xl uppercase tracking-widest text-xs shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
+                    >
+                        {saving ? <Loader2 className="animate-spin" size={16} /> : 'Confirmar Transferência'}
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* MODAL DE SANGRIA */}
+      {showSangriaModal && (
+        <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+            <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-6 shadow-2xl space-y-5 animate-in zoom-in-95">
+                <div className="flex justify-between items-center px-1">
+                    <h3 className="text-red-600 font-black uppercase tracking-widest text-xs flex items-center gap-2">
+                        <MinusCircle size={16} /> Sangria de Caixa
+                    </h3>
+                    <button onClick={() => setShowSangriaModal(false)} className="text-gray-400 p-1"><X size={20} /></button>
+                </div>
+
+                <div className="space-y-4">
+                    <div className="bg-red-50 p-4 rounded-2xl border border-red-100 flex gap-3 items-start">
+                        <AlertCircle size={20} className="text-red-600 shrink-0 mt-0.5" />
+                        <p className="text-[10px] text-red-800 font-medium leading-relaxed">
+                            A sangria retira dinheiro diretamente do <b>Caixa Físico</b>. Use para retiradas pessoais ou pagamentos à vista.
+                        </p>
+                    </div>
+
+                    <div>
+                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1.5 px-1">Valor da Retirada (R$)</label>
+                        <input 
+                            type="text" 
+                            placeholder="0,00"
+                            value={managerForm.amount}
+                            onChange={(e) => setManagerForm({...managerForm, amount: e.target.value})}
+                            className="w-full bg-red-50/30 border border-red-100 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-red-600 font-black text-red-600 text-sm placeholder:text-red-200"
+                        />
+                    </div>
+
+                    <div>
+                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1.5 px-1">Motivo da Sangria</label>
+                        <input 
+                            type="text" 
+                            placeholder="Ex: Pagamento Fornecedor"
+                            value={managerForm.description}
+                            onChange={(e) => setManagerForm({...managerForm, description: e.target.value})}
+                            className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-red-600 font-bold text-gray-700 text-sm"
+                        />
+                    </div>
+
+                    <button 
+                        onClick={() => handleManagerAction('sangria')}
+                        disabled={saving}
+                        className="w-full bg-red-600 text-white font-black py-4 rounded-2xl uppercase tracking-widest text-xs shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
+                    >
+                        {saving ? <Loader2 className="animate-spin" size={16} /> : 'Confirmar Sangria'}
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* MODAL DE AJUSTE DE SALDO */}
+      {showAdjustModal.show && (
+        <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+            <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-6 shadow-2xl space-y-5 animate-in zoom-in-95">
+                <div className="flex justify-between items-center px-1">
+                    <h3 className="text-blue-900 font-black uppercase tracking-widest text-xs flex items-center gap-2">
+                        <Edit2 size={16} /> Ajustar Saldo Real
+                    </h3>
+                    <button onClick={() => setShowAdjustModal({ show: false, type: null })} className="text-gray-400 p-1"><X size={20} /></button>
+                </div>
+
+                <div className="space-y-4">
+                    <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100 flex gap-3 items-start">
+                        <AlertCircle size={20} className="text-blue-600 shrink-0 mt-0.5" />
+                        <p className="text-[10px] text-blue-800 font-medium leading-relaxed">
+                            Use este ajuste para sincronizar o saldo do sistema com o valor real em mãos ou no banco.
+                        </p>
+                    </div>
+
+                    <div>
+                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1.5 px-1">
+                            Novo Saldo {showAdjustModal.type === 'cash' ? 'Caixa Físico' : 'Conta Corrente'} (R$)
+                        </label>
+                        <input 
+                            type="text" 
+                            placeholder="0,00"
+                            value={managerForm.amount}
+                            onChange={(e) => setManagerForm({...managerForm, amount: e.target.value})}
+                            className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-blue-900 font-black text-gray-800 text-sm"
+                        />
+                    </div>
+
+                    <button 
+                        onClick={() => handleManagerAction('adjust')}
+                        disabled={saving}
+                        className="w-full bg-blue-900 text-white font-black py-4 rounded-2xl uppercase tracking-widest text-xs shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
+                    >
+                        {saving ? <Loader2 className="animate-spin" size={16} /> : 'Salvar Novo Saldo'}
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* MODAL DE PAGAMENTO DE COMISSÃO */}
+      {showPayModal.show && (
+        <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+            <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-6 shadow-2xl space-y-5 animate-in zoom-in-95">
+                <div className="flex justify-between items-center px-1">
+                    <h3 className="text-green-600 font-black uppercase tracking-widest text-xs flex items-center gap-2">
+                        <CheckCircle2 size={16} /> Pagar Comissões
+                    </h3>
+                    <button onClick={() => setShowPayModal({ show: false, proName: null, amount: 0 })} className="text-gray-400 p-1"><X size={20} /></button>
+                </div>
+
+                <div className="space-y-4">
+                    <div className="bg-green-50 p-4 rounded-2xl border border-green-100 text-center">
+                        <p className="text-[10px] text-green-800 font-black uppercase tracking-widest mb-1">Valor a Pagar para {showPayModal.proName}</p>
+                        <h4 className="text-2xl font-black text-green-700">R$ {showPayModal.amount.toFixed(2)}</h4>
+                    </div>
+
+                    <div className="space-y-2">
+                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block px-1">Origem do Pagamento</label>
+                        <div className="flex bg-gray-50 p-1 rounded-2xl border border-gray-100">
+                            <button 
+                                onClick={() => setManagerForm({...managerForm, target: 'cash'})}
+                                className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase transition-all ${managerForm.target === 'cash' ? 'bg-white text-blue-900 shadow-sm' : 'text-gray-400'}`}
+                            >
+                                Caixa Físico
+                            </button>
+                            <button 
+                                onClick={() => setManagerForm({...managerForm, target: 'bank'})}
+                                className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase transition-all ${managerForm.target === 'bank' ? 'bg-white text-blue-900 shadow-sm' : 'text-gray-400'}`}
+                            >
+                                Conta Corrente
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100 flex gap-3 items-start">
+                        <AlertCircle size={20} className="text-blue-600 shrink-0 mt-0.5" />
+                        <p className="text-[10px] text-blue-800 font-medium leading-relaxed">
+                            Ao confirmar, o sistema registrará a saída do valor da conta selecionada e marcará as comissões do período como pagas.
+                        </p>
+                    </div>
+
+                    <button 
+                        onClick={handlePayCommissions}
+                        disabled={saving}
+                        className="w-full bg-green-600 text-white font-black py-4 rounded-2xl uppercase tracking-widest text-xs shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
+                    >
+                        {saving ? <Loader2 className="animate-spin" size={16} /> : 'Confirmar Pagamento'}
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
 
       {/* MODAL DE EDIÇÃO */}
       {editingTx && (
