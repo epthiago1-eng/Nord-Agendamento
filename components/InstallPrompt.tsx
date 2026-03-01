@@ -1,47 +1,74 @@
 
 import React, { useState, useEffect } from 'react';
-import { Download, X, Smartphone } from 'lucide-react';
+import { Download, X, Smartphone, ExternalLink } from 'lucide-react';
 
 const InstallPrompt: React.FC = () => {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [show, setShow] = useState(false);
-
   const [isIOS, setIsIOS] = useState(false);
+  const [isStandalone, setIsStandalone] = useState(false);
+  const [isIframe, setIsIframe] = useState(false);
 
   useEffect(() => {
-    // Detecta se é iOS
-    const isIosDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+    // Detecta se está em iframe
+    try {
+      setIsIframe(window.self !== window.top);
+    } catch (e) {
+      setIsIframe(true);
+    }
+
     // Detecta se já está instalado (standalone mode)
-    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone;
+    const checkStandalone = () => {
+      const isStandaloneMode = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone;
+      setIsStandalone(isStandaloneMode);
+    };
     
+    checkStandalone();
+    window.matchMedia('(display-mode: standalone)').addEventListener('change', checkStandalone);
+
+    // Detecta iOS
+    const isIosDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
     if (isIosDevice && !isStandalone) {
         setIsIOS(true);
+        // iOS não dispara evento, mostra sempre (se não instalado)
         setShow(true);
     }
 
     const handler = (e: any) => {
       console.log('Evento beforeinstallprompt disparado!');
-      // Impede o mini-infobar padrão do Chrome
       e.preventDefault();
-      // Guarda o evento para disparar depois
       setDeferredPrompt(e);
-      
-      // Mostra o prompt
       setShow(true);
     };
 
     window.addEventListener('beforeinstallprompt', handler);
 
-    return () => window.removeEventListener('beforeinstallprompt', handler);
-  }, []);
+    // Fallback: Se não disparar o evento em 3 segundos (e não for iOS/Iframe/Standalone), mostra o botão mesmo assim
+    // para permitir instrução manual
+    const timer = setTimeout(() => {
+        if (!isIosDevice && !isStandalone && !isIframe) {
+            setShow(true);
+        }
+    }, 3000);
+
+    return () => {
+        window.removeEventListener('beforeinstallprompt', handler);
+        window.matchMedia('(display-mode: standalone)').removeEventListener('change', checkStandalone);
+        clearTimeout(timer);
+    };
+  }, [isStandalone, isIframe]);
 
   const handleInstallClick = async () => {
     if (isIOS) {
-        alert('Para instalar no iPhone/iPad: toque no botão Compartilhar (quadrado com seta) e selecione "Adicionar à Tela de Início".');
+        alert('Para instalar no iPhone/iPad:\n1. Toque no botão Compartilhar (quadrado com seta)\n2. Selecione "Adicionar à Tela de Início"');
         return;
     }
 
-    if (!deferredPrompt) return;
+    if (!deferredPrompt) {
+        alert('Para instalar este aplicativo:\n1. Abra o menu do navegador (três pontos)\n2. Selecione "Instalar aplicativo" ou "Adicionar à tela inicial"');
+        return;
+    }
+
     deferredPrompt.prompt();
     const { outcome } = await deferredPrompt.userChoice;
     if (outcome === 'accepted') {
@@ -53,6 +80,25 @@ const InstallPrompt: React.FC = () => {
   const handleClose = () => {
       setShow(false);
   };
+
+  if (isStandalone) return null;
+
+  // Se estiver em iframe, mostra botão para abrir em nova aba
+  if (isIframe) {
+      return (
+        <div className="fixed bottom-4 right-4 z-[100] animate-in slide-in-from-bottom-4 fade-in duration-700">
+            <a 
+              href={window.location.href} 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="bg-blue-900 text-white px-4 py-3 rounded-full shadow-xl flex items-center gap-2 text-xs font-bold hover:bg-blue-800 transition-colors"
+            >
+              <ExternalLink size={16} />
+              Abrir em Nova Aba para Instalar
+            </a>
+        </div>
+      );
+  }
 
   if (!show) return null;
 
