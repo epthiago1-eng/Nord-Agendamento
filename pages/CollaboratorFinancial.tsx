@@ -33,9 +33,16 @@ const CollaboratorFinancial: React.FC = () => {
     const loadAll = async () => {
       setLoading(true);
       try {
+        // Calcular intervalo do mês atual
+        const year = referenceDate.getFullYear();
+        const month = referenceDate.getMonth();
+        const start = new Date(year, month, 1).toISOString().split('T')[0];
+        const end = new Date(year, month + 1, 0).toISOString().split('T')[0];
+
+        // Buscar dados filtrados por data e profissional
         const [trans, apts] = await Promise.all([
-            getTransactions(),
-            getAppointments({ proId: proId })
+            getTransactions({ proId: proId, startDate: start, endDate: end }),
+            getAppointments({ proId: proId, startDate: start, endDate: end })
         ]);
         
         setTransactions(trans);
@@ -64,7 +71,7 @@ const CollaboratorFinancial: React.FC = () => {
     loadAll();
     window.addEventListener('transaction_added', loadAll);
     return () => window.removeEventListener('transaction_added', loadAll);
-  }, [proId]);
+  }, [proId, referenceDate]);
 
   // Funções de Navegação
   const changeMonth = (offset: number) => {

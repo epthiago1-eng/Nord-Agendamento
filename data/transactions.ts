@@ -4,10 +4,20 @@ import type { Transaction } from '../types';
 
 export type { Transaction };
 
-export const getTransactions = async (filters?: { proId?: string, month?: string }): Promise<Transaction[]> => {
+export const getTransactions = async (filters?: { proId?: string, month?: string, startDate?: string, endDate?: string }): Promise<Transaction[]> => {
   let query = supabase.from('transactions').select('*').order('date', { ascending: false });
   
   if (filters?.proId) query = query.eq('professional_id', filters.proId);
+  
+  if (filters?.startDate && filters?.endDate) {
+      query = query.gte('date', filters.startDate).lte('date', filters.endDate);
+  } else if (filters?.month) {
+      // Fallback para filtro de mês YYYY-MM
+      const [year, month] = filters.month.split('-');
+      const start = `${year}-${month}-01`;
+      const end = new Date(parseInt(year), parseInt(month), 0).toISOString().split('T')[0];
+      query = query.gte('date', start).lte('date', end);
+  }
   
   const { data, error } = await query;
   if (error) throw error;

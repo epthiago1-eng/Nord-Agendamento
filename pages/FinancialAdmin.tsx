@@ -45,12 +45,38 @@ const FinancialAdmin: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
+  // --- LÓGICA DE DATAS ---
+  const dateRange = useMemo(() => {
+    const start = new Date(currentDate);
+    const end = new Date(currentDate);
+
+    if (viewMode === 'week') {
+      const day = start.getDay();
+      const diff = start.getDate() - day + (day === 0 ? -6 : 1); // Ajuste para começar na Segunda (ou Domingo)
+      start.setDate(diff);
+      end.setDate(start.getDate() + 6);
+    } else {
+      start.setDate(1);
+      end.setMonth(start.getMonth() + 1);
+      end.setDate(0);
+    }
+    
+    // Zera horas para comparação correta
+    start.setHours(0,0,0,0);
+    end.setHours(23,59,59,999);
+
+    return { start, end };
+  }, [currentDate, viewMode]);
+
   // Carregar dados iniciais
   const loadData = async () => {
     setLoading(true);
     try {
+      const startStr = dateRange.start.toISOString().split('T')[0];
+      const endStr = dateRange.end.toISOString().split('T')[0];
+
       const [txData, settingsData, prosRes, servicesRes, configsRes] = await Promise.all([
-          getTransactions(),
+          getTransactions({ startDate: startStr, endDate: endStr }),
           getSettings(),
           db.professionals().select('*'),
           db.services().select('id, name'),
@@ -85,30 +111,7 @@ const FinancialAdmin: React.FC = () => {
     loadData();
     window.addEventListener('transaction_added', loadData);
     return () => window.removeEventListener('transaction_added', loadData);
-  }, []);
-
-  // --- LÓGICA DE DATAS ---
-  const dateRange = useMemo(() => {
-    const start = new Date(currentDate);
-    const end = new Date(currentDate);
-
-    if (viewMode === 'week') {
-      const day = start.getDay();
-      const diff = start.getDate() - day + (day === 0 ? -6 : 1); // Ajuste para começar na Segunda (ou Domingo)
-      start.setDate(diff);
-      end.setDate(start.getDate() + 6);
-    } else {
-      start.setDate(1);
-      end.setMonth(start.getMonth() + 1);
-      end.setDate(0);
-    }
-    
-    // Zera horas para comparação correta
-    start.setHours(0,0,0,0);
-    end.setHours(23,59,59,999);
-
-    return { start, end };
-  }, [currentDate, viewMode]);
+  }, [dateRange]); // Recarrega quando a data muda
 
   const handlePrev = () => {
     const newDate = new Date(currentDate);

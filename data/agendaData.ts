@@ -118,27 +118,32 @@ const mapAppointmentFromDB = (data: any): Appointment => ({
     observation: data.observation
 });
 
-export const getAppointments = async (filters?: { proId?: string, date?: string }): Promise<Appointment[]> => {
+export const getAppointments = async (filters?: { proId?: string, date?: string, startDate?: string, endDate?: string }): Promise<Appointment[]> => {
   let query = supabase.from('appointments').select('*');
   
-  // Tenta filtrar por camelCase primeiro, mas se o banco for snake_case isso não quebra a query select('*')
-  // A filtragem fina deve acontecer com cuidado ou no client-side se houver dúvida do schema
-  if (filters?.proId) query = query.eq('professionalId', filters.proId); 
-  // Nota: Se o banco usar professional_id, a linha acima pode falhar silenciosamente ou retornar erro. 
-  // Idealmente o Supabase ignora colunas inexistentes no filtro ou retorna erro.
-  // Vamos assumir camelCase conforme setup, mas o mapAppointmentFromDB garante leitura.
+  // Tenta filtrar por professional_id (snake_case padrão do banco)
+  if (filters?.proId) query = query.eq('professional_id', filters.proId); 
   
-  if (filters?.date) query = query.eq('date', filters.date);
+  if (filters?.date) {
+      query = query.eq('date', filters.date);
+  } else if (filters?.startDate && filters?.endDate) {
+      query = query.gte('date', filters.startDate).lte('date', filters.endDate);
+  }
 
   const { data, error } = await query;
   
-  // Fallback: Se der erro na query especifica (ex: coluna nao existe), tenta buscar tudo e filtrar no JS (menos performático mas seguro para dev)
+  // Fallback: Se der erro na query especifica (ex: coluna nao existe), tenta buscar tudo e filtrar no JS
   if (error && error.code === 'PGRST204') { // Column not found
       console.warn('Coluna não encontrada, tentando busca genérica...');
       const { data: allData } = await supabase.from('appointments').select('*');
       let result = allData ? allData.map(mapAppointmentFromDB) : [];
+      
       if (filters?.date) result = result.filter(a => a.date === filters.date);
+      if (filters?.startDate && filters?.endDate) {
+          result = result.filter(a => a.date >= filters.startDate! && a.date <= filters.endDate!);
+      }
       if (filters?.proId) result = result.filter(a => a.professionalId === filters.proId);
+      
       return result;
   }
 
