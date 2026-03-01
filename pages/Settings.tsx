@@ -1,11 +1,23 @@
 
-import React, { useState } from 'react';
-import { ChevronLeft, ChevronRight, Settings as SettingsIcon } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { ChevronLeft, ChevronRight, Settings as SettingsIcon, Bell } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 const Settings: React.FC = () => {
   const navigate = useNavigate();
   const [isAgendaMode, setIsAgendaMode] = useState(false);
+  const [notifPermission, setNotifPermission] = useState(Notification.permission);
+
+  const requestNotification = async () => {
+    const permission = await Notification.requestPermission();
+    setNotifPermission(permission);
+    if (permission === 'granted') {
+      new Notification('Nord Barbershop', {
+        body: 'Notificações ativadas com sucesso!',
+        icon: '/nord_barbershop_logo.png'
+      });
+    }
+  };
 
   return (
     <div className="flex flex-col h-full bg-[#fcfaff]">
@@ -15,6 +27,29 @@ const Settings: React.FC = () => {
       </header>
 
       <div className="p-4 space-y-6">
+        
+        {/* Notificações */}
+        <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm space-y-3">
+            <div className="flex items-center gap-3 mb-2">
+                <Bell size={20} className="text-blue-900" />
+                <h3 className="font-bold text-gray-800">Notificações</h3>
+            </div>
+            <p className="text-xs text-gray-500 mb-3">
+                Ative para receber lembretes de agendamentos e avisos importantes.
+            </p>
+            <button 
+                onClick={requestNotification}
+                disabled={notifPermission === 'granted'}
+                className={`w-full py-3 rounded-lg font-bold text-sm transition-all ${
+                    notifPermission === 'granted' 
+                    ? 'bg-green-100 text-green-700 cursor-default' 
+                    : 'bg-blue-900 text-white active:scale-95 shadow-md'
+                }`}
+            >
+                {notifPermission === 'granted' ? 'Notificações Ativadas' : 'Ativar Notificações'}
+            </button>
+        </div>
+
         <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
                 <div 
