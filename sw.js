@@ -3,15 +3,24 @@ const CACHE_NAME = 'nord-manager-v1';
 const urlsToCache = [
   '/',
   '/index.html',
-  '/manifest.json',
-  'https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png'
+  '/manifest.json'
 ];
 
 self.addEventListener('install', (event) => {
+  console.log('SW: Instalando...');
+  self.skipWaiting(); // Força ativação imediata
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then((cache) => cache.addAll(urlsToCache))
+      .then((cache) => {
+        console.log('SW: Cacheando arquivos...');
+        return cache.addAll(urlsToCache);
+      })
   );
+});
+
+self.addEventListener('activate', (event) => {
+  console.log('SW: Ativado!');
+  event.waitUntil(self.clients.claim()); // Assume controle imediato
 });
 
 self.addEventListener('fetch', (event) => {

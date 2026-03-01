@@ -6,18 +6,28 @@ const InstallPrompt: React.FC = () => {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [show, setShow] = useState(false);
 
+  const [isIOS, setIsIOS] = useState(false);
+
   useEffect(() => {
+    // Detecta se é iOS
+    const isIosDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+    // Detecta se já está instalado (standalone mode)
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone;
+    
+    if (isIosDevice && !isStandalone) {
+        setIsIOS(true);
+        setShow(true);
+    }
+
     const handler = (e: any) => {
+      console.log('Evento beforeinstallprompt disparado!');
       // Impede o mini-infobar padrão do Chrome
       e.preventDefault();
       // Guarda o evento para disparar depois
       setDeferredPrompt(e);
       
-      // Verifica se o usuário já dispensou. Se não, mostra o prompt.
-      // Adiciona um pequeno delay para não aparecer instantaneamente ao carregar a página
-      if (!localStorage.getItem('install_dismissed')) {
-          setTimeout(() => setShow(true), 2000);
-      }
+      // Mostra o prompt
+      setShow(true);
     };
 
     window.addEventListener('beforeinstallprompt', handler);
@@ -26,6 +36,11 @@ const InstallPrompt: React.FC = () => {
   }, []);
 
   const handleInstallClick = async () => {
+    if (isIOS) {
+        alert('Para instalar no iPhone/iPad: toque no botão Compartilhar (quadrado com seta) e selecione "Adicionar à Tela de Início".');
+        return;
+    }
+
     if (!deferredPrompt) return;
     deferredPrompt.prompt();
     const { outcome } = await deferredPrompt.userChoice;
@@ -37,8 +52,6 @@ const InstallPrompt: React.FC = () => {
 
   const handleClose = () => {
       setShow(false);
-      // Salva no localStorage para não mostrar novamente
-      localStorage.setItem('install_dismissed', 'true'); 
   };
 
   if (!show) return null;
@@ -66,7 +79,7 @@ const InstallPrompt: React.FC = () => {
                 className="bg-white text-blue-900 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg active:scale-95 transition-transform flex items-center gap-2"
             >
                 <Download size={14} />
-                Baixar
+                {isIOS ? 'Instalar (iOS)' : 'Baixar'}
             </button>
             <button 
                 onClick={handleClose} 
