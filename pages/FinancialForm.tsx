@@ -4,6 +4,7 @@ import { ChevronLeft, CheckCircle2, ArrowDown, ArrowUp, Package, Plus, Loader2, 
 import { useNavigate } from 'react-router-dom';
 import { addTransaction } from '../data/transactions';
 import { db } from '../supabase';
+import { getSettings, saveSettings } from '../data/agendaData';
 
 const FinancialForm: React.FC = () => {
   const navigate = useNavigate();
@@ -12,6 +13,7 @@ const FinancialForm: React.FC = () => {
   const [operation, setOperation] = useState<'COMPRA' | 'VENDA'>('COMPRA');
   const [expenseCategory, setExpenseCategory] = useState('PRODUTO'); // PRODUTO, EQUIPAMENTO, LIMPEZA, OUTROS
   const [loading, setLoading] = useState(false);
+  const [sourceAccount, setSourceAccount] = useState<'cash' | 'bank'>('cash');
   
   // Lista de Produtos para o Dropdown
   const [productsList, setProductsList] = useState<any[]>([]);
@@ -140,6 +142,29 @@ const FinancialForm: React.FC = () => {
             status: 'Pago',
             pro: 'Caixa', // Usuário sistema
         });
+
+        // ATUALIZAR SALDO
+        const settings = await getSettings();
+        if (settings) {
+            const amount = Math.abs(totalOperation);
+            const newSettings = { ...settings };
+            
+            if (operation === 'COMPRA') {
+                if (sourceAccount === 'cash') {
+                    newSettings.cash_balance = (newSettings.cash_balance || 0) - amount;
+                } else {
+                    newSettings.bank_balance = (newSettings.bank_balance || 0) - amount;
+                }
+            } else {
+                // VENDA (Entrada Avulsa)
+                if (sourceAccount === 'cash') {
+                    newSettings.cash_balance = (newSettings.cash_balance || 0) + amount;
+                } else {
+                    newSettings.bank_balance = (newSettings.bank_balance || 0) + amount;
+                }
+            }
+            await saveSettings(newSettings);
+        }
 
         alert('Lançamento realizado com sucesso!');
         navigate(-1);
@@ -322,6 +347,18 @@ const FinancialForm: React.FC = () => {
                         <option>Boleto</option>
                     </select>
                 </div>
+            </div>
+
+            <div>
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1.5 px-1">Conta de {operation === 'COMPRA' ? 'Saída' : 'Entrada'}</label>
+                <select 
+                    value={sourceAccount}
+                    onChange={e => setSourceAccount(e.target.value as 'cash' | 'bank')}
+                    className="w-full bg-white border border-gray-200 rounded-xl py-3 px-4 font-bold text-gray-700 text-sm outline-none"
+                >
+                    <option value="cash">Caixa da Barbearia</option>
+                    <option value="bank">Conta Corrente</option>
+                </select>
             </div>
 
             <div>

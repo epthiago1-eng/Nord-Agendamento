@@ -32,7 +32,12 @@ const FinancialAdmin: React.FC = () => {
   const [showAdjustModal, setShowAdjustModal] = useState<{show: boolean, type: 'cash' | 'bank' | null}>({ show: false, type: null });
   const [showPayModal, setShowPayModal] = useState<{show: boolean, proName: string | null, amount: number}>({ show: false, proName: null, amount: 0 });
   const [showFutureModal, setShowFutureModal] = useState(false);
-  const [managerForm, setManagerForm] = useState({ amount: '', description: '', target: 'bank' });
+  const [managerForm, setManagerForm] = useState<{
+      amount: string, 
+      description: string, 
+      target: string, 
+      operationType: 'deposit' | 'withdraw' | 'transfer'
+  }>({ amount: '', description: '', target: 'bank', operationType: 'deposit' });
 
   // Estados do Modal
   const [editingTx, setEditingTx] = useState<Transaction | null>(null);
@@ -353,40 +358,65 @@ const FinancialAdmin: React.FC = () => {
         let newSettings = { ...settings };
         let txItem = '';
         let txVal = 0;
+        let operation: 'VENDA' | 'COMPRA' = 'COMPRA';
 
         if (type === 'transfer') {
             if (managerForm.target === 'bank') {
-                // Caixa -> Banco
                 newSettings.cash_balance = (newSettings.cash_balance || 0) - amount;
                 newSettings.bank_balance = (newSettings.bank_balance || 0) + amount;
                 txItem = `Transferência: Caixa -> Banco (${managerForm.description})`;
             } else {
-                // Banco -> Caixa
                 newSettings.bank_balance = (newSettings.bank_balance || 0) - amount;
                 newSettings.cash_balance = (newSettings.cash_balance || 0) + amount;
                 txItem = `Transferência: Banco -> Caixa (${managerForm.description})`;
             }
-            txVal = 0; // Transferência interna não altera saldo global, mas registra log
+            txVal = 0; 
         } else if (type === 'sangria') {
             newSettings.cash_balance = (newSettings.cash_balance || 0) - amount;
             txItem = `Sangria: ${managerForm.description}`;
             txVal = -amount;
         } else if (type === 'adjust') {
-            if (showAdjustModal.type === 'cash') {
-                newSettings.cash_balance = amount;
-                txItem = `Ajuste de Saldo: Caixa Físico`;
-            } else {
-                newSettings.bank_balance = amount;
-                txItem = `Ajuste de Saldo: Conta Corrente`;
+            const accountName = showAdjustModal.type === 'cash' ? 'Caixa da Barbearia' : 'Conta Corrente';
+            const opType = managerForm.operationType;
+
+            if (opType === 'deposit') {
+                if (showAdjustModal.type === 'cash') {
+                    newSettings.cash_balance = (newSettings.cash_balance || 0) + amount;
+                } else {
+                    newSettings.bank_balance = (newSettings.bank_balance || 0) + amount;
+                }
+                txItem = `Depósito/Aporte em ${accountName}: ${managerForm.description}`;
+                txVal = amount;
+                operation = 'VENDA';
+            } else if (opType === 'withdraw') {
+                if (showAdjustModal.type === 'cash') {
+                    newSettings.cash_balance = (newSettings.cash_balance || 0) - amount;
+                } else {
+                    newSettings.bank_balance = (newSettings.bank_balance || 0) - amount;
+                }
+                txItem = `Saque/Sangria de ${accountName}: ${managerForm.description}`;
+                txVal = -amount;
+                operation = 'COMPRA';
+            } else if (opType === 'transfer') {
+                const targetName = showAdjustModal.type === 'cash' ? 'Conta Corrente' : 'Caixa da Barbearia';
+                if (showAdjustModal.type === 'cash') {
+                    newSettings.cash_balance = (newSettings.cash_balance || 0) - amount;
+                    newSettings.bank_balance = (newSettings.bank_balance || 0) + amount;
+                } else {
+                    newSettings.bank_balance = (newSettings.bank_balance || 0) - amount;
+                    newSettings.cash_balance = (newSettings.cash_balance || 0) + amount;
+                }
+                txItem = `Transferência: ${accountName} -> ${targetName} (${managerForm.description})`;
+                txVal = 0;
             }
-            txVal = 0;
         }
 
         await saveSettings(newSettings);
+        setSettings(newSettings);
         
         if (txItem) {
             await addTransaction({
-                operation: 'COMPRA',
+                operation: operation,
                 type: 'OUTROS',
                 category: 'Gerencial',
                 item: txItem,
@@ -401,10 +431,12 @@ const FinancialAdmin: React.FC = () => {
         setShowTransferModal(false);
         setShowSangriaModal(false);
         setShowAdjustModal({ show: false, type: null });
-        setManagerForm({ amount: '', description: '', target: 'bank' });
+        setManagerForm({ amount: '', description: '', target: 'bank', operationType: 'deposit' });
         loadData();
         alert('Operação realizada com sucesso!');
+
     } catch (err: any) {
+        console.error(err);
         alert('Erro ao realizar operação: ' + err.message);
     } finally {
         setSaving(false);
@@ -613,15 +645,15 @@ const FinancialAdmin: React.FC = () => {
             </h3>
             
             <div className="space-y-4">
-                {/* Caixa Físico */}
+                {/* Caixa da Barbearia (Antigo Caixa Físico) */}
                 <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100">
                     <div className="flex items-center gap-3">
                         <div className="bg-white p-2 rounded-xl text-gray-600 shadow-sm">
                             <Banknote size={18} />
                         </div>
                         <div>
-                            <p className="text-xs font-bold text-gray-800">Caixa Físico</p>
-                            <p className="text-[10px] text-gray-400">Dinheiro em mãos</p>
+                            <p className="text-xs font-bold text-gray-800">Caixa da Barbearia</p>
+                            <p className="text-[10px] text-gray-400">Dinheiro e Pix</p>
                         </div>
                     </div>
                     <div className="flex items-center gap-3">
@@ -1010,44 +1042,80 @@ const FinancialAdmin: React.FC = () => {
         </div>
       )}
 
-      {/* MODAL DE AJUSTE DE SALDO */}
+      {/* MODAL DE AJUSTE DE SALDO (Depósito, Transferência, Saque) */}
       {showAdjustModal.show && (
         <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
             <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-6 shadow-2xl space-y-5 animate-in zoom-in-95">
                 <div className="flex justify-between items-center px-1">
                     <h3 className="text-blue-900 font-black uppercase tracking-widest text-xs flex items-center gap-2">
-                        <Edit2 size={16} /> Ajustar Saldo Real
+                        <Edit2 size={16} /> Movimentar {showAdjustModal.type === 'cash' ? 'Caixa da Barbearia' : 'Conta Corrente'}
                     </h3>
                     <button onClick={() => setShowAdjustModal({ show: false, type: null })} className="text-gray-400 p-1"><X size={20} /></button>
                 </div>
 
                 <div className="space-y-4">
-                    <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100 flex gap-3 items-start">
-                        <AlertCircle size={20} className="text-blue-600 shrink-0 mt-0.5" />
-                        <p className="text-[10px] text-blue-800 font-medium leading-relaxed">
-                            Use este ajuste para sincronizar o saldo do sistema com o valor real em mãos ou no banco.
-                        </p>
+                    {/* Abas de Tipo de Operação */}
+                    <div className="flex bg-gray-50 p-1 rounded-2xl border border-gray-100">
+                        <button 
+                            onClick={() => setManagerForm({...managerForm, operationType: 'deposit'})}
+                            className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${managerForm.operationType === 'deposit' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-400'}`}
+                        >
+                            Depósito
+                        </button>
+                        <button 
+                            onClick={() => setManagerForm({...managerForm, operationType: 'transfer'})}
+                            className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${managerForm.operationType === 'transfer' ? 'bg-white text-blue-900 shadow-sm' : 'text-gray-400'}`}
+                        >
+                            Transferir
+                        </button>
+                        <button 
+                            onClick={() => setManagerForm({...managerForm, operationType: 'withdraw'})}
+                            className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${managerForm.operationType === 'withdraw' ? 'bg-white text-red-600 shadow-sm' : 'text-gray-400'}`}
+                        >
+                            Saque
+                        </button>
                     </div>
 
-                    <div>
-                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1.5 px-1">
-                            Novo Saldo {showAdjustModal.type === 'cash' ? 'Caixa Físico' : 'Conta Corrente'} (R$)
-                        </label>
-                        <input 
-                            type="text" 
-                            placeholder="0,00"
-                            value={managerForm.amount}
-                            onChange={(e) => setManagerForm({...managerForm, amount: e.target.value})}
-                            className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-blue-900 font-black text-gray-800 text-sm"
-                        />
+                    {/* Conteúdo Dinâmico */}
+                    <div className="space-y-3">
+                        {managerForm.operationType === 'transfer' && (
+                            <div className="bg-blue-50 p-3 rounded-xl border border-blue-100 text-[10px] text-blue-800 font-medium">
+                                Transferindo de <b>{showAdjustModal.type === 'cash' ? 'Caixa da Barbearia' : 'Conta Corrente'}</b> para <b>{showAdjustModal.type === 'cash' ? 'Conta Corrente' : 'Caixa da Barbearia'}</b>.
+                            </div>
+                        )}
+
+                        <div>
+                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1.5 px-1">Valor (R$)</label>
+                            <input 
+                                type="text" 
+                                placeholder="0,00"
+                                value={managerForm.amount}
+                                onChange={(e) => setManagerForm({...managerForm, amount: e.target.value})}
+                                className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-blue-900 font-black text-gray-800 text-sm"
+                            />
+                        </div>
+
+                        <div>
+                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1.5 px-1">Justificativa / Motivo</label>
+                            <input 
+                                type="text" 
+                                placeholder={managerForm.operationType === 'deposit' ? "Ex: Aporte inicial" : managerForm.operationType === 'withdraw' ? "Ex: Pagamento fornecedor" : "Ex: Sangria para banco"}
+                                value={managerForm.description}
+                                onChange={(e) => setManagerForm({...managerForm, description: e.target.value})}
+                                className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-blue-900 font-bold text-gray-700 text-sm"
+                            />
+                        </div>
                     </div>
 
                     <button 
                         onClick={() => handleManagerAction('adjust')}
                         disabled={saving}
-                        className="w-full bg-blue-900 text-white font-black py-4 rounded-2xl uppercase tracking-widest text-xs shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
+                        className={`w-full text-white font-black py-4 rounded-2xl uppercase tracking-widest text-xs shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2 ${
+                            managerForm.operationType === 'deposit' ? 'bg-green-600' : 
+                            managerForm.operationType === 'withdraw' ? 'bg-red-600' : 'bg-blue-900'
+                        }`}
                     >
-                        {saving ? <Loader2 className="animate-spin" size={16} /> : 'Salvar Novo Saldo'}
+                        {saving ? <Loader2 className="animate-spin" size={16} /> : 'Confirmar Operação'}
                     </button>
                 </div>
             </div>

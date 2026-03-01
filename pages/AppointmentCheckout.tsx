@@ -7,7 +7,7 @@ import {
   MessageCircle, Coins, Tag, PlusCircle, Percent
 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { getAppointments, updateAppointment, Appointment, deleteAppointment, transferAppointment } from '../data/agendaData';
+import { getAppointments, updateAppointment, Appointment, deleteAppointment, transferAppointment, getSettings, saveSettings } from '../data/agendaData';
 import { syncAppointmentTransactions } from '../data/transactions'; 
 import { addNotification } from '../data/notifications';
 import { db } from '../supabase';
@@ -649,6 +649,21 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                 }
 
                 await syncAppointmentTransactions(appointment.id, transactionsToSync);
+
+                // --- ATUALIZAÇÃO DO CAIXA DA BARBEARIA ---
+                // Se for Dinheiro ou Pix, acumula no caixa físico
+                const method = paymentMethod.toLowerCase();
+                if (method.includes('dinheiro') || method.includes('pix')) {
+                    try {
+                        const currentSettings = await getSettings();
+                        if (currentSettings) {
+                            const newBalance = (currentSettings.cash_balance || 0) + totals.total;
+                            await saveSettings({ ...currentSettings, cash_balance: newBalance });
+                        }
+                    } catch (e) {
+                        console.error("Erro ao atualizar saldo do caixa:", e);
+                    }
+                }
 
                 if (appointment.clientId) {
                     await db.clients().update({ last_visit: new Date() }).eq('id', appointment.clientId);
