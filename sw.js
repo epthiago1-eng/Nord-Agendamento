@@ -4,7 +4,7 @@ const urlsToCache = [
   '/',
   '/index.html',
   '/manifest.json',
-  '/nord_barbershop_logo.png'
+  'https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png'
 ];
 
 self.addEventListener('install', (event) => {
@@ -26,8 +26,8 @@ self.addEventListener('push', (event) => {
   const title = data.title || 'Nord Barbershop';
   const options = {
     body: data.body || 'Nova notificação',
-    icon: '/nord_barbershop_logo.png',
-    badge: '/nord_barbershop_logo.png',
+    icon: 'https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png',
+    badge: 'https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png',
     data: { url: data.url || '/' }
   };
 
