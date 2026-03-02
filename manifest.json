@@ -13,25 +13,25 @@
   "orientation": "portrait",
   "icons": [
     {
-      "src": "https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png",
+      "src": "https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png?v=2",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png",
+      "src": "https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png?v=2",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png",
+      "src": "https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png?v=2",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "maskable"
     },
     {
-      "src": "https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png",
+      "src": "https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png?v=2",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
