@@ -78,10 +78,13 @@ const BookingConsult: React.FC = () => {
         });
 
         alert('Agendamento cancelado com sucesso.');
-        handleSearch(); // Recarrega a lista
-    } catch (err) {
+        // Pequeno delay para garantir que a transação foi commitada e replicada (se houver lag)
+        setTimeout(() => {
+            handleSearch(); 
+        }, 500);
+    } catch (err: any) {
         console.error(err);
-        alert('Erro ao cancelar. Verifique se o telefone informado é o mesmo do agendamento.');
+        alert('Erro ao cancelar: ' + (err.message || 'Verifique se o telefone informado é o mesmo do agendamento.'));
     } finally {
         setProcessingId(null);
     }

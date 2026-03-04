@@ -201,6 +201,7 @@ CREATE OR REPLACE FUNCTION public.cancel_appointment_public(
 RETURNS void AS $$
 DECLARE
   v_phone text;
+  v_rows int;
 BEGIN
   -- Verifica se o agendamento existe e pega o telefone
   SELECT "clientPhone" INTO v_phone
@@ -208,20 +209,29 @@ BEGIN
   WHERE id = p_appointment_id;
 
   IF v_phone IS NULL THEN
-    RAISE EXCEPTION 'Agendamento não encontrado.';
+    RAISE EXCEPTION 'Agendamento não encontrado (ID inválido).';
   END IF;
 
   -- Normalização básica para comparação (remove caracteres não numéricos)
-  -- Assumindo que o front envia formatado ou não, o ideal é comparar apenas números.
   IF regexp_replace(v_phone, '\D', '', 'g') <> regexp_replace(p_client_phone, '\D', '', 'g') THEN
-    RAISE EXCEPTION 'Telefone não confere com o agendamento.';
+    RAISE EXCEPTION 'Telefone não confere com o agendamento. DB: %, Input: %', v_phone, p_client_phone;
   END IF;
 
   UPDATE public.appointments
   SET status = 'Cancelaram'
   WHERE id = p_appointment_id;
+
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  IF v_rows = 0 THEN
+    RAISE EXCEPTION 'Erro interno: O agendamento foi encontrado mas não pôde ser atualizado.';
+  END IF;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+-- Grant permissions explicitly
+GRANT EXECUTE ON FUNCTION public.cancel_appointment_public(uuid, text) TO anon;
+GRANT EXECUTE ON FUNCTION public.cancel_appointment_public(uuid, text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.cancel_appointment_public(uuid, text) TO service_role;
 
 
 CREATE OR REPLACE FUNCTION public.update_appointment_public(
@@ -232,13 +242,14 @@ CREATE OR REPLACE FUNCTION public.update_appointment_public(
 RETURNS void AS $$
 DECLARE
   v_phone text;
+  v_rows int;
 BEGIN
   SELECT "clientPhone" INTO v_phone
   FROM public.appointments
   WHERE id = p_appointment_id;
 
   IF v_phone IS NULL THEN
-    RAISE EXCEPTION 'Agendamento não encontrado.';
+    RAISE EXCEPTION 'Agendamento não encontrado (ID inválido).';
   END IF;
 
   IF regexp_replace(v_phone, '\D', '', 'g') <> regexp_replace(p_client_phone, '\D', '', 'g') THEN
@@ -254,13 +265,27 @@ BEGIN
     duration = COALESCE((p_data->>'duration')::int, duration),
     status = COALESCE((p_data->>'status')::text, status),
     observation = COALESCE((p_data->>'observation')::text, observation),
-    -- Services é array de texto, precisa de cast cuidadoso do JSONB
-    services = COALESCE(
-      (SELECT array_agg(x) FROM jsonb_array_elements_text(p_data->'services') t(x)),
-      services
-    ),
+    -- Services: Se a chave existe no JSON e não é null, usa o valor.
+    services = CASE 
+      WHEN p_data ? 'services' AND (p_data->'services') IS NOT NULL THEN 
+        COALESCE(
+          (SELECT array_agg(x) FROM jsonb_array_elements_text(p_data->'services') t(x)),
+          '{}'::text[]
+        )
+      ELSE services
+    END,
     total_value = COALESCE((p_data->>'total_value')::numeric, total_value)
   WHERE id = p_appointment_id;
+
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  IF v_rows = 0 THEN
+    RAISE EXCEPTION 'Erro interno: O agendamento foi encontrado mas não pôde ser atualizado.';
+  END IF;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+-- Grant permissions explicitly
+GRANT EXECUTE ON FUNCTION public.update_appointment_public(uuid, text, jsonb) TO anon;
+GRANT EXECUTE ON FUNCTION public.update_appointment_public(uuid, text, jsonb) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.update_appointment_public(uuid, text, jsonb) TO service_role;
 

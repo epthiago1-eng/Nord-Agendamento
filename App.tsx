@@ -3,7 +3,6 @@ import React, { useEffect } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
-import InstallPrompt from './components/InstallPrompt';
 import { getSettings } from './data/agendaData';
 
 // Páginas Administrativas e Gerais
@@ -90,7 +89,6 @@ const App: React.FC = () => {
 
   return (
     <HashRouter>
-      <InstallPrompt />
       <Routes>
         <Route path="/" element={<Navigate to="/login" replace />} />
         <Route path="/login" element={<Login />} />

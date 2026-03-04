@@ -121,8 +121,8 @@ const mapAppointmentFromDB = (data: any): Appointment => ({
 export const getAppointments = async (filters?: { proId?: string, date?: string, startDate?: string, endDate?: string }): Promise<Appointment[]> => {
   let query = supabase.from('appointments').select('*');
   
-  // Tenta filtrar por professional_id (snake_case padrão do banco)
-  if (filters?.proId) query = query.eq('professional_id', filters.proId); 
+  // Tenta filtrar por professionalId (camelCase como no banco, com aspas duplas implícitas pelo client)
+  if (filters?.proId) query = query.eq('professionalId', filters.proId); 
   
   if (filters?.date) {
       query = query.eq('date', filters.date);
