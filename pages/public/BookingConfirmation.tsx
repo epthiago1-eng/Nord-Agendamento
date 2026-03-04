@@ -1,16 +1,24 @@
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   CheckCircle, Calendar, MapPin, 
   RotateCcw, Home, Share2, 
   ChevronRight, CalendarPlus 
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { getSettings } from '../../data/agendaData';
 
 const BookingConfirmation: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { appointment, dateDisplay, address } = location.state || {};
+  const [logoUrl, setLogoUrl] = useState("https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png");
+
+  useEffect(() => {
+    getSettings().then(s => {
+        if (s.logoUrl) setLogoUrl(s.logoUrl);
+    });
+  }, []);
 
   // Se não houver dados, volta para o início
   if (!appointment) {
@@ -59,7 +67,7 @@ const BookingConfirmation: React.FC = () => {
       {/* Black Top Header */}
       <div className="bg-black h-16 w-full relative shrink-0">
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-0 w-32 h-32 rounded-full border-4 border-white bg-white overflow-hidden shadow-xl z-10 translate-y-[-20%]">
-          <img src="https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png" alt="Nord Barbershop" className="w-full h-full object-contain p-1" />
+          <img src={logoUrl} alt="Nord Barbershop" className="w-full h-full object-contain p-1" />
         </div>
       </div>
 

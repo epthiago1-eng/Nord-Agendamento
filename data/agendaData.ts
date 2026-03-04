@@ -256,10 +256,41 @@ export const saveAppointment = async (apt: Omit<Appointment, 'id'>) => {
 };
 
 export const updateAppointment = async (id: string, data: Partial<Appointment>) => {
+  // Se o usuário não estiver logado, tenta usar a função RPC pública (se tiver telefone)
+  const { data: session } = await supabase.auth.getSession();
+  const isAnon = !session?.session?.user;
+
+  if (isAnon) {
+      // O telefone DEVE vir no payload para validação de segurança
+      const phone = data.clientPhone;
+      
+      if (phone) {
+          // Converte o partial data para o formato esperado pelo RPC
+          const rpcPayload = {
+              ...data,
+          };
+
+          const { error } = await supabase.rpc('update_appointment_public', {
+              p_appointment_id: id,
+              p_client_phone: phone,
+              p_data: rpcPayload
+          });
+          
+          if (error) throw error;
+          return;
+      }
+      // Se não tiver telefone no payload, cai no fluxo normal (que falhará no RLS para anon)
+      // Isso é correto: obriga o front a enviar o telefone para provar propriedade
+  }
+
   const payload: any = {};
   if (data.status) payload.status = data.status;
   if (data.professionalId) payload.professionalId = data.professionalId;
   if (data.professionalName) payload.professionalName = data.professionalName;
+  if (data.date) payload.date = data.date;
+  if (data.time) payload.time = data.time;
+  if (data.duration) payload.duration = data.duration;
+  if (data.observation) payload.observation = data.observation;
   if (data.totalValue !== undefined) payload.total_value = data.totalValue;
   if ((data as any).others_value !== undefined) payload.others_value = (data as any).others_value;
   if ((data as any).others_description !== undefined) payload.others_description = (data as any).others_description;
@@ -274,6 +305,14 @@ export const updateAppointment = async (id: string, data: Partial<Appointment>) 
     .update(payload)
     .eq('id', id);
   if (error) throw error;
+};
+
+export const cancelAppointmentPublic = async (id: string, phone: string) => {
+    const { error } = await supabase.rpc('cancel_appointment_public', {
+        p_appointment_id: id,
+        p_client_phone: phone
+    });
+    if (error) throw error;
 };
 
 export const deleteAppointment = async (id: string, reason: string = 'Exclusão manual') => {

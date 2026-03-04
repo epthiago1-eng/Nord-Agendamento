@@ -119,7 +119,8 @@ const BookingForm: React.FC = () => {
                 time: time,
                 duration: totalDuration,
                 status: 'Confirmado', // Reseta status se estava cancelado
-                observation: formData.observation
+                observation: formData.observation,
+                clientPhone: editingAppointment.clientPhone // Necessário para validação pública
             });
 
             // Notifica Profissional

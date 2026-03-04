@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { ChevronLeft, Phone, Search, Calendar, Clock, Scissors, User, Loader2, Trash2, Edit2, History } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { getAppointmentsByPhone, updateAppointment, Appointment, getSettings } from '../../data/agendaData';
+import { getAppointmentsByPhone, updateAppointment, cancelAppointmentPublic, Appointment, getSettings } from '../../data/agendaData';
 import { addNotification } from '../../data/notifications';
 import { db } from '../../supabase';
 
@@ -66,7 +66,8 @@ const BookingConsult: React.FC = () => {
     
     setProcessingId(apt.id);
     try {
-        await updateAppointment(apt.id, { status: 'Cancelaram' });
+        // Usa a função específica de cancelamento público que valida pelo telefone
+        await cancelAppointmentPublic(apt.id, phone);
         
         await addNotification({
             type: 'AGENDAMENTO',
@@ -79,7 +80,8 @@ const BookingConsult: React.FC = () => {
         alert('Agendamento cancelado com sucesso.');
         handleSearch(); // Recarrega a lista
     } catch (err) {
-        alert('Erro ao cancelar.');
+        console.error(err);
+        alert('Erro ao cancelar. Verifique se o telefone informado é o mesmo do agendamento.');
     } finally {
         setProcessingId(null);
     }

@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Download, X, Smartphone, ExternalLink } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
 
 const InstallPrompt: React.FC = () => {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
@@ -8,6 +9,7 @@ const InstallPrompt: React.FC = () => {
   const [isIOS, setIsIOS] = useState(false);
   const [isStandalone, setIsStandalone] = useState(false);
   const [isIframe, setIsIframe] = useState(false);
+  const location = useLocation();
 
   useEffect(() => {
     // Detecta se está em iframe
@@ -80,6 +82,9 @@ const InstallPrompt: React.FC = () => {
   const handleClose = () => {
       setShow(false);
   };
+
+  // Se estiver na página de agendamento público (booking), não mostra nada
+  if (location.pathname.startsWith('/booking')) return null;
 
   if (isStandalone) return null;
 
