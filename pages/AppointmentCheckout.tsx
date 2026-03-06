@@ -1004,8 +1004,20 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                 <p className="text-sm font-medium text-gray-500 leading-relaxed">{confirmConfig.message}</p>
             </div>
             <div className="flex flex-col gap-3">
-                <button onClick={confirmConfig.action} className="w-full bg-blue-900 text-white py-4 rounded-2xl font-black text-xs uppercase tracking-widest">Confirmar</button>
-                <button onClick={() => setConfirmConfig({...confirmConfig, show: false})} className="w-full bg-gray-50 text-gray-400 py-4 rounded-2xl font-black text-xs uppercase tracking-widest">Cancelar</button>
+                <button 
+                    onClick={confirmConfig.action} 
+                    disabled={processing}
+                    className={`w-full bg-blue-900 text-white py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-2 ${processing ? 'opacity-70 cursor-not-allowed' : ''}`}
+                >
+                    {processing ? <Loader2 className="animate-spin" size={16} /> : 'Confirmar'}
+                </button>
+                <button 
+                    onClick={() => !processing && setConfirmConfig({...confirmConfig, show: false})} 
+                    disabled={processing}
+                    className={`w-full bg-gray-50 text-gray-400 py-4 rounded-2xl font-black text-xs uppercase tracking-widest ${processing ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                    Cancelar
+                </button>
             </div>
           </div>
         </div>

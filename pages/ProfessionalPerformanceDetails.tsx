@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
-  ChevronLeft, Users, ShoppingBag, ClipboardList, Wallet, 
+  ChevronLeft, ChevronRight, Users, ShoppingBag, ClipboardList, Wallet, 
   Calendar, CheckCircle2, TrendingUp, User, CheckSquare, Square, 
   DollarSign, X, Loader2, Edit2, AlertCircle, Save, Banknote, Trash2
 } from 'lucide-react';
@@ -20,8 +20,9 @@ const ProfessionalPerformanceDetails: React.FC = () => {
   const [commissionConfigs, setCommissionConfigs] = useState<any[]>([]);
   const [servicesMap, setServicesMap] = useState<Record<string, string>>({}); 
 
-  // Filtros
-  const [viewMode, setViewMode] = useState<'week' | 'month'>('month');
+  // Filtros de Data
+  const [viewMode, setViewMode] = useState<'week' | 'month' | 'custom'>('week');
+  const [currentRefDate, setCurrentRefDate] = useState(new Date());
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
 
   // Controle de Seleção
@@ -30,13 +31,54 @@ const ProfessionalPerformanceDetails: React.FC = () => {
   const [paymentMethod, setPaymentMethod] = useState('');
   const [paymentMethodsList, setPaymentMethodsList] = useState<any[]>([]);
 
-  // Inicializa Datas
+  // Helper para calcular intervalo
+  const getRange = (mode: 'week' | 'month', refDate: Date) => {
+    const start = new Date(refDate);
+    const end = new Date(refDate);
+
+    if (mode === 'week') {
+        const day = start.getDay();
+        const diff = start.getDate() - day + (day === 0 ? -6 : 1); // Segunda-feira
+        start.setDate(diff);
+        end.setDate(start.getDate() + 6); // Domingo
+    } else {
+        start.setDate(1);
+        end.setMonth(start.getMonth() + 1);
+        end.setDate(0);
+    }
+    return {
+        start: start.toISOString().split('T')[0],
+        end: end.toISOString().split('T')[0]
+    };
+  };
+
+  // Inicializa e Atualiza Datas
   useEffect(() => {
-    const now = new Date();
-    const start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
-    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+    if (viewMode === 'custom') return;
+    const { start, end } = getRange(viewMode, currentRefDate);
     setDateRange({ start, end });
-  }, []);
+  }, [viewMode, currentRefDate]);
+
+  // Navegação de Data
+  const handlePrev = () => {
+    const newDate = new Date(currentRefDate);
+    if (viewMode === 'week') {
+        newDate.setDate(newDate.getDate() - 7);
+    } else if (viewMode === 'month') {
+        newDate.setMonth(newDate.getMonth() - 1);
+    }
+    setCurrentRefDate(newDate);
+  };
+
+  const handleNext = () => {
+    const newDate = new Date(currentRefDate);
+    if (viewMode === 'week') {
+        newDate.setDate(newDate.getDate() + 7);
+    } else if (viewMode === 'month') {
+        newDate.setMonth(newDate.getMonth() + 1);
+    }
+    setCurrentRefDate(newDate);
+  };
 
   // Carrega Dados
   const loadData = async () => {
@@ -227,24 +269,7 @@ const ProfessionalPerformanceDetails: React.FC = () => {
     };
   }, [selectedIds, stats.log]);
 
-  const setFilter = (mode: 'week' | 'month') => {
-    setViewMode(mode);
-    const now = new Date();
-    let start = '', end = '';
 
-    if (mode === 'week') {
-        const day = now.getDay();
-        const diff = now.getDate() - day + (day === 0 ? -6 : 1);
-        const monday = new Date(now.setDate(diff));
-        const sunday = new Date(now.setDate(monday.getDate() + 6));
-        start = monday.toISOString().split('T')[0];
-        end = sunday.toISOString().split('T')[0];
-    } else {
-        start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
-        end = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
-    }
-    setDateRange({ start, end });
-  };
 
   // Toggle de Checkbox
   const toggleSelect = (id: string) => {
@@ -444,10 +469,36 @@ const ProfessionalPerformanceDetails: React.FC = () => {
 
       <div className="flex-1 overflow-y-auto p-4 space-y-6 pb-32">
         
-        {/* Filtro */}
-        <div className="bg-white p-1.5 rounded-2xl border border-gray-100 flex shadow-sm">
-            <button onClick={() => setFilter('week')} className={`flex-1 py-2.5 rounded-xl text-xs font-bold uppercase transition-all ${viewMode === 'week' ? 'bg-blue-50 text-blue-900 shadow-sm' : 'text-gray-400'}`}>Semana</button>
-            <button onClick={() => setFilter('month')} className={`flex-1 py-2.5 rounded-xl text-xs font-bold uppercase transition-all ${viewMode === 'month' ? 'bg-blue-50 text-blue-900 shadow-sm' : 'text-gray-400'}`}>Mês</button>
+        {/* Filtro de Período */}
+        <div className="bg-white p-2 rounded-2xl border border-gray-100 shadow-sm space-y-3">
+            <div className="flex bg-gray-50 p-1 rounded-xl">
+                <button onClick={() => { setViewMode('week'); setCurrentRefDate(new Date()); }} className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase transition-all ${viewMode === 'week' ? 'bg-white text-blue-900 shadow-sm' : 'text-gray-400'}`}>Semana</button>
+                <button onClick={() => { setViewMode('month'); setCurrentRefDate(new Date()); }} className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase transition-all ${viewMode === 'month' ? 'bg-white text-blue-900 shadow-sm' : 'text-gray-400'}`}>Mês</button>
+                <button onClick={() => setViewMode('custom')} className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase transition-all ${viewMode === 'custom' ? 'bg-white text-blue-900 shadow-sm' : 'text-gray-400'}`}>Outro</button>
+            </div>
+
+            {viewMode !== 'custom' ? (
+                <div className="flex items-center justify-between px-2">
+                    <button onClick={handlePrev} className="p-2 hover:bg-gray-100 rounded-lg text-gray-400"><ChevronLeft size={20} /></button>
+                    <div className="text-center">
+                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-0.5">
+                            {viewMode === 'week' ? 'Semana de' : 'Mês de'}
+                        </p>
+                        <p className="text-sm font-black text-blue-900">
+                            {new Date(dateRange.start + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
+                            {' - '}
+                            {new Date(dateRange.end + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
+                        </p>
+                    </div>
+                    <button onClick={handleNext} className="p-2 hover:bg-gray-100 rounded-lg text-gray-400"><ChevronRight size={20} /></button>
+                </div>
+            ) : (
+                <div className="flex gap-2 items-center px-2">
+                    <input type="date" value={dateRange.start} onChange={e => setDateRange({...dateRange, start: e.target.value})} className="w-full bg-gray-50 border-none rounded-lg text-xs font-bold text-gray-600 py-2 px-3" />
+                    <span className="text-gray-300">-</span>
+                    <input type="date" value={dateRange.end} onChange={e => setDateRange({...dateRange, end: e.target.value})} className="w-full bg-gray-50 border-none rounded-lg text-xs font-bold text-gray-600 py-2 px-3" />
+                </div>
+            )}
         </div>
 
         {/* Big Numbers */}

@@ -18,7 +18,7 @@ export interface AgendaBlock {
 export const getSettings = async (): Promise<EstablishmentSettings> => {
   const { data, error } = await supabase
     .from('settings')
-    .select('*')
+    .select('primary_color, secondary_color, name, logo_url, slot_interval, cash_balance, bank_balance')
     .single();
 
   if (error || !data) {
@@ -32,11 +32,11 @@ export const getSettings = async (): Promise<EstablishmentSettings> => {
   }
 
   return {
-      primaryColor: data.primary_color || data.primaryColor || '#1e3a8a',
-      secondaryColor: data.secondary_color || data.secondaryColor || '#000000',
+      primaryColor: data.primary_color || '#1e3a8a',
+      secondaryColor: data.secondary_color || '#000000',
       name: data.name || 'Nord Barbershop',
-      logoUrl: data.logo_url || data.logoUrl || '',
-      slotInterval: data.slot_interval || data.slotInterval || 15,
+      logoUrl: data.logo_url || '',
+      slotInterval: data.slot_interval || 15,
       cash_balance: data.cash_balance || 0,
       bank_balance: data.bank_balance || 0
   };

@@ -113,21 +113,37 @@ export const updateTransaction = async (id: string, updates: Partial<Transaction
 
 // Função crucial para corrigir o problema de duplicidade
 export const syncAppointmentTransactions = async (appointmentId: string, transactions: (Partial<Transaction> & { method?: string })[]) => {
-    // 1. Remove todas as transações anteriores deste agendamento
-    const { error: deleteError } = await supabase
-        .from('transactions')
-        .delete()
-        .eq('appointment_id', appointmentId);
-    
-    if (deleteError) throw deleteError;
+    // Usa a função RPC para garantir atomicidade (Delete + Insert na mesma transação)
+    // Isso previne condições de corrida onde múltiplas requisições criam duplicatas
+    const { error } = await supabase.rpc('sync_appointment_transactions', {
+        p_appointment_id: appointmentId,
+        p_transactions: transactions
+    });
 
-    // 2. Insere as novas transações individualmente (linha por linha estilo Excel)
-    for (const t of transactions) {
-        await addTransaction({
-            ...t,
-            appointment_id: appointmentId
-        });
+    if (error) {
+        console.error("Erro ao sincronizar transações (RPC):", error);
+        // Fallback para o método antigo se a RPC não existir (para compatibilidade durante deploy)
+        if (error.message.includes('function') && error.message.includes('does not exist')) {
+             console.warn("RPC não encontrada, usando fallback manual...");
+             const { error: deleteError } = await supabase
+                .from('transactions')
+                .delete()
+                .eq('appointment_id', appointmentId);
+            
+            if (deleteError) throw deleteError;
+
+            for (const t of transactions) {
+                await addTransaction({
+                    ...t,
+                    appointment_id: appointmentId
+                });
+            }
+            return;
+        }
+        throw error;
     }
+    
+    window.dispatchEvent(new Event('transaction_added'));
 };
 
 export const deleteTransaction = async (id: string) => {

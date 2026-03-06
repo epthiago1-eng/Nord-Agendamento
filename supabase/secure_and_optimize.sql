@@ -197,9 +197,84 @@ CREATE POLICY "PaymentMethods Admin Write" ON public.payment_methods FOR ALL USI
 
 
 -- ==============================================================================
--- 5. FUNÇÕES RPC PARA AGENDAMENTO PÚBLICO (SEGURANÇA VIA TELEFONE)
--- Permite que usuários não logados cancelem/reagendem se confirmarem o telefone.
+-- 6. OTIMIZAÇÃO DE PERFORMANCE (ÍNDICES E RPC)
 -- ==============================================================================
+
+-- 6.1. ÍNDICES PARA CONSULTAS FREQUENTES
+CREATE INDEX IF NOT EXISTS idx_appointments_date ON public.appointments(date);
+CREATE INDEX IF NOT EXISTS idx_appointments_professional_id ON public.appointments("professionalId");
+CREATE INDEX IF NOT EXISTS idx_appointments_client_phone ON public.appointments("clientPhone");
+
+CREATE INDEX IF NOT EXISTS idx_transactions_date ON public.transactions(date);
+CREATE INDEX IF NOT EXISTS idx_transactions_professional_id ON public.transactions(professional_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_appointment_id ON public.transactions(appointment_id);
+
+-- 6.2. FUNÇÃO RPC PARA CÁLCULO DE TOTAIS NO SERVIDOR
+CREATE OR REPLACE FUNCTION public.get_financial_summary(
+  start_date date,
+  end_date date,
+  pro_id_filter uuid DEFAULT NULL
+)
+RETURNS json AS $$
+DECLARE
+  v_income numeric := 0;
+  v_expense numeric := 0;
+  v_total_commissions numeric := 0;
+  v_pending_commissions numeric := 0;
+  v_future_receivables numeric := 0;
+  v_net numeric := 0;
+BEGIN
+  -- Calcular Entradas (Vendas)
+  SELECT COALESCE(SUM(total_value), 0)
+  INTO v_income
+  FROM public.transactions
+  WHERE date >= start_date AND date <= end_date
+    AND operation = 'VENDA'
+    AND type != 'GORJETA'
+    AND (pro_id_filter IS NULL OR professional_id = pro_id_filter);
+
+  -- Calcular Saídas (Despesas)
+  SELECT COALESCE(SUM(ABS(total_value)), 0)
+  INTO v_expense
+  FROM public.transactions
+  WHERE date >= start_date AND date <= end_date
+    AND operation = 'COMPRA'
+    AND (pro_id_filter IS NULL OR professional_id = pro_id_filter);
+
+  -- Calcular Comissões Pendentes
+  SELECT COALESCE(SUM(commission_amount), 0)
+  INTO v_pending_commissions
+  FROM public.transactions
+  WHERE date >= start_date AND date <= end_date
+    AND operation = 'VENDA'
+    AND commission_paid = false
+    AND (pro_id_filter IS NULL OR professional_id = pro_id_filter);
+
+  -- Calcular Recebíveis Futuros (Cartão de Crédito)
+  SELECT COALESCE(SUM(total_value), 0)
+  INTO v_future_receivables
+  FROM public.transactions
+  WHERE date >= start_date AND date <= end_date
+    AND operation = 'VENDA'
+    AND payment_method ILIKE '%crédito%'
+    AND (pro_id_filter IS NULL OR professional_id = pro_id_filter);
+
+  v_net := v_income - v_expense;
+
+  RETURN json_build_object(
+    'income', v_income,
+    'expense', v_expense,
+    'pending_commissions', v_pending_commissions,
+    'future_receivables', v_future_receivables,
+    'net', v_net
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+GRANT EXECUTE ON FUNCTION public.get_financial_summary(date, date, uuid) TO anon;
+GRANT EXECUTE ON FUNCTION public.get_financial_summary(date, date, uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.get_financial_summary(date, date, uuid) TO service_role;
+
 
 CREATE OR REPLACE FUNCTION public.cancel_appointment_public(
   p_appointment_id uuid,
@@ -295,4 +370,74 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 GRANT EXECUTE ON FUNCTION public.update_appointment_public(uuid, text, jsonb) TO anon;
 GRANT EXECUTE ON FUNCTION public.update_appointment_public(uuid, text, jsonb) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.update_appointment_public(uuid, text, jsonb) TO service_role;
+
+
+-- 6.3. FUNÇÃO RPC PARA SINCRONIZAR TRANSAÇÕES DE AGENDAMENTO (ATOMICIDADE)
+CREATE OR REPLACE FUNCTION public.sync_appointment_transactions(
+  p_appointment_id uuid,
+  p_transactions jsonb
+)
+RETURNS void AS $$
+BEGIN
+  -- 0. Lock no agendamento para evitar condições de corrida (serializa transações para este ID)
+  PERFORM 1 FROM public.appointments WHERE id = p_appointment_id FOR UPDATE;
+
+  -- 1. Remove transações anteriores
+  DELETE FROM public.transactions
+  WHERE appointment_id = p_appointment_id;
+
+  -- 2. Insere novas transações
+  IF jsonb_array_length(p_transactions) > 0 THEN
+    INSERT INTO public.transactions (
+      appointment_id,
+      operation,
+      type,
+      category,
+      code,
+      item,
+      unit_price,
+      quantity,
+      val,
+      original_value,
+      discount_value,
+      commission_amount,
+      commission_rate,
+      appointment_total,
+      appointment_tip,
+      client_supplier,
+      payment_method,
+      pro,
+      professional_id,
+      date,
+      status
+    )
+    SELECT
+      p_appointment_id,
+      (t->>'operation')::text,
+      (t->>'type')::text,
+      (t->>'category')::text,
+      (t->>'code')::text,
+      (t->>'item')::text,
+      (t->>'unit_price')::numeric,
+      (t->>'quantity')::numeric,
+      (t->>'val')::numeric,
+      (t->>'original_value')::numeric,
+      (t->>'discount_value')::numeric,
+      (t->>'commission_amount')::numeric,
+      (t->>'commission_rate')::numeric,
+      (t->>'appointment_total')::numeric,
+      (t->>'appointment_tip')::numeric,
+      (t->>'client_supplier')::text,
+      (t->>'payment_method')::text,
+      (t->>'pro')::text,
+      (t->>'professional_id')::uuid,
+      (t->>'date')::text,
+      (t->>'status')::text
+    FROM jsonb_array_elements(p_transactions) AS t;
+  END IF;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+GRANT EXECUTE ON FUNCTION public.sync_appointment_transactions(uuid, jsonb) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.sync_appointment_transactions(uuid, jsonb) TO service_role;
 

@@ -78,7 +78,7 @@ const FinancialAdmin: React.FC = () => {
       const [txData, settingsData, prosRes, servicesRes, configsRes] = await Promise.all([
           getTransactions({ startDate: startStr, endDate: endStr }),
           getSettings(),
-          db.professionals().select('*'),
+          db.professionals().select('id, name'),
           db.services().select('id, name'),
           db.professionalServices().select('*')
       ]);
