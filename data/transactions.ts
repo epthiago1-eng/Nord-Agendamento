@@ -122,9 +122,18 @@ export const syncAppointmentTransactions = async (appointmentId: string, transac
 
     if (error) {
         console.error("Erro ao sincronizar transações (RPC):", error);
-        // Fallback para o método antigo se a RPC não existir (para compatibilidade durante deploy)
-        if (error.message.includes('function') && error.message.includes('does not exist')) {
-             console.warn("RPC não encontrada, usando fallback manual...");
+        
+        // Fallback para o método antigo se a RPC não existir ou não for encontrada
+        // PGRST202: Could not find the function ... in the schema cache
+        const isFunctionMissing = 
+            (error.message && (
+                error.message.includes('function') && 
+                (error.message.includes('does not exist') || error.message.includes('Could not find'))
+            )) ||
+            (error.code === 'PGRST202');
+
+        if (isFunctionMissing) {
+             console.warn("RPC não encontrada (PGRST202), usando fallback manual...");
              const { error: deleteError } = await supabase
                 .from('transactions')
                 .delete()

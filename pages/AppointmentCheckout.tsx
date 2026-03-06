@@ -10,7 +10,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { getAppointments, updateAppointment, Appointment, deleteAppointment, transferAppointment, getSettings, saveSettings } from '../data/agendaData';
 import { syncAppointmentTransactions } from '../data/transactions'; 
 import { addNotification } from '../data/notifications';
-import { db } from '../supabase';
+import { db, supabase } from '../supabase';
 
 const AppointmentCheckout: React.FC = () => {
   const navigate = useNavigate();
@@ -651,15 +651,28 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                 await syncAppointmentTransactions(appointment.id, transactionsToSync);
 
                 // --- ATUALIZAÇÃO DO CAIXA DA BARBEARIA ---
-                // Se for Dinheiro ou Pix, acumula no caixa físico
-                const method = paymentMethod.toLowerCase();
-                if (method.includes('dinheiro') || method.includes('pix')) {
+                // Calcula a diferença (delta) para evitar duplicação ou inconsistência
+                
+                // 1. Valor que JÁ ESTAVA no caixa (se o agendamento já foi pago em dinheiro/pix antes)
+                const wasPaidInCash = (
+                    appointment.status === 'Atendimento Realizado' &&
+                    appointment.payment_method &&
+                    (appointment.payment_method.toLowerCase().includes('dinheiro') || appointment.payment_method.toLowerCase().includes('pix'))
+                );
+                const previousValue = wasPaidInCash ? (appointment.totalValue || 0) : 0;
+
+                // 2. Valor que DEVE ESTAR no caixa agora (se o pagamento atual for dinheiro/pix)
+                const isPayingInCash = paymentMethod.toLowerCase().includes('dinheiro') || paymentMethod.toLowerCase().includes('pix');
+                const currentValue = isPayingInCash ? totals.total : 0;
+
+                // 3. Diferença a ser aplicada
+                const delta = currentValue - previousValue;
+
+                if (delta !== 0) {
                     try {
-                        const currentSettings = await getSettings();
-                        if (currentSettings) {
-                            const newBalance = (currentSettings.cash_balance || 0) + totals.total;
-                            await saveSettings({ ...currentSettings, cash_balance: newBalance });
-                        }
+                        // Usa RPC segura para atualizar saldo (pode ser positivo ou negativo)
+                        const { error } = await supabase.rpc('update_cash_balance', { amount: delta });
+                        if (error) throw error;
                     } catch (e) {
                         console.error("Erro ao atualizar saldo do caixa:", e);
                     }
@@ -944,7 +957,10 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
 
         <button onClick={handleFinalize} disabled={processing} className="w-full bg-green-600 text-white font-black py-5 rounded-[2.5rem] shadow-xl active:scale-95 transition-transform uppercase tracking-[0.2em] text-sm flex items-center justify-center gap-3 mt-6 mb-12 disabled:opacity-70">
           {processing ? <Loader2 className="animate-spin" /> : <CheckCircle2 size={24} />}
-          {processing ? 'Sincronizando...' : 'Finalizar e Salvar'}
+          {processing 
+            ? 'Sincronizando...' 
+            : (appointment.status === 'Atendimento Realizado' ? 'Atualizar Atendimento' : 'Finalizar e Salvar')
+          }
         </button>
       </div>
 

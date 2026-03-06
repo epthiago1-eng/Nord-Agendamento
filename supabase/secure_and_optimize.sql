@@ -127,7 +127,8 @@ WITH CHECK (auth.role() = 'authenticated');
 CREATE POLICY "Transactions Update Access" ON public.transactions FOR UPDATE 
 USING (is_admin() OR professional_id = get_my_pro_id());
 
-CREATE POLICY "Transactions Delete Access" ON public.transactions FOR DELETE USING (is_admin());
+CREATE POLICY "Transactions Delete Access" ON public.transactions FOR DELETE 
+USING (is_admin() OR professional_id = get_my_pro_id());
 
 -- --- TABELA: CLIENTS ---
 DROP POLICY IF EXISTS "Clients Access" ON public.clients;
@@ -431,7 +432,7 @@ BEGIN
       (t->>'payment_method')::text,
       (t->>'pro')::text,
       (t->>'professional_id')::uuid,
-      (t->>'date')::text,
+      (t->>'date')::date,
       (t->>'status')::text
     FROM jsonb_array_elements(p_transactions) AS t;
   END IF;
@@ -440,4 +441,19 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 GRANT EXECUTE ON FUNCTION public.sync_appointment_transactions(uuid, jsonb) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.sync_appointment_transactions(uuid, jsonb) TO service_role;
+
+
+-- 6.4. FUNÇÃO RPC PARA ATUALIZAR SALDO DO CAIXA (SEGURANÇA)
+CREATE OR REPLACE FUNCTION public.update_cash_balance(amount numeric)
+RETURNS void AS $$
+BEGIN
+  -- Atualiza o saldo do caixa (assume id=1 para configurações globais)
+  UPDATE public.settings
+  SET cash_balance = COALESCE(cash_balance, 0) + amount
+  WHERE id = 1;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+GRANT EXECUTE ON FUNCTION public.update_cash_balance(numeric) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.update_cash_balance(numeric) TO service_role;
 

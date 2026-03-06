@@ -329,6 +329,20 @@ export const deleteAppointment = async (id: string, reason: string = 'Exclusão 
           // Se houver constraint RESTRICT, o delete do appointment abaixo falhará de qualquer forma.
       }
 
+      // 1.1. Estorna valor do caixa se foi pago em Dinheiro/Pix
+      if (
+          apt.status === 'Atendimento Realizado' &&
+          apt.payment_method &&
+          (apt.payment_method.toLowerCase().includes('dinheiro') || apt.payment_method.toLowerCase().includes('pix'))
+      ) {
+          try {
+              // Estorna o valor (passa negativo)
+              await supabase.rpc('update_cash_balance', { amount: -(apt.totalValue || 0) });
+          } catch (e) {
+              console.error("Erro ao estornar caixa na exclusão:", e);
+          }
+      }
+
       // 2. Remove o agendamento
       const { error } = await supabase.from('appointments').delete().eq('id', id);
       if (error) throw error;
