@@ -1,4 +1,11 @@
 -- ==============================================================================
+-- 0. GARANTIR COLUNAS NECESSÁRIAS NA TABELA SETTINGS
+-- ==============================================================================
+
+ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS cash_balance numeric DEFAULT 0;
+ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS bank_balance numeric DEFAULT 0;
+
+-- ==============================================================================
 -- 1. HABILITAR RLS (ROW LEVEL SECURITY) EM TODAS AS TABELAS
 -- Isso remove o aviso de "Unrestricted" e protege os dados por padrão.
 -- ==============================================================================
