@@ -4,7 +4,7 @@ import {
   ChevronLeft, ChevronRight, Calendar, Filter, 
   TrendingUp, TrendingDown, DollarSign, Users, 
   ShoppingBag, Trash2, Edit2, AlertCircle, BarChart3, Eye, X, Save, Loader2,
-  FileSpreadsheet, ArrowLeftRight, MinusCircle, Wallet2, Banknote, Landmark, Clock, CheckCircle2
+  FileSpreadsheet, ArrowLeftRight, MinusCircle, Wallet2, Banknote, Landmark, Clock, CheckCircle2, ClipboardList
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getTransactions, deleteTransaction, updateTransaction, Transaction, addTransaction } from '../data/transactions';
@@ -20,6 +20,10 @@ const FinancialAdmin: React.FC = () => {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedPro, setSelectedPro] = useState('all');
   const [loading, setLoading] = useState(true);
+  const [loadingAudit, setLoadingAudit] = useState(false);
+  const [auditConfirmed, setAuditConfirmed] = useState(false);
+  const [auditTransactions, setAuditTransactions] = useState<Transaction[]>([]);
+  const [auditRange, setAuditRange] = useState({ start: '', end: '' });
   const [professionalsMap, setProfessionalsMap] = useState<Record<string, string>>({}); // Name -> ID mapping
   const [settings, setSettings] = useState<EstablishmentSettings | null>(null);
   const [allProfessionals, setAllProfessionals] = useState<any[]>([]);
@@ -112,6 +116,27 @@ const FinancialAdmin: React.FC = () => {
     window.addEventListener('transaction_added', loadData);
     return () => window.removeEventListener('transaction_added', loadData);
   }, [dateRange]); // Recarrega quando a data muda
+
+  const handleLoadAudit = async () => {
+    if (!auditRange.start || !auditRange.end) {
+      alert('Por favor, informe o período inicial e final para a auditoria.');
+      return;
+    }
+    setLoadingAudit(true);
+    try {
+      const data = await getTransactions({ 
+        startDate: auditRange.start, 
+        endDate: auditRange.end 
+      });
+      setAuditTransactions(data);
+      setAuditConfirmed(true);
+    } catch (err) {
+      console.error('Erro ao carregar auditoria:', err);
+      alert('Erro ao carregar dados da auditoria.');
+    } finally {
+      setLoadingAudit(false);
+    }
+  };
 
   const handlePrev = () => {
     const newDate = new Date(currentDate);
@@ -896,37 +921,95 @@ const FinancialAdmin: React.FC = () => {
         </div>
 
         {/* LISTA DETALHADA PARA EDIÇÃO */}
-        <div className="pt-4">
-            <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3 pl-2">
-                Auditoria de Lançamentos
-            </h3>
-            <div className="space-y-2">
-                {filteredData.map((t) => (
-                    <div 
-                        key={t.id} 
-                        onClick={() => handleOpenEdit(t)}
-                        className="bg-white p-3 rounded-2xl border border-gray-100 shadow-sm flex items-center justify-between group active:bg-gray-50 transition-colors cursor-pointer"
-                    >
-                        <div className="flex items-center gap-3 overflow-hidden">
-                            <div className={`w-1 h-8 rounded-full shrink-0 ${t.operation === 'VENDA' ? 'bg-green-500' : 'bg-red-500'}`} />
-                            <div className="min-w-0">
-                                <p className="text-xs font-bold text-gray-800 truncate">{t.item}</p>
-                                <p className="text-[10px] text-gray-400 font-medium truncate">
-                                    {new Date(t.date).toLocaleDateString('pt-BR')} • {t.pro || 'Admin'}
-                                </p>
-                            </div>
-                        </div>
-                        <div className="flex items-center gap-3 shrink-0">
-                            <span className={`text-xs font-black ${t.operation === 'VENDA' ? 'text-green-600' : 'text-red-500'}`}>
-                                R$ {Math.abs(t.val).toFixed(2)}
-                            </span>
-                            <div className="bg-blue-50 text-blue-500 p-2 rounded-xl active:scale-90 transition-transform">
-                                <Eye size={14} />
-                            </div>
-                        </div>
+        <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100 mb-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+                <div>
+                    <h3 className="text-lg font-black text-gray-900 flex items-center gap-2">
+                        <ClipboardList className="text-blue-600" size={24} /> Auditoria de Lançamentos
+                    </h3>
+                    <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mt-1">Conferência detalhada de entradas e saídas</p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3 bg-gray-50 p-2 rounded-2xl border border-gray-100">
+                    <div className="flex items-center gap-2">
+                        <input 
+                            type="date" 
+                            value={auditRange.start} 
+                            onChange={e => setAuditRange(prev => ({ ...prev, start: e.target.value }))}
+                            className="bg-white border-none rounded-xl text-[10px] font-black text-gray-600 py-2 px-3 shadow-sm outline-none focus:ring-2 focus:ring-blue-500/20" 
+                        />
+                        <span className="text-gray-300 font-bold">-</span>
+                        <input 
+                            type="date" 
+                            value={auditRange.end} 
+                            onChange={e => setAuditRange(prev => ({ ...prev, end: e.target.value }))}
+                            className="bg-white border-none rounded-xl text-[10px] font-black text-gray-600 py-2 px-3 shadow-sm outline-none focus:ring-2 focus:ring-blue-500/20" 
+                        />
                     </div>
-                ))}
+                    <button 
+                        onClick={handleLoadAudit}
+                        disabled={loadingAudit}
+                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 shadow-md shadow-blue-200 active:scale-95 disabled:opacity-50"
+                    >
+                        {loadingAudit ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                        Confirmar e Carregar
+                    </button>
+                </div>
             </div>
+
+            {!auditConfirmed ? (
+                <div className="py-12 flex flex-col items-center justify-center text-center space-y-4 bg-gray-50/50 rounded-[2rem] border-2 border-dashed border-gray-200">
+                    <div className="bg-white p-4 rounded-full shadow-sm text-gray-300">
+                        <Calendar size={40} />
+                    </div>
+                    <div>
+                        <p className="text-sm font-black text-gray-500">Selecione um período para auditoria</p>
+                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-1">Os dados serão carregados após a confirmação</p>
+                    </div>
+                </div>
+            ) : (
+                <div className="space-y-2">
+                    {auditTransactions.length === 0 ? (
+                        <p className="text-center text-xs text-gray-400 italic py-8">Nenhum registro encontrado.</p>
+                    ) : (
+                        auditTransactions.map((t) => (
+                            <div 
+                                key={t.id} 
+                                onClick={() => handleOpenEdit(t)}
+                                className="bg-white p-3 rounded-2xl border border-gray-100 shadow-sm flex items-center justify-between group active:bg-gray-50 transition-colors cursor-pointer"
+                            >
+                                <div className="flex items-center gap-3 overflow-hidden">
+                                    <div className={`w-1 h-8 rounded-full shrink-0 ${t.operation === 'VENDA' ? 'bg-green-500' : 'bg-red-500'}`} />
+                                    <div className="min-w-0">
+                                        <div className="flex items-center gap-2">
+                                            <p className="text-xs font-bold text-gray-800 truncate">{t.item}</p>
+                                            {t.appointment_id && (
+                                                <span className="text-[8px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-bold uppercase tracking-tighter">
+                                                    ID: {t.appointment_id.slice(0, 8)}...
+                                                </span>
+                                            )}
+                                        </div>
+                                        <p className="text-[10px] text-gray-400 font-medium truncate">
+                                            {new Date(t.date).toLocaleDateString('pt-BR')} • {t.pro || 'Admin'}
+                                            {t.client_supplier && (
+                                                <span className="ml-2 text-blue-500 font-bold">• {t.client_supplier}</span>
+                                            )}
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-3 shrink-0">
+                                    <span className={`text-xs font-black ${t.operation === 'VENDA' ? 'text-green-600' : 'text-red-500'}`}>
+                                        R$ {Math.abs(t.val).toFixed(2)}
+                                    </span>
+                                    <div className="bg-blue-50 text-blue-500 p-2 rounded-xl active:scale-90 transition-transform">
+                                        <Eye size={14} />
+                                    </div>
+                                </div>
+                            </div>
+                        ))
+                    )}
+                </div>
+            )}
         </div>
 
       </div>

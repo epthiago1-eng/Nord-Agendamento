@@ -17,6 +17,7 @@ const ProfessionalPerformanceDetails: React.FC = () => {
   const [processing, setProcessing] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [proDetails, setProDetails] = useState<any>(null);
+  const [auditConfirmed, setAuditConfirmed] = useState(false);
   const [commissionConfigs, setCommissionConfigs] = useState<any[]>([]);
   const [servicesMap, setServicesMap] = useState<Record<string, string>>({}); 
 
@@ -81,8 +82,18 @@ const ProfessionalPerformanceDetails: React.FC = () => {
   };
 
   // Carrega Dados
-  const loadData = async () => {
+  const loadData = async (force = false) => {
     if (!proId) return;
+    if (!force && !auditConfirmed) {
+        // Only load basic pro info if not confirmed
+        try {
+            const { data: pro } = await db.professionals().select('*').eq('id', proId).single();
+            if (pro) setProDetails(pro);
+        } catch (err) {}
+        setLoading(false);
+        return;
+    }
+
     setLoading(true);
     try {
       const { data: pro } = await db.professionals().select('*').eq('id', proId).single();
@@ -104,13 +115,16 @@ const ProfessionalPerformanceDetails: React.FC = () => {
           if (methods.length > 0) setPaymentMethod(methods[0].name);
       }
 
-      const all = await getTransactions();
-      const proTrans = all.filter(t => 
-          ((t.operation === 'VENDA') || (t.type === 'VALE')) && 
-          (t.professional_id === proId || (pro && t.pro === pro.name))
-      );
-      setTransactions(proTrans);
+      const all = await getTransactions({
+          startDate: dateRange.start,
+          endDate: dateRange.end,
+          proId: proId
+      });
+      // Filtra para mostrar apenas Vendas e Vales na performance (exclui pagamentos de comissão que são 'COMPRA')
+      const filtered = all.filter(t => t.operation === 'VENDA' || t.type === 'VALE');
+      setTransactions(filtered);
       setSelectedIds([]); // Limpa seleção ao recarregar
+      setAuditConfirmed(true);
 
     } catch (err) {
       console.error(err);
@@ -121,7 +135,7 @@ const ProfessionalPerformanceDetails: React.FC = () => {
 
   useEffect(() => {
     loadData();
-  }, [proId]);
+  }, [proId, dateRange]);
 
   const calculateCommission = (transaction: Transaction) => {
     // 0. Se for VALE, retorna valor negativo (Dedução)
@@ -501,144 +515,221 @@ const ProfessionalPerformanceDetails: React.FC = () => {
             )}
         </div>
 
-        {/* Big Numbers */}
-        <div className="grid grid-cols-1 gap-3">
-            <div className="bg-blue-900 text-white p-5 rounded-[2rem] shadow-xl relative overflow-hidden">
-                 <div className="absolute right-[-10px] top-[-10px] opacity-10"><Wallet size={100} /></div>
-                 
-                 <div className="flex justify-between items-start mb-2">
-                    <div>
-                        <p className="text-blue-200 text-[10px] font-black uppercase tracking-[0.2em] mb-1">Faturamento Bruto</p>
-                        <p className="text-3xl font-black">R$ {stats.grossTotal.toFixed(2).replace('.', ',')}</p>
-                    </div>
-                    {/* Display for Total Pending Commission */}
-                    <div className="bg-blue-800/50 p-2 rounded-xl border border-blue-500/30 backdrop-blur-sm text-right min-w-[100px]">
-                         <p className="text-[8px] text-blue-200 font-bold uppercase tracking-wider mb-0.5">Saldo Pendente</p>
-                         <p className="text-sm font-black text-white">R$ {totalPendingCommission.toFixed(2).replace('.', ',')}</p>
-                    </div>
-                 </div>
+        {/* Filtro de Período */}
+        <div className="bg-white p-2 rounded-2xl border border-gray-100 shadow-sm space-y-3">
+            <div className="flex bg-gray-50 p-1 rounded-xl">
+                <button onClick={() => { setViewMode('week'); setCurrentRefDate(new Date()); }} className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase transition-all ${viewMode === 'week' ? 'bg-white text-blue-900 shadow-sm' : 'text-gray-400'}`}>Semana</button>
+                <button onClick={() => { setViewMode('month'); setCurrentRefDate(new Date()); }} className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase transition-all ${viewMode === 'month' ? 'bg-white text-blue-900 shadow-sm' : 'text-gray-400'}`}>Mês</button>
+                <button onClick={() => setViewMode('custom')} className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase transition-all ${viewMode === 'custom' ? 'bg-white text-blue-900 shadow-sm' : 'text-gray-400'}`}>Outro</button>
+            </div>
 
-                 <div className="mt-4 pt-4 border-t border-white/10 flex justify-between">
-                    <div>
-                        <p className="text-[9px] text-blue-300 font-bold uppercase">Comissão (Período)</p>
-                        <p className="text-lg font-black text-orange-300">R$ {stats.commTotal.toFixed(2).replace('.', ',')}</p>
-                        {stats.valesTotal > 0 && (
-                            <div className="flex flex-col items-start mt-1 opacity-80">
-                                <span className="text-[8px] text-blue-200 font-bold uppercase">Bruto: R$ {stats.grossCommission.toFixed(2).replace('.', ',')}</span>
-                                <span className="text-[8px] text-red-300 font-bold uppercase">Vales: - R$ {stats.valesTotal.toFixed(2).replace('.', ',')}</span>
-                            </div>
-                        )}
+            <div className="flex flex-col md:flex-row items-center gap-3 px-2">
+                {viewMode !== 'custom' ? (
+                    <div className="flex items-center justify-between flex-1 w-full">
+                        <button onClick={handlePrev} className="p-2 hover:bg-gray-100 rounded-lg text-gray-400"><ChevronLeft size={20} /></button>
+                        <div className="text-center">
+                            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-0.5">
+                                {viewMode === 'week' ? 'Semana de' : 'Mês de'}
+                            </p>
+                            <p className="text-sm font-black text-blue-900">
+                                {new Date(dateRange.start + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
+                                {' - '}
+                                {new Date(dateRange.end + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
+                            </p>
+                        </div>
+                        <button onClick={handleNext} className="p-2 hover:bg-gray-100 rounded-lg text-gray-400"><ChevronRight size={20} /></button>
                     </div>
-                    <div className="text-right">
-                        <p className="text-[9px] text-blue-300 font-bold uppercase">Líquido (Período)</p>
-                        <p className="text-lg font-black text-green-300">R$ {stats.netTotal.toFixed(2).replace('.', ',')}</p>
+                ) : (
+                    <div className="flex gap-2 items-center flex-1 w-full">
+                        <input type="date" value={dateRange.start} onChange={e => setDateRange({...dateRange, start: e.target.value})} className="w-full bg-gray-50 border-none rounded-lg text-xs font-bold text-gray-600 py-2 px-3" />
+                        <span className="text-gray-300">-</span>
+                        <input type="date" value={dateRange.end} onChange={e => setDateRange({...dateRange, end: e.target.value})} className="w-full bg-gray-50 border-none rounded-lg text-xs font-bold text-gray-600 py-2 px-3" />
                     </div>
-                 </div>
-
-                 <button 
-                    onClick={() => setShowValeModal(true)}
-                    className="w-full mt-4 bg-white/10 hover:bg-white/20 text-white py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-colors flex items-center justify-center gap-2"
-                 >
-                    <Banknote size={16} /> Lançar Vale / Adiantamento
-                 </button>
+                )}
+                
+                <button 
+                    onClick={() => loadData(true)}
+                    className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 shadow-md shadow-blue-200 active:scale-95"
+                >
+                    <CheckCircle2 size={14} /> Confirmar e Carregar
+                </button>
             </div>
         </div>
 
-        {/* Histórico com Checkbox */}
-        <div>
-            <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3 pl-2">Histórico para Baixa</h3>
-            <div className="space-y-2">
-                {stats.log.length === 0 ? (
-                    <p className="text-center text-xs text-gray-400 italic py-8">Nenhum registro neste período.</p>
-                ) : (
-                    stats.log.map((t) => {
-                        const isSelected = selectedIds.includes(t.id);
-                        return (
-                            <div 
-                                key={t.id} 
-                                onClick={() => !t.commission_paid && toggleSelect(t.id)}
-                                className={`bg-white p-4 rounded-2xl border shadow-sm flex flex-col gap-2 transition-all active:scale-[0.99] ${
-                                    t.commission_paid 
-                                    ? 'border-green-100 bg-green-50/20 opacity-80' 
-                                    : isSelected 
-                                        ? 'border-blue-300 ring-1 ring-blue-300 bg-blue-50/30' 
-                                        : 'border-gray-100'
-                                }`}
-                            >
-                                <div className="flex justify-between items-start">
-                                    <div className="flex items-center gap-3">
-                                        {/* Checkbox ou Status Pago */}
-                                        <div className="shrink-0">
-                                            {t.commission_paid ? (
-                                                <div className="bg-green-100 text-green-600 p-1.5 rounded-lg">
-                                                    <CheckCircle2 size={16} />
-                                                </div>
-                                            ) : (
-                                                <div className={`p-1.5 rounded-lg transition-colors ${isSelected ? 'text-blue-900' : 'text-gray-300'}`}>
-                                                    {isSelected ? <CheckSquare size={20} /> : <Square size={20} />}
-                                                </div>
-                                            )}
-                                        </div>
+        {!auditConfirmed ? (
+            <div className="py-20 flex flex-col items-center justify-center text-center space-y-4 bg-white rounded-[2rem] border-2 border-dashed border-gray-100 shadow-sm">
+                <div className="bg-blue-50 p-6 rounded-full text-blue-300">
+                    <Calendar size={48} />
+                </div>
+                <div>
+                    <h3 className="text-lg font-black text-gray-900">Aguardando Confirmação</h3>
+                    <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mt-1 max-w-[240px] mx-auto">
+                        Selecione o período desejado e clique em confirmar para carregar a performance.
+                    </p>
+                </div>
+            </div>
+        ) : loading ? (
+            <div className="py-20 flex flex-col items-center justify-center space-y-4">
+                <Loader2 className="animate-spin text-blue-600" size={40} />
+                <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">Carregando dados...</p>
+            </div>
+        ) : (
+            <>
+                {/* Big Numbers */}
+                <div className="grid grid-cols-1 gap-3">
+                    <div className="bg-blue-900 text-white p-5 rounded-[2rem] shadow-xl relative overflow-hidden">
+                        <div className="absolute right-[-10px] top-[-10px] opacity-10"><Wallet size={100} /></div>
+                        
+                        <div className="flex justify-between items-start mb-2">
+                            <div>
+                                <p className="text-blue-200 text-[10px] font-black uppercase tracking-[0.2em] mb-1">Faturamento Bruto</p>
+                                <p className="text-3xl font-black">R$ {stats.grossTotal.toFixed(2).replace('.', ',')}</p>
+                            </div>
+                            {/* Display for Total Pending Commission */}
+                            <div className="bg-blue-800/50 p-2 rounded-xl border border-blue-500/30 backdrop-blur-sm text-right min-w-[100px]">
+                                <p className="text-[8px] text-blue-200 font-bold uppercase tracking-wider mb-0.5">Saldo Pendente</p>
+                                <p className="text-sm font-black text-white">R$ {totalPendingCommission.toFixed(2).replace('.', ',')}</p>
+                            </div>
+                        </div>
 
-                                        <div>
-                                            <p className={`text-xs font-black line-clamp-1 ${t.commission_paid ? 'text-green-800' : 'text-gray-900'}`}>
-                                                {t.item}
-                                                {t.commission_paid && <span className="ml-2 text-[8px] bg-green-200 text-green-800 px-1.5 py-0.5 rounded uppercase">Pago</span>}
-                                            </p>
-                                            <div className="flex items-center gap-1 text-[10px] text-gray-400 font-bold uppercase">
-                                                {new Date(t.date).toLocaleDateString('pt-BR')} • {t.category}
+                        <div className="mt-4 pt-4 border-t border-white/10 flex justify-between">
+                            <div>
+                                <p className="text-[9px] text-blue-300 font-bold uppercase">Comissão (Período)</p>
+                                <p className="text-lg font-black text-orange-300">R$ {stats.commTotal.toFixed(2).replace('.', ',')}</p>
+                                {stats.valesTotal > 0 && (
+                                    <div className="flex flex-col items-start mt-1 opacity-80">
+                                        <span className="text-[8px] text-blue-200 font-bold uppercase">Bruto: R$ {stats.grossCommission.toFixed(2).replace('.', ',')}</span>
+                                        <span className="text-[8px] text-red-300 font-bold uppercase">Vales: - R$ {stats.valesTotal.toFixed(2).replace('.', ',')}</span>
+                                    </div>
+                                )}
+                            </div>
+                            <div className="text-right">
+                                <p className="text-[9px] text-blue-300 font-bold uppercase">Líquido (Período)</p>
+                                <p className="text-lg font-black text-green-300">R$ {stats.netTotal.toFixed(2).replace('.', ',')}</p>
+                            </div>
+                        </div>
+
+                        <button 
+                            onClick={() => setShowValeModal(true)}
+                            className="w-full mt-4 bg-white/10 hover:bg-white/20 text-white py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-colors flex items-center justify-center gap-2"
+                        >
+                            <Banknote size={16} /> Lançar Vale / Adiantamento
+                        </button>
+                    </div>
+                </div>
+
+                {/* Histórico com Checkbox */}
+                <div>
+                    <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3 pl-2">Histórico para Baixa</h3>
+                    <div className="space-y-2">
+                        {stats.log.length === 0 ? (
+                            <p className="text-center text-xs text-gray-400 italic py-8">Nenhum registro neste período.</p>
+                        ) : (
+                            stats.log.map((t) => {
+                                const isSelected = selectedIds.includes(t.id);
+                                return (
+                                    <div 
+                                        key={t.id} 
+                                        onClick={() => !t.commission_paid && toggleSelect(t.id)}
+                                        className={`bg-white p-4 rounded-2xl border shadow-sm flex flex-col gap-2 transition-all active:scale-[0.99] ${
+                                            t.commission_paid 
+                                            ? 'border-green-100 bg-green-50/20 opacity-80' 
+                                            : isSelected 
+                                                ? 'border-blue-300 ring-1 ring-blue-300 bg-blue-50/30' 
+                                                : 'border-gray-100'
+                                        }`}
+                                    >
+                                        <div className="flex justify-between items-start">
+                                            <div className="flex items-center gap-3">
+                                                {/* Checkbox ou Status Pago */}
+                                                <div className="shrink-0">
+                                                    {t.commission_paid ? (
+                                                        <div className="bg-green-100 text-green-600 p-1.5 rounded-lg">
+                                                            <CheckCircle2 size={16} />
+                                                        </div>
+                                                    ) : (
+                                                        <div className={`p-1.5 rounded-lg transition-colors ${isSelected ? 'text-blue-900' : 'text-gray-300'}`}>
+                                                            {isSelected ? <CheckSquare size={20} /> : <Square size={20} />}
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                <div>
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                        <p className={`text-xs font-black line-clamp-1 ${t.commission_paid ? 'text-green-800' : 'text-gray-900'}`}>
+                                                            {t.item}
+                                                            {t.commission_paid && <span className="ml-2 text-[8px] bg-green-200 text-green-800 px-1.5 py-0.5 rounded uppercase">Pago</span>}
+                                                        </p>
+                                                        {t.appointment_id && (
+                                                            <span className="text-[8px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-bold uppercase tracking-tighter">
+                                                                ID: {t.appointment_id.slice(0, 8)}...
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-gray-400 font-bold uppercase">
+                                                        <span>{new Date(t.date).toLocaleDateString('pt-BR')}</span>
+                                                        <span>•</span>
+                                                        <span>{t.category}</span>
+                                                        {t.client_supplier && (
+                                                            <>
+                                                                <span>•</span>
+                                                                <span className="text-blue-500">{t.client_supplier}</span>
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div className="text-right">
+                                                <p className={`text-sm font-black ${t.type === 'VALE' ? 'text-red-500' : 'text-gray-800'}`}>
+                                                    {t.type === 'VALE' ? '-' : ''} R$ {Math.abs(t.val).toFixed(2).replace('.', ',')}
+                                                </p>
                                             </div>
                                         </div>
-                                    </div>
-                                    <div className="text-right">
-                                        <p className={`text-sm font-black ${t.type === 'VALE' ? 'text-red-500' : 'text-gray-800'}`}>
-                                            {t.type === 'VALE' ? '-' : ''} R$ {Math.abs(t.val).toFixed(2).replace('.', ',')}
-                                        </p>
-                                    </div>
-                                </div>
-                                <div className="pt-2 border-t border-gray-50 flex justify-between items-center text-[10px]">
-                                    <span className="font-bold text-gray-400 uppercase tracking-wider">{t.type === 'VALE' ? 'Dedução' : 'Comissão'}</span>
-                                    <div className="flex items-center gap-2">
-                                        {t.commissionValue === 0 && !t.commission_paid && t.type !== 'VALE' ? (
-                                            <button 
-                                                onClick={(e) => { e.stopPropagation(); handleEditCommission(t); }}
-                                                className="bg-red-100 text-red-600 px-2 py-1 rounded-md font-black uppercase tracking-wider hover:bg-red-200 transition-colors flex items-center gap-1"
-                                            >
-                                                <AlertCircle size={10} /> Pendente (Definir)
-                                            </button>
-                                        ) : (
+                                        <div className="pt-2 border-t border-gray-50 flex justify-between items-center text-[10px]">
+                                            <span className="font-bold text-gray-400 uppercase tracking-wider">{t.type === 'VALE' ? 'Dedução' : 'Comissão'}</span>
                                             <div className="flex items-center gap-2">
-                                                {!t.commission_paid && t.type !== 'VALE' && (
+                                                {t.commissionValue === 0 && !t.commission_paid && t.type !== 'VALE' ? (
                                                     <button 
                                                         onClick={(e) => { e.stopPropagation(); handleEditCommission(t); }}
-                                                        className="text-gray-400 hover:text-blue-600 p-1 rounded-full hover:bg-blue-50 transition-colors"
-                                                        title="Editar Comissão"
+                                                        className="bg-red-100 text-red-600 px-2 py-1 rounded-md font-black uppercase tracking-wider hover:bg-red-200 transition-colors flex items-center gap-1"
                                                     >
-                                                        <Edit2 size={12} />
+                                                        <AlertCircle size={10} /> Pendente (Definir)
                                                     </button>
+                                                ) : (
+                                                    <div className="flex items-center gap-2">
+                                                        {!t.commission_paid && t.type !== 'VALE' && (
+                                                            <button 
+                                                                onClick={(e) => { e.stopPropagation(); handleEditCommission(t); }}
+                                                                className="text-gray-400 hover:text-blue-600 p-1 rounded-full hover:bg-blue-50 transition-colors"
+                                                                title="Editar Comissão"
+                                                            >
+                                                                <Edit2 size={12} />
+                                                            </button>
+                                                        )}
+                                                        {t.type === 'VALE' && (
+                                                            <button 
+                                                                onClick={(e) => { e.stopPropagation(); confirmDeleteVale(t.id); }}
+                                                                className="text-gray-400 hover:text-red-600 p-1 rounded-full hover:bg-red-50 transition-colors mr-1"
+                                                                title="Excluir Vale"
+                                                            >
+                                                                <Trash2 size={14} />
+                                                            </button>
+                                                        )}
+                                                        <span className={`font-black px-2 py-0.5 rounded-md ${t.commission_paid ? 'text-green-700 bg-green-100' : (t.type === 'VALE' ? 'text-red-600 bg-red-50' : 'text-blue-600 bg-blue-50')}`}>
+                                                            {t.type === 'VALE' ? '-' : '+'} R$ {Math.abs(t.commissionValue).toFixed(2).replace('.', ',')}
+                                                        </span>
+                                                    </div>
                                                 )}
-                                                {t.type === 'VALE' && (
-                                                    <button 
-                                                        onClick={(e) => { e.stopPropagation(); confirmDeleteVale(t.id); }}
-                                                        className="text-gray-400 hover:text-red-600 p-1 rounded-full hover:bg-red-50 transition-colors mr-1"
-                                                        title="Excluir Vale"
-                                                    >
-                                                        <Trash2 size={14} />
-                                                    </button>
-                                                )}
-                                                <span className={`font-black px-2 py-0.5 rounded-md ${t.commission_paid ? 'text-green-700 bg-green-100' : (t.type === 'VALE' ? 'text-red-600 bg-red-50' : 'text-blue-600 bg-blue-50')}`}>
-                                                    {t.type === 'VALE' ? '-' : '+'} R$ {Math.abs(t.commissionValue).toFixed(2).replace('.', ',')}
-                                                </span>
                                             </div>
-                                        )}
+                                        </div>
                                     </div>
-                                </div>
-                            </div>
-                        );
-                    })
-                )}
-            </div>
-        </div>
+                                );
+                            })
+                        )}
+                    </div>
+                </div>
+            </>
+        )}
       </div>
 
       {/* Modal de Confirmação de Exclusão de Vale */}
