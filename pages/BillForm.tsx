@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../supabase';
-import { addTransaction, deleteTransaction } from '../data/transactions';
+import { getSettings, saveSettings } from '../data/agendaData';
 
 const BillForm: React.FC = () => {
   const navigate = useNavigate();
@@ -14,6 +14,11 @@ const BillForm: React.FC = () => {
 
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(!!id);
+  
+  // Novos estados para financeiro
+  const [settings, setSettings] = useState<any>(null);
+  const [paymentMethods, setPaymentMethods] = useState<any[]>([]);
+  const [payForm, setPayForm] = useState({ method: 'Dinheiro', source: 'cash' });
   
   // Estado do Formulário
   const [formData, setFormData] = useState({
@@ -37,9 +42,25 @@ const BillForm: React.FC = () => {
 
   // Carregar dados se for edição
   useEffect(() => {
-    if (id) {
-      const fetchBill = async () => {
-        try {
+    const fetchData = async () => {
+      try {
+        // Carrega configurações e métodos de pagamento sempre
+        const [settingsData, methodsRes] = await Promise.all([
+          getSettings(),
+          supabase.from('payment_methods').select('*')
+        ]);
+
+        if (settingsData) setSettings(settingsData);
+        if (methodsRes.data) {
+          setPaymentMethods(methodsRes.data);
+          // Se houver métodos, tenta selecionar um padrão
+          if (methodsRes.data.length > 0) {
+            const hasDinheiro = methodsRes.data.find((m: any) => m.name === 'Dinheiro');
+            setPayForm(prev => ({ ...prev, method: hasDinheiro ? 'Dinheiro' : methodsRes.data[0].name }));
+          }
+        }
+
+        if (id) {
           const { data, error } = await supabase
             .from('bills')
             .select('*')
@@ -58,16 +79,18 @@ const BillForm: React.FC = () => {
               status: data.status || 'PENDING'
             });
           }
-        } catch (err) {
-          console.error(err);
+        }
+      } catch (err) {
+        console.error(err);
+        if (id) {
           alert('Erro ao carregar dados da conta.');
           navigate('/bills');
-        } finally {
-          setInitialLoading(false);
         }
-      };
-      fetchBill();
-    }
+      } finally {
+        setInitialLoading(false);
+      }
+    };
+    fetchData();
   }, [id, navigate]);
 
   // Helper para abrir o modal
@@ -126,6 +149,21 @@ const BillForm: React.FC = () => {
         setConfirmConfig(prev => ({...prev, show: false}));
         setLoading(true);
         try {
+          // 0. Verifica se a conta já não foi paga (evita duplicidade)
+          if (id) {
+            const { data: currentBill } = await supabase
+              .from('bills')
+              .select('status')
+              .eq('id', id)
+              .single();
+            
+            if (currentBill?.status === 'PAID') {
+              alert('Esta conta já consta como paga.');
+              navigate('/bills');
+              return;
+            }
+          }
+
           // Atualiza (ou cria) a conta como PAGA
           const payload = {
             description: formData.description,
@@ -140,32 +178,68 @@ const BillForm: React.FC = () => {
           if (id) {
             await supabase.from('bills').update(payload).eq('id', id);
           } else {
-            const { error } = await supabase.from('bills').insert(payload);
+            const { data: newBill, error } = await supabase.from('bills').insert(payload).select().single();
             if (error) throw error;
+            // Se acabou de criar, precisamos do ID para futuras operações nesta mesma tela (embora naveguemos fora)
           }
 
-          // Lança Transação (IMPORTANTE: O formato do 'item' deve ser consistente para o desfazer funcionar)
+          // 1. Atualiza Saldo nas Configurações
+          const settingsData = await getSettings();
+          if (settingsData) {
+            const newSettings = { ...settingsData };
+            const method = payForm.method.toLowerCase();
+            
+            if (payForm.source === 'cash') {
+              if (method.includes('dinheiro')) {
+                newSettings.cash_balance = (newSettings.cash_balance || 0) - amount;
+              } else if (method.includes('pix')) {
+                newSettings.pix_balance = (newSettings.pix_balance || 0) - amount;
+              } else if (method.includes('cartão') || method.includes('crédito') || method.includes('débito')) {
+                newSettings.card_balance = (newSettings.card_balance || 0) - amount;
+              } else {
+                newSettings.cash_balance = (newSettings.cash_balance || 0) - amount;
+              }
+            } else {
+              newSettings.bank_balance = (newSettings.bank_balance || 0) - amount;
+            }
+            
+            await saveSettings(newSettings);
+            setSettings(newSettings);
+          }
+
+          // 2. Lança Transação
           await addTransaction({
             type: 'DESPESA',
             category: formData.category,
             item: `Pgto: ${formData.description}`,
             val: -Math.abs(amount),
-            payment_method: 'Dinheiro',
+            payment_method: payForm.method,
             pro: 'Sistema',
             date: new Date().toISOString().split('T')[0],
             status: 'Pago'
           });
 
-          // Lógica de Recorrência (Criar próximo mês)
-          if (formData.recurring && formData.status !== 'PAID') { // Só cria se não estava pago antes
+          // Lógica de Recorrência (Criar próximo mês se não existir)
+          if (formData.recurring) {
             const nextDate = new Date(formData.dueDate);
             nextDate.setMonth(nextDate.getMonth() + 1);
-            
-            await supabase.from('bills').insert({
-              ...payload,
-              due_date: nextDate.toISOString().split('T')[0],
-              status: 'PENDING'
-            });
+            const nextDateStr = nextDate.toISOString().split('T')[0];
+
+            // Verifica se já existe uma conta com mesma descrição e data no próximo mês
+            const { data: existingNext } = await supabase
+              .from('bills')
+              .select('id')
+              .eq('description', formData.description)
+              .eq('due_date', nextDateStr)
+              .limit(1);
+
+            if (!existingNext || existingNext.length === 0) {
+              await supabase.from('bills').insert({
+                ...payload,
+                due_date: nextDateStr,
+                status: 'PENDING'
+              });
+            }
           }
 
           alert('Pagamento registrado com sucesso!');
@@ -199,7 +273,6 @@ const BillForm: React.FC = () => {
           if (error) throw error;
 
           // 2. Localiza e remove a transação financeira correspondente
-          // Procura por transações de despesa com o mesmo nome e valor negativo
           const amount = parseFloat(formData.value.replace(',', '.')) || 0;
           const searchItem = `Pgto: ${formData.description}`;
           const searchVal = -Math.abs(amount);
@@ -207,7 +280,7 @@ const BillForm: React.FC = () => {
           // Busca a transação mais recente que bate com esses dados
           const { data: matchingTrans } = await supabase
             .from('transactions')
-            .select('id')
+            .select('id, payment_method')
             .eq('item', searchItem)
             .eq('val', searchVal)
             .eq('type', 'DESPESA')
@@ -215,7 +288,44 @@ const BillForm: React.FC = () => {
             .limit(1);
 
           if (matchingTrans && matchingTrans.length > 0) {
-             await deleteTransaction(matchingTrans[0].id);
+             const trans = matchingTrans[0];
+             
+             // 2.1 Restaura o saldo antes de deletar a transação
+             const settingsData = await getSettings();
+             if (settingsData) {
+               const newSettings = { ...settingsData };
+               const method = (trans.payment_method || '').toLowerCase();
+               
+               if (method.includes('dinheiro')) {
+                 newSettings.cash_balance = (newSettings.cash_balance || 0) + amount;
+               } else if (method.includes('pix')) {
+                 newSettings.pix_balance = (newSettings.pix_balance || 0) + amount;
+               } else if (method.includes('cartão') || method.includes('crédito') || method.includes('débito')) {
+                 newSettings.card_balance = (newSettings.card_balance || 0) + amount;
+               } else {
+                 newSettings.bank_balance = (newSettings.bank_balance || 0) + amount;
+               }
+
+               await saveSettings(newSettings);
+               setSettings(newSettings);
+             }
+
+             await deleteTransaction(trans.id);
+          }
+
+          // 3. Se for recorrente, tenta remover a conta do próximo mês que foi gerada automaticamente
+          // (Apenas se ela ainda estiver PENDENTE e tiver a mesma descrição)
+          if (formData.recurring) {
+            const nextDate = new Date(formData.dueDate);
+            nextDate.setMonth(nextDate.getMonth() + 1);
+            const nextDateStr = nextDate.toISOString().split('T')[0];
+
+            await supabase
+              .from('bills')
+              .delete()
+              .eq('description', formData.description)
+              .eq('due_date', nextDateStr)
+              .eq('status', 'PENDING');
           }
 
           setFormData(prev => ({ ...prev, status: 'PENDING' }));
@@ -354,6 +464,46 @@ const BillForm: React.FC = () => {
             </div>
           </div>
         </div>
+
+        {/* Opções de Pagamento (Apenas se não estiver pago) */}
+        {!isPaid && (
+          <div className="space-y-4 bg-gray-50 p-4 rounded-3xl border border-gray-100">
+            <h3 className="text-[10px] font-black text-blue-900 uppercase tracking-[0.2em] mb-2 px-1">Configurações de Pagamento</h3>
+            
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block px-1">Origem do Valor</label>
+              <div className="flex bg-white p-1 rounded-2xl border border-gray-200">
+                <button 
+                  type="button"
+                  onClick={() => setPayForm({...payForm, source: 'cash'})}
+                  className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase transition-all ${payForm.source === 'cash' ? 'bg-blue-900 text-white shadow-md' : 'text-gray-400'}`}
+                >
+                  Caixa Físico
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => setPayForm({...payForm, source: 'bank'})}
+                  className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase transition-all ${payForm.source === 'bank' ? 'bg-blue-900 text-white shadow-md' : 'text-gray-400'}`}
+                >
+                  Conta Corrente
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block px-1">Método de Pagamento</label>
+              <select
+                value={payForm.method}
+                onChange={(e) => setPayForm({...payForm, method: e.target.value})}
+                className="w-full bg-white border border-gray-200 rounded-2xl py-4 px-4 outline-none focus:ring-2 focus:ring-blue-900 font-bold text-gray-700 text-xs appearance-none shadow-sm"
+              >
+                {paymentMethods.map(pm => (
+                  <option key={pm.id} value={pm.name}>{pm.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
 
         {/* Botões de Ação */}
         <div className="pt-6 space-y-3 pb-12">

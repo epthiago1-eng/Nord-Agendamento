@@ -165,29 +165,40 @@ export const deleteTransaction = async (id: string) => {
 };
 
 export const payCommissions = async (transactionIds: string[], totalValue: number, proName: string, proId?: string) => {
-    const { data: updated, error: updateError } = await supabase
+    // 1. Atualizar transações de origem
+    const { error: updateError } = await supabase
         .from('transactions')
         .update({ commission_paid: true })
-        .in('id', transactionIds)
-        .select();
+        .in('id', transactionIds);
 
     if (updateError) throw new Error(`Erro no banco: ${updateError.message}`);
 
     const safeProId = (proId && proId.length > 20) ? proId : null;
+    const amount = Math.abs(totalValue);
 
     try {
+        // 2. Registrar a saída financeira
         await addTransaction({
-            operation: 'COMPRA', // Saída de dinheiro
+            operation: 'COMPRA',
             type: 'DESPESA',
             category: 'Comissão',
             item: `Pagamento Comissão - ${proName}`,
-            val: -Math.abs(totalValue),
+            val: -amount,
             payment_method: 'Dinheiro', 
             pro: 'Sistema',
             professional_id: safeProId, 
             date: new Date().toISOString().split('T')[0],
             status: 'Pago'
         });
+
+        // 3. Atualizar o saldo em dinheiro (Default para payCommissions)
+        const { data: settings } = await supabase.from('settings').select('*').single();
+        if (settings) {
+            await supabase.from('settings').update({
+                cash_balance: (settings.cash_balance || 0) - amount
+            }).eq('id', settings.id);
+        }
+
     } catch (insertError: any) {
         await supabase.from('transactions').update({ commission_paid: false }).in('id', transactionIds);
         throw new Error(`Erro ao registrar saída financeira: ${insertError.message}`);
@@ -220,6 +231,7 @@ export const processCommissionPayment = async (
 
     // 2. Criar a transação de Saída (Despesa)
     const safeProId = (proId && proId.length > 20) ? proId : null;
+    const amount = Math.abs(totalValue);
     
     // Descrição detalhada conforme solicitado
     const description = `Comissão - ${proName} (${details.serviceCount} Serv, ${details.productCount} Prod)`;
@@ -231,13 +243,35 @@ export const processCommissionPayment = async (
             type: 'DESPESA',
             category: 'Funcionário', // Categoria solicitada
             item: description,
-            val: -Math.abs(totalValue), // Valor negativo
+            val: -amount, // Valor negativo
             client_supplier: proName,
             payment_method: paymentMethod,
             pro: 'Sistema',
             professional_id: safeProId,
             status: 'Pago'
         });
+
+        // 3. Atualizar o saldo correspondente no settings
+        const { data: settings } = await supabase.from('settings').select('*').single();
+        if (settings) {
+            const updates: any = {};
+            const method = paymentMethod.toLowerCase();
+            
+            if (method.includes('dinheiro')) {
+                updates.cash_balance = (settings.cash_balance || 0) - amount;
+            } else if (method.includes('pix')) {
+                updates.pix_balance = (settings.pix_balance || 0) - amount;
+            } else if (method.includes('cartão') || method.includes('cartao')) {
+                updates.card_balance = (settings.card_balance || 0) - amount;
+            } else if (method.includes('banco') || method.includes('conta') || method.includes('corrente')) {
+                updates.bank_balance = (settings.bank_balance || 0) - amount;
+            }
+
+            if (Object.keys(updates).length > 0) {
+                await supabase.from('settings').update(updates).eq('id', settings.id);
+            }
+        }
+
     } catch (insertError: any) {
         // Rollback manual simples se falhar a inserção
         await supabase.from('transactions').update({ commission_paid: false }).in('id', transactionIds);

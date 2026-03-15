@@ -1,26 +1,112 @@
 
-import React from 'react';
-import { ChevronLeft, TrendingUp, TrendingDown, CreditCard, DollarSign, Wallet, ArrowUpRight, ArrowDownRight, Smartphone, ClipboardList, ShoppingBag } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { ChevronLeft, TrendingUp, TrendingDown, CreditCard, DollarSign, Wallet, ArrowUpRight, ArrowDownRight, Smartphone, ClipboardList, ShoppingBag, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-
-const mockFinancialData = {
-  gross: 12500.00,
-  expenses: 4200.00,
-  net: 8300.00,
-  servicesTotal: 9800.00,
-  productsTotal: 2700.00,
-  payments: [
-    { method: 'Dinheiro', total: 4500.00, count: 85, color: 'text-green-600', bg: 'bg-green-50', icon: DollarSign },
-    { method: 'Pix', total: 3200.00, count: 62, color: 'text-blue-600', bg: 'bg-blue-50', icon: Smartphone },
-    { method: 'Cartão de Crédito', total: 3800.00, count: 45, color: 'text-purple-600', bg: 'bg-purple-50', icon: CreditCard },
-    { method: 'Cartão de Débito', total: 1000.00, count: 18, color: 'text-orange-600', bg: 'bg-orange-50', icon: CreditCard },
-  ]
-};
+import { db } from '../supabase';
 
 const ReportFinancialSummary: React.FC = () => {
   const navigate = useNavigate();
+  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState({
+    gross: 0,
+    expenses: 0,
+    net: 0,
+    servicesTotal: 0,
+    productsTotal: 0,
+    payments: [] as any[]
+  });
 
-  const servicePercent = (mockFinancialData.servicesTotal / (mockFinancialData.servicesTotal + mockFinancialData.productsTotal)) * 100;
+  useEffect(() => {
+    const fetchData = async () => {
+      setLoading(true);
+      try {
+        const now = new Date();
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+        const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+
+        const { data: transactions } = await db.transactions()
+          .select('*')
+          .gte('date', startOfMonth)
+          .lte('date', endOfMonth);
+
+        if (!transactions) return;
+
+        let gross = 0;
+        let expenses = 0;
+        let servicesTotal = 0;
+        let productsTotal = 0;
+        const paymentMap: Record<string, { total: number, count: number }> = {};
+
+        transactions.forEach(t => {
+          if (t.operation === 'VENDA') {
+            const val = Math.abs(t.val);
+            gross += val;
+            
+            if (t.category === 'Produto' || t.type === 'PRODUTO') {
+              productsTotal += val;
+            } else if (t.category !== 'Gorjeta' && t.type !== 'GORJETA') {
+              servicesTotal += val;
+            }
+
+            const method = t.payment_method || 'Outros';
+            if (!paymentMap[method]) paymentMap[method] = { total: 0, count: 0 };
+            paymentMap[method].total += val;
+            paymentMap[method].count += 1;
+          } else if (t.operation === 'DESPESA') {
+            expenses += Math.abs(t.val);
+          }
+        });
+
+        const payments = Object.entries(paymentMap).map(([method, stats]) => {
+          let icon = CreditCard;
+          let color = 'text-blue-600';
+          let bg = 'bg-blue-50';
+
+          if (method === 'Dinheiro') { icon = DollarSign; color = 'text-green-600'; bg = 'bg-green-50'; }
+          if (method === 'Pix') { icon = Smartphone; color = 'text-blue-600'; bg = 'bg-blue-50'; }
+          if (method.includes('Crédito')) { icon = CreditCard; color = 'text-purple-600'; bg = 'bg-purple-50'; }
+          if (method.includes('Débito')) { icon = CreditCard; color = 'text-orange-600'; bg = 'bg-orange-50'; }
+
+          return { method, ...stats, icon, color, bg };
+        });
+
+        setData({
+          gross,
+          expenses,
+          net: gross - expenses,
+          servicesTotal,
+          productsTotal,
+          payments: payments.sort((a, b) => b.total - a.total)
+        });
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, []);
+
+  const servicePercent = useMemo(() => {
+    const total = data.servicesTotal + data.productsTotal;
+    if (total === 0) return 100;
+    return (data.servicesTotal / total) * 100;
+  }, [data]);
+
+  if (loading) {
+    return (
+      <div className="flex flex-col h-full bg-[#fcfaff]">
+        <header className="bg-[#1e3a8a] text-white px-4 py-3 flex items-center sticky top-0 z-50">
+          <button onClick={() => navigate(-1)} className="p-1"><ChevronLeft size={24} /></button>
+          <h1 className="flex-1 text-center text-lg font-medium mr-8">Resumo Financeiro</h1>
+        </header>
+        <div className="flex-1 flex items-center justify-center">
+          <Loader2 className="animate-spin text-blue-900" size={32} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full bg-[#fcfaff]">
@@ -32,7 +118,7 @@ const ReportFinancialSummary: React.FC = () => {
       <div className="p-4 space-y-6 overflow-y-auto pb-24">
         <div className="flex justify-center">
             <button className="bg-white px-5 py-2 rounded-full border border-gray-100 text-xs font-bold text-blue-900 shadow-sm uppercase tracking-wider">
-                Fevereiro 2026
+                {new Date().toLocaleString('pt-BR', { month: 'long', year: 'numeric' })}
             </button>
         </div>
 
@@ -46,7 +132,7 @@ const ReportFinancialSummary: React.FC = () => {
                     <div className="bg-green-50 p-2.5 rounded-2xl"><ArrowUpRight size={22} /></div>
                     <span className="text-xs font-black uppercase tracking-[0.2em]">Faturamento Bruto</span>
                 </div>
-                <p className="text-4xl font-black text-gray-900 tracking-tight">R$ {mockFinancialData.gross.toFixed(2).replace('.', ',')}</p>
+                <p className="text-4xl font-black text-gray-900 tracking-tight">R$ {data.gross.toFixed(2).replace('.', ',')}</p>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
@@ -55,14 +141,14 @@ const ReportFinancialSummary: React.FC = () => {
                         <ArrowDownRight size={18} />
                         <span className="text-[10px] font-black uppercase tracking-widest">Despesas</span>
                     </div>
-                    <p className="text-xl font-black text-gray-900">R$ {mockFinancialData.expenses.toFixed(2).replace('.', ',')}</p>
+                    <p className="text-xl font-black text-gray-900">R$ {data.expenses.toFixed(2).replace('.', ',')}</p>
                 </div>
                 <div className="bg-[#1e3a8a] p-6 rounded-[2rem] shadow-2xl shadow-blue-900/30 ring-4 ring-blue-50">
                     <div className="flex items-center gap-2 mb-2 text-blue-200">
                         <Wallet size={18} />
                         <span className="text-[10px] font-black uppercase tracking-widest">Saldo Líquido</span>
                     </div>
-                    <p className="text-xl font-black text-white">R$ {mockFinancialData.net.toFixed(2).replace('.', ',')}</p>
+                    <p className="text-xl font-black text-white">R$ {data.net.toFixed(2).replace('.', ',')}</p>
                 </div>
             </div>
         </div>
@@ -93,14 +179,14 @@ const ReportFinancialSummary: React.FC = () => {
                         <ClipboardList size={16} />
                         <span className="text-[10px] font-bold uppercase">Total Serviços</span>
                     </div>
-                    <p className="font-black text-gray-900">R$ {mockFinancialData.servicesTotal.toFixed(2).replace('.', ',')}</p>
+                    <p className="font-black text-gray-900">R$ {data.servicesTotal.toFixed(2).replace('.', ',')}</p>
                 </div>
                 <div className="space-y-1">
                     <div className="flex items-center gap-2 text-orange-600">
                         <ShoppingBag size={16} />
                         <span className="text-[10px] font-bold uppercase">Total Produtos</span>
                     </div>
-                    <p className="font-black text-gray-900">R$ {mockFinancialData.productsTotal.toFixed(2).replace('.', ',')}</p>
+                    <p className="font-black text-gray-900">R$ {data.productsTotal.toFixed(2).replace('.', ',')}</p>
                 </div>
             </div>
         </div>
@@ -112,7 +198,9 @@ const ReportFinancialSummary: React.FC = () => {
                 Por Meio de Pagamento
             </h3>
             <div className="grid grid-cols-1 gap-3">
-                {mockFinancialData.payments.map((p, idx) => (
+                {data.payments.length === 0 ? (
+                    <div className="text-center py-8 bg-white rounded-2xl border border-dashed border-gray-100 text-gray-400 text-[10px] font-bold uppercase">Sem vendas registradas</div>
+                ) : data.payments.map((p, idx) => (
                     <div key={idx} className="bg-white p-5 rounded-2xl border border-gray-50 shadow-sm flex items-center justify-between hover:scale-[1.02] transition-transform">
                         <div className="flex items-center gap-4">
                             <div className={`${p.bg} ${p.color} p-3.5 rounded-2xl shadow-inner`}>

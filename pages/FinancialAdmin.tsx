@@ -9,13 +9,14 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { getTransactions, deleteTransaction, updateTransaction, Transaction, addTransaction } from '../data/transactions';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LineChart, Line } from 'recharts';
-import { db } from '../supabase'; // Import db to fetch professionals
+import { db, supabase } from '../supabase'; // Import db and supabase to fetch data
 import { getSettings, saveSettings } from '../data/agendaData';
 import { EstablishmentSettings } from '../types';
 
 const FinancialAdmin: React.FC = () => {
   const navigate = useNavigate();
   const [allTransactions, setAllTransactions] = useState<Transaction[]>([]);
+  const [allBills, setAllBills] = useState<any[]>([]);
   const [viewMode, setViewMode] = useState<'week' | 'month'>('month');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedPro, setSelectedPro] = useState('all');
@@ -29,13 +30,15 @@ const FinancialAdmin: React.FC = () => {
   const [allProfessionals, setAllProfessionals] = useState<any[]>([]);
   const [commissionConfigs, setCommissionConfigs] = useState<any[]>([]);
   const [servicesMap, setServicesMap] = useState<Record<string, string>>({});
+  const [adminPros, setAdminPros] = useState<string[]>([]);
 
   // Estados dos Modals Gerenciais
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [showSangriaModal, setShowSangriaModal] = useState(false);
-  const [showAdjustModal, setShowAdjustModal] = useState<{show: boolean, type: 'cash' | 'bank' | null}>({ show: false, type: null });
+  const [showAdjustModal, setShowAdjustModal] = useState<{show: boolean, type: 'cash' | 'bank' | 'pix' | 'card' | null}>({ show: false, type: null });
   const [showPayModal, setShowPayModal] = useState<{show: boolean, proName: string | null, amount: number}>({ show: false, proName: null, amount: 0 });
   const [showFutureModal, setShowFutureModal] = useState(false);
+  const [showPaidDetailsModal, setShowPaidDetailsModal] = useState(false);
   const [managerForm, setManagerForm] = useState<{
       amount: string, 
       description: string, 
@@ -79,17 +82,28 @@ const FinancialAdmin: React.FC = () => {
       const startStr = dateRange.start.toISOString().split('T')[0];
       const endStr = dateRange.end.toISOString().split('T')[0];
 
-      const [txData, settingsData, prosRes, servicesRes, configsRes] = await Promise.all([
+      const [txData, settingsData, prosRes, servicesRes, configsRes, adminProfilesRes, billsRes] = await Promise.all([
           getTransactions({ startDate: startStr, endDate: endStr }),
           getSettings(),
           db.professionals().select('id, name'),
           db.services().select('id, name'),
-          db.professionalServices().select('*')
+          db.professionalServices().select('*'),
+          db.profiles().select('professional_id').eq('role', 'ADMIN'),
+          supabase.from('bills').select('*').gte('due_date', startStr).lte('due_date', endStr)
       ]);
 
       setAllTransactions(txData);
       setSettings(settingsData);
       
+      if (billsRes.data) {
+          setAllBills(billsRes.data);
+      }
+      
+      if (adminProfilesRes.data) {
+          const adminIds = adminProfilesRes.data.map(p => p.professional_id).filter(Boolean) as string[];
+          setAdminPros(adminIds);
+      }
+
       if (prosRes.data) {
           setAllProfessionals(prosRes.data);
           const map: Record<string, string> = {};
@@ -162,6 +176,22 @@ const FinancialAdmin: React.FC = () => {
     });
   }, [allTransactions, dateRange, selectedPro]);
 
+  // --- CÁLCULO DE GASTOS MENSAIS (PREVISTO VS PAGO) ---
+  const monthlyExpenses = useMemo(() => {
+    // Previsto: Contas pendentes no período
+    const predicted = allBills
+      .filter(b => b.status === 'PENDING')
+      .reduce((acc, b) => acc + (b.value || 0), 0);
+    
+    // Pago: Todas as transações de COMPRA pagas no período (inclui contas, comissões, despesas, etc)
+    const paidTransactions = filteredData
+      .filter(t => t.operation === 'COMPRA' && t.status === 'Pago');
+      
+    const paid = paidTransactions.reduce((acc, t) => acc + Math.abs(t.val), 0);
+
+    return { predicted, paid, paidTransactions };
+  }, [allBills, filteredData]);
+
   // --- EXPORTAÇÃO EXCEL ---
   const exportToExcel = () => {
     const headers = [
@@ -227,7 +257,7 @@ const FinancialAdmin: React.FC = () => {
     const futureTransactions: Transaction[] = [];
     
     // Dados para Gráfico Principal
-    const chartMap: Record<string, { name: string, entrada: number, saida: number, lucro: number }> = {};
+    const chartMap: Record<string, any> = {};
     
     // Dados para Produção de Barbeiros
     const proMap: Record<string, { gross: number, commission: number, pending: number }> = {};
@@ -260,12 +290,25 @@ const FinancialAdmin: React.FC = () => {
 
       // Chart Data (Agrupado por dia)
       const dayLabel = new Date(t.date + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-      if (!chartMap[dayLabel]) chartMap[dayLabel] = { name: dayLabel, entrada: 0, saida: 0, lucro: 0 };
+      if (!chartMap[dayLabel]) chartMap[dayLabel] = { name: dayLabel, entrada: 0, saida: 0, lucro: 0, totalVendas: 0 };
       
       if (t.operation === 'VENDA') {
         if (t.category !== 'Gorjeta' && t.type !== 'GORJETA') {
           chartMap[dayLabel].entrada += t.val;
           chartMap[dayLabel].lucro += (t.val - comm);
+          chartMap[dayLabel].totalVendas += t.val;
+          
+          const proId = t.professional_id || professionalsMap[t.pro || ''];
+          const isAdmin = proId && adminPros.includes(proId);
+          const proNameLower = (t.pro || '').toLowerCase();
+          const isSystem = ['admin', 'sistema', 'socios', 'sócio', 'sócios'].includes(proNameLower);
+          
+          // Só inclui se for um profissional cadastrado E não for admin E não for nome de sistema
+          // E garantimos que o nome não seja 'Admin' ou 'Sistema' mesmo que tenha proId
+          if (proId && !isAdmin && !isSystem) {
+              const proName = t.pro || 'Outros';
+              chartMap[dayLabel][proName] = (chartMap[dayLabel][proName] || 0) + t.val;
+          }
         }
       } else {
         chartMap[dayLabel].saida += Math.abs(t.val);
@@ -275,10 +318,18 @@ const FinancialAdmin: React.FC = () => {
       // Produção por Barbeiro
       if (t.operation === 'VENDA' && t.pro) {
         if (t.category !== 'Gorjeta' && t.type !== 'GORJETA') {
-          if (!proMap[t.pro]) proMap[t.pro] = { gross: 0, commission: 0, pending: 0 };
-          proMap[t.pro].gross += t.val;
-          proMap[t.pro].commission += comm;
-          if (!t.commission_paid) proMap[t.pro].pending += comm;
+          const proId = t.professional_id || professionalsMap[t.pro];
+          const isAdmin = proId && adminPros.includes(proId);
+          const proNameLower = t.pro.toLowerCase();
+          const isSystem = ['admin', 'sistema', 'socios', 'sócio', 'sócios'].includes(proNameLower);
+          
+          // Só inclui se for um profissional cadastrado E não for admin E não for nome de sistema
+          if (proId && !isAdmin && !isSystem) {
+              if (!proMap[t.pro]) proMap[t.pro] = { gross: 0, commission: 0, pending: 0 };
+              proMap[t.pro].gross += t.val;
+              proMap[t.pro].commission += comm;
+              if (!t.commission_paid) proMap[t.pro].pending += comm;
+          }
         }
       }
 
@@ -327,7 +378,7 @@ const FinancialAdmin: React.FC = () => {
         topProducts, 
         topClients 
     };
-  }, [filteredData, commissionConfigs, servicesMap, professionalsMap]);
+  }, [filteredData, commissionConfigs, servicesMap, professionalsMap, adminPros]);
 
   // --- AÇÕES DO MODAL ---
   const handleOpenEdit = (t: Transaction) => {
@@ -404,12 +455,20 @@ const FinancialAdmin: React.FC = () => {
             txItem = `Sangria: ${managerForm.description}`;
             txVal = -amount;
         } else if (type === 'adjust') {
-            const accountName = showAdjustModal.type === 'cash' ? 'Caixa da Barbearia' : 'Conta Corrente';
+            const accountName = 
+                showAdjustModal.type === 'cash' ? 'Caixa (Dinheiro)' : 
+                showAdjustModal.type === 'pix' ? 'Caixa (Pix)' :
+                showAdjustModal.type === 'card' ? 'Caixa (Cartão)' : 'Conta Corrente';
+            
             const opType = managerForm.operationType;
 
             if (opType === 'deposit') {
                 if (showAdjustModal.type === 'cash') {
                     newSettings.cash_balance = (newSettings.cash_balance || 0) + amount;
+                } else if (showAdjustModal.type === 'pix') {
+                    newSettings.pix_balance = (newSettings.pix_balance || 0) + amount;
+                } else if (showAdjustModal.type === 'card') {
+                    newSettings.card_balance = (newSettings.card_balance || 0) + amount;
                 } else {
                     newSettings.bank_balance = (newSettings.bank_balance || 0) + amount;
                 }
@@ -419,6 +478,10 @@ const FinancialAdmin: React.FC = () => {
             } else if (opType === 'withdraw') {
                 if (showAdjustModal.type === 'cash') {
                     newSettings.cash_balance = (newSettings.cash_balance || 0) - amount;
+                } else if (showAdjustModal.type === 'pix') {
+                    newSettings.pix_balance = (newSettings.pix_balance || 0) - amount;
+                } else if (showAdjustModal.type === 'card') {
+                    newSettings.card_balance = (newSettings.card_balance || 0) - amount;
                 } else {
                     newSettings.bank_balance = (newSettings.bank_balance || 0) - amount;
                 }
@@ -426,14 +489,26 @@ const FinancialAdmin: React.FC = () => {
                 txVal = -amount;
                 operation = 'COMPRA';
             } else if (opType === 'transfer') {
-                const targetName = showAdjustModal.type === 'cash' ? 'Conta Corrente' : 'Caixa da Barbearia';
+                const targetName = managerForm.target === 'bank' ? 'Conta Corrente' : 'Caixa (Dinheiro)';
+                
+                // Subtrai da origem
                 if (showAdjustModal.type === 'cash') {
                     newSettings.cash_balance = (newSettings.cash_balance || 0) - amount;
-                    newSettings.bank_balance = (newSettings.bank_balance || 0) + amount;
+                } else if (showAdjustModal.type === 'pix') {
+                    newSettings.pix_balance = (newSettings.pix_balance || 0) - amount;
+                } else if (showAdjustModal.type === 'card') {
+                    newSettings.card_balance = (newSettings.card_balance || 0) - amount;
                 } else {
                     newSettings.bank_balance = (newSettings.bank_balance || 0) - amount;
+                }
+
+                // Adiciona no destino
+                if (managerForm.target === 'bank') {
+                    newSettings.bank_balance = (newSettings.bank_balance || 0) + amount;
+                } else {
                     newSettings.cash_balance = (newSettings.cash_balance || 0) + amount;
                 }
+
                 txItem = `Transferência: ${accountName} -> ${targetName} (${managerForm.description})`;
                 txVal = 0;
             }
@@ -532,7 +607,11 @@ const FinancialAdmin: React.FC = () => {
   // Lista única de profissionais para o filtro
   const uniquePros = useMemo(() => {
     const pros = new Set(allTransactions.map(t => t.pro).filter(Boolean));
-    return Array.from(pros);
+    // Filtra para não mostrar Admin/Sistema no dropdown de filtro
+    return Array.from(pros).filter(p => {
+      const name = String(p || '').toLowerCase();
+      return !['admin', 'sistema', 'socios', 'sócio', 'sócios'].includes(name);
+    });
   }, [allTransactions]);
 
   return (
@@ -636,8 +715,8 @@ const FinancialAdmin: React.FC = () => {
                             Detalhar
                         </button>
                     </div>
-                    <h2 className="text-2xl font-black text-blue-900">R$ {((settings?.cash_balance || 0) + (settings?.bank_balance || 0)).toFixed(2)}</h2>
-                    <p className="text-[9px] text-gray-400 font-medium mt-1">Dinheiro disponível para saque ou despesas.</p>
+                    <h2 className="text-2xl font-black text-blue-900">R$ {((settings?.cash_balance || 0) + (settings?.pix_balance || 0)).toFixed(2)}</h2>
+                    <p className="text-[9px] text-gray-400 font-medium mt-1">Soma de Dinheiro e Pix em caixa.</p>
                 </div>
             </div>
 
@@ -666,6 +745,51 @@ const FinancialAdmin: React.FC = () => {
             </div>
         </div>
 
+        {/* CONTROLE DE GASTOS MENSAIS */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="bg-white p-5 rounded-[2rem] border border-gray-100 shadow-sm flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                    <div className="bg-blue-50 p-3 rounded-2xl text-blue-600">
+                        <ClipboardList size={24} />
+                    </div>
+                    <div>
+                        <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Gasto Previsto (Mês)</span>
+                        <h3 className="text-xl font-black text-blue-900">R$ {monthlyExpenses.predicted.toFixed(2)}</h3>
+                    </div>
+                </div>
+                <div className="text-right">
+                    <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Status</span>
+                    <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded-lg">Planejado</span>
+                </div>
+            </div>
+
+            <div className="bg-white p-5 rounded-[2rem] border border-gray-100 shadow-sm flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                    <div className="bg-green-50 p-3 rounded-2xl text-green-600">
+                        <CheckCircle2 size={24} />
+                    </div>
+                    <div>
+                        <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Gasto Pago (Mês)</span>
+                        <h3 className="text-xl font-black text-green-600">R$ {monthlyExpenses.paid.toFixed(2)}</h3>
+                    </div>
+                </div>
+                <div className="text-right flex flex-col items-end gap-2">
+                    <button 
+                        onClick={() => setShowPaidDetailsModal(true)}
+                        className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-3 py-1 rounded-lg hover:bg-blue-100 transition-colors"
+                    >
+                        Detalhar
+                    </button>
+                    <div className="text-right">
+                        <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Aproveitamento</span>
+                        <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded-lg">
+                            {monthlyExpenses.predicted > 0 ? ((monthlyExpenses.paid / monthlyExpenses.predicted) * 100).toFixed(0) : 0}%
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         {/* COMPOSIÇÃO DO CAIXA E OBRIGAÇÕES */}
         <div id="composicao-caixa" className="bg-white p-6 rounded-[2.5rem] border border-gray-100 shadow-sm space-y-6">
             <h3 className="text-xs font-black text-gray-900 uppercase tracking-widest flex items-center gap-2">
@@ -673,21 +797,65 @@ const FinancialAdmin: React.FC = () => {
             </h3>
             
             <div className="space-y-4">
-                {/* Caixa da Barbearia (Antigo Caixa Físico) */}
+                {/* Dinheiro */}
                 <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100">
                     <div className="flex items-center gap-3">
-                        <div className="bg-white p-2 rounded-xl text-gray-600 shadow-sm">
+                        <div className="bg-white p-2 rounded-xl text-green-600 shadow-sm">
                             <Banknote size={18} />
                         </div>
                         <div>
-                            <p className="text-xs font-bold text-gray-800">Caixa da Barbearia</p>
-                            <p className="text-[10px] text-gray-400">Dinheiro e Pix</p>
+                            <p className="text-xs font-bold text-gray-800">Dinheiro</p>
+                            <p className="text-[10px] text-gray-400">Espécie em mãos</p>
                         </div>
                     </div>
                     <div className="flex items-center gap-3">
                         <span className="text-sm font-black text-gray-900">R$ {(settings?.cash_balance || 0).toFixed(2)}</span>
                         <button 
                             onClick={() => setShowAdjustModal({ show: true, type: 'cash' })}
+                            className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-3 py-1.5 rounded-lg active:scale-95 transition-all"
+                        >
+                            Ajustar
+                        </button>
+                    </div>
+                </div>
+
+                {/* Pix */}
+                <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100">
+                    <div className="flex items-center gap-3">
+                        <div className="bg-white p-2 rounded-xl text-blue-500 shadow-sm">
+                            <ArrowLeftRight size={18} />
+                        </div>
+                        <div>
+                            <p className="text-xs font-bold text-gray-800">Pix</p>
+                            <p className="text-[10px] text-gray-400">Saldo recebido via Pix</p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <span className="text-sm font-black text-gray-900">R$ {(settings?.pix_balance || 0).toFixed(2)}</span>
+                        <button 
+                            onClick={() => setShowAdjustModal({ show: true, type: 'pix' as any })}
+                            className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-3 py-1.5 rounded-lg active:scale-95 transition-all"
+                        >
+                            Ajustar
+                        </button>
+                    </div>
+                </div>
+
+                {/* Cartão */}
+                <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100">
+                    <div className="flex items-center gap-3">
+                        <div className="bg-white p-2 rounded-xl text-purple-600 shadow-sm">
+                            <ShoppingBag size={18} />
+                        </div>
+                        <div>
+                            <p className="text-xs font-bold text-gray-800">Cartão</p>
+                            <p className="text-[10px] text-gray-400">Crédito e Débito</p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <span className="text-sm font-black text-gray-900">R$ {(settings?.card_balance || 0).toFixed(2)}</span>
+                        <button 
+                            onClick={() => setShowAdjustModal({ show: true, type: 'card' as any })}
                             className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-3 py-1.5 rounded-lg active:scale-95 transition-all"
                         >
                             Ajustar
@@ -716,50 +884,52 @@ const FinancialAdmin: React.FC = () => {
                         </button>
                     </div>
                 </div>
+            </div>
 
-                {/* A Receber (Futuro) */}
-                <div className="flex items-center justify-between p-4 bg-orange-50/50 rounded-2xl border border-orange-100/50">
-                    <div className="flex items-center gap-3">
-                        <div className="bg-white p-2 rounded-xl text-orange-600 shadow-sm">
-                            <Clock size={18} />
-                        </div>
-                        <div>
-                            <p className="text-xs font-bold text-gray-800">A Receber (Futuro)</p>
-                            <p className="text-[10px] text-gray-400">Vendas no cartão/prazo</p>
-                        </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                        <span className="text-sm font-black text-orange-600">R$ {stats.futureReceivables.toFixed(2)}</span>
-                        <button 
-                            onClick={() => setShowFutureModal(true)}
-                            className="text-[10px] font-black text-orange-400 uppercase tracking-widest px-3 py-1.5 hover:bg-orange-50 rounded-lg transition-all"
-                        >
-                            Detalhar
-                        </button>
-                    </div>
+            {/* Visual Separation for Commission Payments */}
+            <div className="pt-6 border-t border-dashed border-gray-200 space-y-4">
+                <div className="flex items-center justify-between">
+                    <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Obrigações e Provisões</h4>
                 </div>
-
-                {/* A Pagar (Comissões) */}
-                <div className="flex items-center justify-between p-4 bg-red-50/50 rounded-2xl border border-red-100/50">
+                
+                <div className="flex items-center justify-between p-4 bg-red-50 rounded-2xl border border-red-100">
                     <div className="flex items-center gap-3">
                         <div className="bg-white p-2 rounded-xl text-red-600 shadow-sm">
                             <Users size={18} />
                         </div>
                         <div>
-                            <p className="text-xs font-bold text-gray-800">A Pagar (Comissões)</p>
-                            <p className="text-[10px] text-gray-400">Comprometido com equipe</p>
+                            <p className="text-xs font-bold text-red-900">Comissões a Pagar</p>
+                            <p className="text-[10px] text-red-400">Comprometido com equipe</p>
                         </div>
                     </div>
                     <div className="flex items-center gap-3">
-                        <span className="text-sm font-black text-red-600">R$ {stats.pendingCommissions.toFixed(2)}</span>
+                        <span className="text-sm font-black text-red-900">R$ {stats.pendingCommissions.toFixed(2)}</span>
                         <button 
-                            onClick={() => {
-                                const el = document.getElementById('equipe-producao');
-                                el?.scrollIntoView({ behavior: 'smooth' });
-                            }}
-                            className="text-[10px] font-black text-red-600 uppercase tracking-widest bg-red-50 px-3 py-1.5 rounded-lg active:scale-95 transition-all"
+                            onClick={() => document.getElementById('equipe-producao')?.scrollIntoView({ behavior: 'smooth' })}
+                            className="text-[10px] font-black text-red-600 uppercase tracking-widest bg-red-100/50 px-3 py-1.5 rounded-lg active:scale-95 transition-all"
                         >
-                            Ver Profissionais
+                            Pagar
+                        </button>
+                    </div>
+                </div>
+
+                <div className="flex items-center justify-between p-4 bg-orange-50 rounded-2xl border border-orange-100">
+                    <div className="flex items-center gap-3">
+                        <div className="bg-white p-2 rounded-xl text-orange-600 shadow-sm">
+                            <Clock size={18} />
+                        </div>
+                        <div>
+                            <p className="text-xs font-bold text-orange-900">A Receber (Futuro)</p>
+                            <p className="text-[10px] text-orange-400">Vendas no cartão/prazo</p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <span className="text-sm font-black text-orange-900">R$ {stats.futureReceivables.toFixed(2)}</span>
+                        <button 
+                            onClick={() => setShowFutureModal(true)}
+                            className="text-[10px] font-black text-orange-600 uppercase tracking-widest bg-orange-100/50 px-3 py-1.5 rounded-lg active:scale-95 transition-all"
+                        >
+                            Ver
                         </button>
                     </div>
                 </div>
@@ -769,28 +939,34 @@ const FinancialAdmin: React.FC = () => {
         {/* GRÁFICO DE RESULTADO LÍQUIDO DIÁRIO */}
         <div className="bg-white p-6 rounded-[2.5rem] border border-gray-100 shadow-sm">
             <h3 className="text-xs font-black text-gray-900 uppercase tracking-widest mb-6 flex items-center gap-2">
-                <BarChart3 size={16} className="text-blue-900" /> Fluxo de Resultado (Lucro Diário)
+                <BarChart3 size={16} className="text-blue-900" /> Faturamento Diário por Colaborador
             </h3>
             <div className="h-64 w-full">
                 <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={stats.chartData}>
+                    <BarChart data={stats.chartData}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
                         <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#9ca3af'}} />
                         <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#9ca3af'}} />
                         <Tooltip 
                             contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
-                            cursor={{stroke: '#1e3a8a', strokeWidth: 1}}
+                            cursor={{fill: '#f3f4f6'}}
                         />
-                        <Line 
-                            type="monotone" 
-                            dataKey="lucro" 
-                            name="Lucro Líquido" 
-                            stroke="#1e3a8a" 
-                            strokeWidth={3} 
-                            dot={{ r: 4, fill: '#1e3a8a', strokeWidth: 2, stroke: '#fff' }}
-                            activeDot={{ r: 6, strokeWidth: 0 }}
-                        />
-                    </LineChart>
+                        {stats.prosData.map((pro, index) => {
+                            const colors = ['#1e3a8a', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#f97316', '#14b8a6'];
+                            return (
+                                <Bar 
+                                    key={pro.name} 
+                                    dataKey={pro.name} 
+                                    name={pro.name} 
+                                    stackId="a" 
+                                    fill={colors[index % colors.length]} 
+                                    radius={index === stats.prosData.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}
+                                />
+                            );
+                        })}
+                        {/* Adiciona "Outros" caso haja vendas sem profissional vinculado */}
+                        <Bar dataKey="Outros" name="Outros" stackId="a" fill="#9ca3af" radius={[4, 4, 0, 0]} />
+                    </BarChart>
                 </ResponsiveContainer>
             </div>
         </div>
@@ -1134,7 +1310,11 @@ const FinancialAdmin: React.FC = () => {
             <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-6 shadow-2xl space-y-5 animate-in zoom-in-95">
                 <div className="flex justify-between items-center px-1">
                     <h3 className="text-blue-900 font-black uppercase tracking-widest text-xs flex items-center gap-2">
-                        <Edit2 size={16} /> Movimentar {showAdjustModal.type === 'cash' ? 'Caixa da Barbearia' : 'Conta Corrente'}
+                        <Edit2 size={16} /> Movimentar {
+                            showAdjustModal.type === 'cash' ? 'Caixa (Dinheiro)' : 
+                            showAdjustModal.type === 'pix' ? 'Caixa (Pix)' :
+                            showAdjustModal.type === 'card' ? 'Caixa (Cartão)' : 'Conta Corrente'
+                        }
                     </h3>
                     <button onClick={() => setShowAdjustModal({ show: false, type: null })} className="text-gray-400 p-1"><X size={20} /></button>
                 </div>
@@ -1165,8 +1345,28 @@ const FinancialAdmin: React.FC = () => {
                     {/* Conteúdo Dinâmico */}
                     <div className="space-y-3">
                         {managerForm.operationType === 'transfer' && (
-                            <div className="bg-blue-50 p-3 rounded-xl border border-blue-100 text-[10px] text-blue-800 font-medium">
-                                Transferindo de <b>{showAdjustModal.type === 'cash' ? 'Caixa da Barbearia' : 'Conta Corrente'}</b> para <b>{showAdjustModal.type === 'cash' ? 'Conta Corrente' : 'Caixa da Barbearia'}</b>.
+                            <div className="space-y-3">
+                                <div className="bg-blue-50 p-3 rounded-xl border border-blue-100 text-[10px] text-blue-800 font-medium">
+                                    Transferindo de <b>{
+                                        showAdjustModal.type === 'cash' ? 'Caixa (Dinheiro)' : 
+                                        showAdjustModal.type === 'pix' ? 'Caixa (Pix)' :
+                                        showAdjustModal.type === 'card' ? 'Caixa (Cartão)' : 'Conta Corrente'
+                                    }</b> para:
+                                </div>
+                                <div className="flex bg-gray-50 p-1 rounded-2xl border border-gray-100">
+                                    <button 
+                                        onClick={() => setManagerForm({...managerForm, target: 'cash'})}
+                                        className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${managerForm.target === 'cash' ? 'bg-white text-blue-900 shadow-sm' : 'text-gray-400'}`}
+                                    >
+                                        Caixa (Dinheiro)
+                                    </button>
+                                    <button 
+                                        onClick={() => setManagerForm({...managerForm, target: 'bank'})}
+                                        className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${managerForm.target === 'bank' ? 'bg-white text-blue-900 shadow-sm' : 'text-gray-400'}`}
+                                    >
+                                        Conta Corrente
+                                    </button>
+                                </div>
                             </div>
                         )}
 
@@ -1203,6 +1403,47 @@ const FinancialAdmin: React.FC = () => {
                     >
                         {saving ? <Loader2 className="animate-spin" size={16} /> : 'Confirmar Operação'}
                     </button>
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* MODAL DETALHES DE GASTOS PAGOS */}
+      {showPaidDetailsModal && (
+        <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+            <div className="bg-white w-full max-w-lg rounded-[2.5rem] p-6 shadow-2xl flex flex-col max-h-[80vh] animate-in zoom-in-95">
+                <div className="flex justify-between items-center px-1 mb-4 shrink-0">
+                    <h3 className="text-blue-900 font-black uppercase tracking-widest text-xs flex items-center gap-2">
+                        <ClipboardList size={16} /> Detalhamento de Gastos Pagos
+                    </h3>
+                    <button onClick={() => setShowPaidDetailsModal(false)} className="text-gray-400 p-1"><X size={20} /></button>
+                </div>
+
+                <div className="overflow-y-auto flex-1 pr-2 space-y-3">
+                    {monthlyExpenses.paidTransactions.length === 0 ? (
+                        <p className="text-center text-gray-400 text-sm py-8">Nenhum gasto pago no período.</p>
+                    ) : (
+                        monthlyExpenses.paidTransactions.map(tx => (
+                            <div key={tx.id} className="bg-gray-50 p-4 rounded-2xl border border-gray-100 flex justify-between items-center">
+                                <div>
+                                    <p className="text-xs font-bold text-gray-800">{tx.item}</p>
+                                    <div className="flex items-center gap-2 mt-1">
+                                        <span className="text-[10px] text-gray-500">{new Date(tx.date + 'T12:00:00').toLocaleDateString('pt-BR')}</span>
+                                        <span className="text-gray-300">|</span>
+                                        <span className="text-[10px] text-gray-500">{tx.category || tx.type}</span>
+                                    </div>
+                                </div>
+                                <span className="text-sm font-black text-red-600">
+                                    R$ {Math.abs(tx.val).toFixed(2).replace('.', ',')}
+                                </span>
+                            </div>
+                        ))
+                    )}
+                </div>
+                
+                <div className="mt-4 pt-4 border-t border-gray-100 flex justify-between items-center shrink-0">
+                    <span className="text-xs font-black text-gray-600 uppercase tracking-widest">Total Pago</span>
+                    <span className="text-xl font-black text-red-600">R$ {monthlyExpenses.paid.toFixed(2).replace('.', ',')}</span>
                 </div>
             </div>
         </div>

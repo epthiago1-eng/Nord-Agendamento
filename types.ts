@@ -59,6 +59,8 @@ export interface EstablishmentSettings {
   slotInterval: number;
   cash_balance?: number;
   bank_balance?: number;
+  pix_balance?: number;
+  card_balance?: number;
 }
 
 export interface ServiceGroup {

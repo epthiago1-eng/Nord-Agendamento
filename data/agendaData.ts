@@ -15,10 +15,10 @@ export interface AgendaBlock {
 
 // --- CONFIGURAÇÕES ---
 
-export const getSettings = async (): Promise<EstablishmentSettings> => {
+export const getSettings = async (): Promise<EstablishmentSettings & { id?: number }> => {
   const { data, error } = await supabase
     .from('settings')
-    .select('primary_color, secondary_color, name, logo_url, slot_interval, cash_balance, bank_balance')
+    .select('id, primary_color, secondary_color, name, logo_url, slot_interval, cash_balance, bank_balance, pix_balance, card_balance')
     .single();
 
   if (error || !data) {
@@ -27,32 +27,41 @@ export const getSettings = async (): Promise<EstablishmentSettings> => {
       secondaryColor: '#000000',
       name: 'Nord Barbershop',
       logoUrl: '',
-      slotInterval: 15
+      slotInterval: 15,
+      cash_balance: 0,
+      bank_balance: 0,
+      pix_balance: 0,
+      card_balance: 0
     };
   }
 
   return {
+      id: data.id,
       primaryColor: data.primary_color || '#1e3a8a',
       secondaryColor: data.secondary_color || '#000000',
       name: data.name || 'Nord Barbershop',
       logoUrl: data.logo_url || '',
       slotInterval: data.slot_interval || 15,
       cash_balance: data.cash_balance || 0,
-      bank_balance: data.bank_balance || 0
+      bank_balance: data.bank_balance || 0,
+      pix_balance: data.pix_balance || 0,
+      card_balance: data.card_balance || 0
   };
 };
 
-export const saveSettings = async (settings: EstablishmentSettings) => {
+export const saveSettings = async (settings: EstablishmentSettings & { id?: number }) => {
   // BANCO: table 'settings' usa snake_case
   const payload = {
-      id: 1, 
+      id: settings.id || 1, 
       primary_color: settings.primaryColor,
       secondary_color: settings.secondaryColor,
       name: settings.name,
       logo_url: settings.logoUrl,
       slot_interval: settings.slotInterval,
       cash_balance: settings.cash_balance || 0,
-      bank_balance: settings.bank_balance || 0
+      bank_balance: settings.bank_balance || 0,
+      pix_balance: settings.pix_balance || 0,
+      card_balance: settings.card_balance || 0
   };
 
   const { error } = await supabase.from('settings').upsert(payload);

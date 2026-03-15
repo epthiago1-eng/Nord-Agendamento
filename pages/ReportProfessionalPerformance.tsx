@@ -24,6 +24,7 @@ const ReportProfessionalPerformance: React.FC = () => {
   
   const [configs, setConfigs] = useState<any[]>([]);
   const [calculatedData, setCalculatedData] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
   // 1. Carrega configs do banco ao montar
   useEffect(() => {
@@ -36,74 +37,93 @@ const ReportProfessionalPerformance: React.FC = () => {
 
   // 2. Calcula os dados quando configs mudam (ou dados base)
   useEffect(() => {
-    // Helper para pegar taxa do array carregado do banco
-    const getCommissionRate = (proId: string, itemName: string) => {
-        const serviceId = SERVICE_IDS_MAPPING[itemName];
-        
-        // Tenta achar a config específica
-        const config = configs.find((c: any) => c.professional_id === proId && c.service_id === serviceId);
-        
-        if (config) {
-            return { type: config.commission_type, value: config.commission_value };
+    const fetchData = async () => {
+        setLoading(true);
+        try {
+            // Busca profissionais
+            const { data: pros } = await db.professionals().select('*');
+            if (!pros) return;
+
+            // Busca perfis para saber quem é ADMIN
+            const { data: profiles } = await db.profiles().select('professional_id, role');
+            const adminProIds = profiles?.filter(p => p.role === 'ADMIN').map(p => p.professional_id) || [];
+
+            // Filtra profissionais (Diego e Felipe apenas, ou seja, não ADMIN e não Sistema)
+            const filteredPros = pros.filter(p => {
+                const isAdmin = adminProIds.includes(p.id);
+                const nameLower = p.name.toLowerCase();
+                const isSystem = ['admin', 'sistema', 'socios', 'sócio', 'sócios'].includes(nameLower);
+                return !isAdmin && !isSystem;
+            });
+
+            // Busca transações do período
+            const { data: transactions } = await db.transactions()
+                .select('*')
+                .gte('date', dateRange.start)
+                .lte('date', dateRange.end);
+            
+            if (!transactions) return;
+
+            // Processamento por profissional
+            const processed = filteredPros.map(pro => {
+                const proTransactions = transactions.filter(t => 
+                    t.professional_id === pro.id || t.pro === pro.name
+                );
+
+                let grossServices = 0;
+                let commService = 0;
+                let grossProducts = 0;
+                let commProduct = 0;
+                let totalAppointments = 0;
+
+                const sales = proTransactions.map(t => {
+                    const isProduct = t.category === 'Produto' || t.type === 'PRODUTO';
+                    const val = Math.abs(t.val);
+                    const comm = t.commission_amount || 0;
+
+                    if (isProduct) {
+                        grossProducts += val;
+                        commProduct += comm;
+                    } else {
+                        grossServices += val;
+                        commService += comm;
+                        totalAppointments++;
+                    }
+
+                    return {
+                        id: t.id,
+                        client: t.client || 'Cliente',
+                        date: t.date.split('-').reverse().slice(0, 2).join('/'),
+                        type: isProduct ? 'Produto' : 'Serviço',
+                        item: t.item,
+                        gross: val,
+                        comm: comm
+                    };
+                });
+
+                return {
+                    id: pro.id,
+                    name: pro.name,
+                    avatar: pro.avatar_url || `https://picsum.photos/seed/${pro.name}/100`,
+                    totalAppointments,
+                    grossServices,
+                    commService,
+                    grossProducts,
+                    commProduct,
+                    sales
+                };
+            });
+
+            setCalculatedData(processed);
+        } catch (err) {
+            console.error('Erro ao carregar dados:', err);
+        } finally {
+            setLoading(false);
         }
-        
-        return { type: 'percent', value: 40 }; // Padrão se não achar
     };
 
-    // Dados Mockados para Exemplo (Substituir por query de vendas real depois)
-    const baseData = [
-      {
-        id: '1', // ID do Profissional no Banco (Ex: Diego)
-        name: 'Diego', 
-        avatar: 'https://picsum.photos/seed/diego/100',
-        totalAppointments: 42,
-        grossProducts: 450.00,
-        commProduct: 90.00,
-        sales: [
-          { id: 's1', client: 'Jhonny', date: '05/02', type: 'Serviço', item: 'Corte + Barba', gross: 60.00 },
-          { id: 's2', client: 'Lauan', date: '05/02', type: 'Serviço', item: 'Corte Máquina', gross: 40.00 },
-        ]
-      },
-      {
-        id: '2', // Felipe
-        name: 'Felipe',
-        avatar: 'https://picsum.photos/seed/felipe/100',
-        totalAppointments: 38,
-        grossProducts: 200.00,
-        commProduct: 40.00,
-        sales: [
-          { id: 's4', client: 'Fernando', date: '05/02', type: 'Serviço', item: 'Corte Tesoura', gross: 55.00 },
-        ]
-      }
-    ];
-
-    // Processamento
-    const processed = baseData.map(pro => {
-        let grossServices = 0;
-        let commService = 0;
-        
-        const processedSales = pro.sales.map(sale => {
-            const rate = getCommissionRate(pro.id, sale.item);
-            const commVal = rate.type === 'percent' 
-                ? (sale.gross * (rate.value / 100)) 
-                : rate.value;
-            
-            grossServices += sale.gross;
-            commService += commVal;
-
-            return { ...sale, comm: commVal };
-        });
-
-        return {
-            ...pro,
-            grossServices,
-            commService,
-            sales: processedSales
-        };
-    });
-
-    setCalculatedData(processed);
-  }, [configs]);
+    fetchData();
+  }, [configs, dateRange]);
 
   // Team Summary calculation
   const teamStats = useMemo(() => {
@@ -202,7 +222,11 @@ const ReportProfessionalPerformance: React.FC = () => {
             <h3 className="text-gray-900 font-black text-xs uppercase tracking-[0.2em]">Ranking de Performance</h3>
           </div>
 
-          {calculatedData.sort((a, b) => (b.grossServices + b.grossProducts) - (a.grossServices + a.grossProducts)).map((pro) => (
+          {loading ? (
+            <div className="flex justify-center py-12 text-blue-900 font-bold text-xs uppercase tracking-widest animate-pulse">Carregando dados reais...</div>
+          ) : calculatedData.length === 0 ? (
+            <div className="text-center py-12 bg-white rounded-3xl border border-dashed border-gray-200 text-gray-400 text-xs font-bold uppercase">Nenhum dado encontrado no período</div>
+          ) : calculatedData.sort((a, b) => (b.grossServices + b.grossProducts) - (a.grossServices + a.grossProducts)).map((pro) => (
             <div key={pro.id} className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden transition-all">
               {/* Pro Main Header */}
               <div 

@@ -148,17 +148,34 @@ const FinancialForm: React.FC = () => {
         if (settings) {
             const amount = Math.abs(totalOperation);
             const newSettings = { ...settings };
+            const method = formData.paymentMethod.toLowerCase();
             
             if (operation === 'COMPRA') {
                 if (sourceAccount === 'cash') {
-                    newSettings.cash_balance = (newSettings.cash_balance || 0) - amount;
+                    if (method.includes('dinheiro')) {
+                        newSettings.cash_balance = (newSettings.cash_balance || 0) - amount;
+                    } else if (method.includes('pix')) {
+                        newSettings.pix_balance = (newSettings.pix_balance || 0) - amount;
+                    } else if (method.includes('cartão') || method.includes('cartao')) {
+                        newSettings.card_balance = (newSettings.card_balance || 0) - amount;
+                    } else {
+                        newSettings.cash_balance = (newSettings.cash_balance || 0) - amount;
+                    }
                 } else {
                     newSettings.bank_balance = (newSettings.bank_balance || 0) - amount;
                 }
             } else {
                 // VENDA (Entrada Avulsa)
                 if (sourceAccount === 'cash') {
-                    newSettings.cash_balance = (newSettings.cash_balance || 0) + amount;
+                    if (method.includes('dinheiro')) {
+                        newSettings.cash_balance = (newSettings.cash_balance || 0) + amount;
+                    } else if (method.includes('pix')) {
+                        newSettings.pix_balance = (newSettings.pix_balance || 0) + amount;
+                    } else if (method.includes('cartão') || method.includes('cartao')) {
+                        newSettings.card_balance = (newSettings.card_balance || 0) + amount;
+                    } else {
+                        newSettings.cash_balance = (newSettings.cash_balance || 0) + amount;
+                    }
                 } else {
                     newSettings.bank_balance = (newSettings.bank_balance || 0) + amount;
                 }

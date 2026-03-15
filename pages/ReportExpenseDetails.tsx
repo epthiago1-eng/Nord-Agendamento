@@ -1,66 +1,112 @@
 
-import React, { useState } from 'react';
-import { ChevronLeft, ChevronDown, ChevronUp, TrendingDown, Lightbulb, UserCheck, Settings, FileText } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { ChevronLeft, ChevronDown, ChevronUp, TrendingDown, Lightbulb, UserCheck, Settings, FileText, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-
-const mockExpenseCategories = [
-  {
-    id: 'c1',
-    name: 'Contas Fixas',
-    icon: Lightbulb,
-    total: 1200.00,
-    items: [
-      { id: 'e1', desc: 'Conta de Luz', date: '05/02', val: 450.00 },
-      { id: 'e2', desc: 'Aluguel Sala', date: '01/02', val: 750.00 },
-    ]
-  },
-  {
-    id: 'c2',
-    name: 'Comissões Profissionais',
-    icon: UserCheck,
-    total: 2450.00,
-    items: [
-      { id: 'e3', desc: 'Comissão Felipe', date: 'Fev', val: 1200.00 },
-      { id: 'e4', desc: 'Comissão Diego', date: 'Fev', val: 1250.00 },
-    ]
-  },
-  {
-    id: 'c3',
-    name: 'Despesas Gerais',
-    icon: Settings,
-    total: 550.00,
-    items: [
-      { id: 'e5', desc: 'Material de Limpeza', date: '10/02', val: 150.00 },
-      { id: 'e6', desc: 'Café e Insumos', date: '12/02', val: 400.00 },
-    ]
-  }
-];
+import { db } from '../supabase';
 
 const ReportExpenseDetails: React.FC = () => {
   const navigate = useNavigate();
   const [expandedCatId, setExpandedCatId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [categories, setCategories] = useState<any[]>([]);
+  const [totalExpense, setTotalExpense] = useState(0);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      setLoading(true);
+      try {
+        const now = new Date();
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+        const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+
+        const { data: transactions } = await db.transactions()
+          .select('*')
+          .eq('operation', 'DESPESA')
+          .gte('date', startOfMonth)
+          .lte('date', endOfMonth);
+
+        if (!transactions) return;
+
+        const catMap: Record<string, { name: string, icon: any, total: number, items: any[] }> = {
+          'Fixo': { name: 'Contas Fixas', icon: Lightbulb, total: 0, items: [] },
+          'Variável': { name: 'Contas Variáveis', icon: Settings, total: 0, items: [] },
+          'Pessoal': { name: 'Pessoal / Comissões', icon: UserCheck, total: 0, items: [] },
+          'Outros': { name: 'Outras Despesas', icon: FileText, total: 0, items: [] }
+        };
+
+        let total = 0;
+        transactions.forEach(t => {
+          const val = Math.abs(t.val);
+          total += val;
+          
+          let catKey = t.category || 'Outros';
+          if (!catMap[catKey]) {
+            catMap[catKey] = { name: catKey, icon: FileText, total: 0, items: [] };
+          }
+          
+          catMap[catKey].total += val;
+          catMap[catKey].items.push({
+            id: t.id,
+            desc: t.item,
+            date: t.date.split('-').reverse().slice(0, 2).join('/'),
+            val: val
+          });
+        });
+
+        const sortedCats = Object.entries(catMap)
+          .filter(([_, data]) => data.items.length > 0)
+          .map(([id, data]) => ({ id, ...data }))
+          .sort((a, b) => b.total - a.total);
+
+        setCategories(sortedCats);
+        setTotalExpense(total);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex flex-col h-full bg-[#fcfaff]">
+        <header className="bg-[#1e3a8a] text-white px-4 py-3 flex items-center sticky top-0 z-50">
+          <button onClick={() => navigate(-1)} className="p-1"><ChevronLeft size={24} /></button>
+          <h1 className="flex-1 text-center text-lg font-medium mr-8">Relatório de Despesas</h1>
+        </header>
+        <div className="flex-1 flex items-center justify-center">
+          <Loader2 className="animate-spin text-blue-900" size={32} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full bg-[#fcfaff]">
       <header className="bg-[#1e3a8a] text-white px-4 py-3 flex items-center sticky top-0 z-50">
-        <button onClick={() => navigate(-1)} className="p-1"><ChevronLeft size={24} /></button>
+        <button onClick={() => navigate(-1)} className="p-1 active:scale-90 transition-transform"><ChevronLeft size={24} /></button>
         <h1 className="flex-1 text-center text-lg font-medium mr-8">Relatório de Despesas</h1>
       </header>
 
       <div className="p-4 space-y-4 overflow-y-auto pb-24">
         <div className="flex justify-center mb-4">
             <button className="bg-white px-5 py-2 rounded-full border border-gray-100 text-xs font-bold text-blue-900 shadow-sm uppercase tracking-wider">
-                Fevereiro 2026
+                {new Date().toLocaleString('pt-BR', { month: 'long', year: 'numeric' })}
             </button>
         </div>
 
         <div className="bg-red-50 p-6 rounded-3xl border border-red-100 flex flex-col items-center mb-6">
             <TrendingDown className="text-red-500 mb-2" size={32} />
             <span className="text-red-800 text-[11px] font-bold uppercase tracking-widest">Gasto Total do Mês</span>
-            <span className="text-3xl font-black text-red-600">R$ 4.200,00</span>
+            <span className="text-3xl font-black text-red-600">R$ {totalExpense.toFixed(2).replace('.', ',')}</span>
         </div>
 
-        {mockExpenseCategories.map((cat) => (
+        {categories.length === 0 ? (
+          <div className="text-center py-12 bg-white rounded-3xl border border-dashed border-gray-100 text-gray-400 text-xs font-bold uppercase">Nenhuma despesa registrada no mês</div>
+        ) : categories.map((cat) => (
           <div key={cat.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden transition-all">
             <div 
               onClick={() => setExpandedCatId(expandedCatId === cat.id ? null : cat.id)}

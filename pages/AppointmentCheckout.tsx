@@ -653,29 +653,50 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                 // --- ATUALIZAÇÃO DO CAIXA DA BARBEARIA ---
                 // Calcula a diferença (delta) para evitar duplicação ou inconsistência
                 
-                // 1. Valor que JÁ ESTAVA no caixa (se o agendamento já foi pago em dinheiro/pix antes)
-                const wasPaidInCash = (
-                    appointment.status === 'Atendimento Realizado' &&
-                    appointment.payment_method &&
-                    (appointment.payment_method.toLowerCase().includes('dinheiro') || appointment.payment_method.toLowerCase().includes('pix'))
-                );
-                const previousValue = wasPaidInCash ? (appointment.totalValue || 0) : 0;
+                // 1. Valor que JÁ ESTAVA no caixa (se o agendamento já foi pago antes)
+                const previousMethod = appointment.status === 'Atendimento Realizado' ? (appointment.payment_method || '').toLowerCase() : '';
+                const previousValue = appointment.status === 'Atendimento Realizado' ? (appointment.totalValue || 0) : 0;
 
-                // 2. Valor que DEVE ESTAR no caixa agora (se o pagamento atual for dinheiro/pix)
-                const isPayingInCash = paymentMethod.toLowerCase().includes('dinheiro') || paymentMethod.toLowerCase().includes('pix');
-                const currentValue = isPayingInCash ? totals.total : 0;
+                // 2. Valor que DEVE ESTAR no caixa agora
+                const currentMethod = paymentMethod.toLowerCase();
+                const currentValue = totals.total;
 
-                // 3. Diferença a ser aplicada
-                const delta = currentValue - previousValue;
+                // 3. Lógica de Atualização por Método
+                try {
+                    const { data: currentSettings } = await supabase.from('settings').select('*').single();
+                    if (currentSettings) {
+                        const updates: any = {};
+                        
+                        // Estorna valor anterior se existia
+                        if (previousValue > 0) {
+                            if (previousMethod.includes('dinheiro')) {
+                                updates.cash_balance = (currentSettings.cash_balance || 0) - previousValue;
+                            } else if (previousMethod.includes('pix')) {
+                                updates.pix_balance = (currentSettings.pix_balance || 0) - previousValue;
+                            } else if (previousMethod.includes('cartão') || previousMethod.includes('crédito') || previousMethod.includes('débito')) {
+                                updates.card_balance = (currentSettings.card_balance || 0) - previousValue;
+                            }
+                        }
 
-                if (delta !== 0) {
-                    try {
-                        // Usa RPC segura para atualizar saldo (pode ser positivo ou negativo)
-                        const { error } = await supabase.rpc('update_cash_balance', { amount: delta });
-                        if (error) throw error;
-                    } catch (e) {
-                        console.error("Erro ao atualizar saldo do caixa:", e);
+                        // Aplica novo valor
+                        const baseCash = updates.cash_balance !== undefined ? updates.cash_balance : (currentSettings.cash_balance || 0);
+                        const basePix = updates.pix_balance !== undefined ? updates.pix_balance : (currentSettings.pix_balance || 0);
+                        const baseCard = updates.card_balance !== undefined ? updates.card_balance : (currentSettings.card_balance || 0);
+
+                        if (currentMethod.includes('dinheiro')) {
+                            updates.cash_balance = baseCash + currentValue;
+                        } else if (currentMethod.includes('pix')) {
+                            updates.pix_balance = basePix + currentValue;
+                        } else if (currentMethod.includes('cartão') || currentMethod.includes('crédito') || currentMethod.includes('débito')) {
+                            updates.card_balance = baseCard + currentValue;
+                        }
+
+                        if (Object.keys(updates).length > 0) {
+                            await supabase.from('settings').update(updates).eq('id', currentSettings.id);
+                        }
                     }
+                } catch (e) {
+                    console.error("Erro ao atualizar saldos:", e);
                 }
 
                 if (appointment.clientId) {
