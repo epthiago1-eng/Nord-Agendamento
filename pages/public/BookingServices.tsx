@@ -1,17 +1,23 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, CalendarDays, MapPin, ChevronLeft, Clock, Check, Loader2, Calendar } from 'lucide-react';
+import { Search, CalendarDays, MapPin, ChevronLeft, Clock, Check, Loader2, Calendar, Gift, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getSettings } from '../../data/agendaData';
 import { EstablishmentSettings } from '../../types';
 import { db } from '../../supabase';
+import AnnouncementPopup from '../../components/AnnouncementPopup';
 
 const BookingServices: React.FC = () => {
   const navigate = useNavigate();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  
+  const [showReferralModal, setShowReferralModal] = useState(false);
+  const [referralPhone, setReferralPhone] = useState('');
+  const [referralData, setReferralData] = useState<any>(null);
+  const [referralLoading, setReferralLoading] = useState(false);
+  const [referralError, setReferralError] = useState('');
+
   const [settings, setSettings] = useState<EstablishmentSettings | null>(null);
   const [services, setServices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -52,6 +58,29 @@ const BookingServices: React.FC = () => {
     navigate('/booking/schedule', { state: { selectedServices: selected } });
   };
 
+  const handleCheckReferrals = async () => {
+    if (!referralPhone) {
+      setReferralError('Digite seu telefone.');
+      return;
+    }
+    setReferralLoading(true);
+    setReferralError('');
+    setReferralData(null);
+    try {
+      const cleanPhone = referralPhone.replace(/\D/g, '');
+      const { data, error } = await db.clients().select('*').ilike('phone', `%${cleanPhone}%`).single();
+      if (error || !data) {
+        setReferralError('Cliente não encontrado com este telefone.');
+      } else {
+        setReferralData(data);
+      }
+    } catch (err) {
+      setReferralError('Erro ao buscar dados.');
+    } finally {
+      setReferralLoading(false);
+    }
+  };
+
   if (loading || !settings) {
       return (
           <div className="min-h-screen flex items-center justify-center bg-white">
@@ -62,6 +91,7 @@ const BookingServices: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-white flex flex-col font-sans">
+      <AnnouncementPopup targetAudience="PUBLIC" />
       <style>{`
         :root {
           --primary-color: ${settings.primaryColor};
@@ -112,14 +142,23 @@ const BookingServices: React.FC = () => {
             </button>
             </div>
 
-            {/* Botão de Consulta de Agendamentos */}
-            <button 
-                onClick={() => navigate('/booking/consult')}
-                className="w-full bg-white border border-gray-200 p-3 rounded-xl flex items-center justify-center gap-2 text-gray-600 font-bold text-xs uppercase tracking-widest shadow-sm active:scale-95 transition-all hover:bg-gray-50"
-            >
-                <Calendar size={16} className="text-primary" />
-                Consultar Meus Agendamentos
-            </button>
+            {/* Botões de Ação */}
+            <div className="grid grid-cols-2 gap-2">
+              <button 
+                  onClick={() => navigate('/booking/consult')}
+                  className="w-full bg-white border border-gray-200 p-3 rounded-xl flex items-center justify-center gap-2 text-gray-600 font-bold text-[10px] uppercase tracking-widest shadow-sm active:scale-95 transition-all hover:bg-gray-50"
+              >
+                  <Calendar size={16} className="text-primary" />
+                  Meus Agendamentos
+              </button>
+              <button 
+                  onClick={() => setShowReferralModal(true)}
+                  className="w-full bg-white border border-gray-200 p-3 rounded-xl flex items-center justify-center gap-2 text-gray-600 font-bold text-[10px] uppercase tracking-widest shadow-sm active:scale-95 transition-all hover:bg-gray-50"
+              >
+                  <Gift size={16} className="text-green-500" />
+                  Minhas Indicações
+              </button>
+            </div>
         </div>
 
         {/* Lista de Serviços */}
@@ -232,6 +271,82 @@ const BookingServices: React.FC = () => {
                     </button>
                 </div>
             </div>
+          </div>
+        </div>
+      )}
+      {/* Modal de Indicações */}
+      {showReferralModal && (
+        <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-6 shadow-2xl space-y-5 animate-in zoom-in-95">
+            <div className="flex justify-between items-center px-1">
+              <h3 className="text-[#1e3a8a] font-black uppercase tracking-widest text-xs flex items-center gap-2">
+                <Gift size={16} className="text-green-500" />
+                Minhas Indicações
+              </h3>
+              <button onClick={() => {
+                setShowReferralModal(false);
+                setReferralData(null);
+                setReferralPhone('');
+                setReferralError('');
+              }} className="text-gray-400 p-1">
+                <X size={20} />
+              </button>
+            </div>
+            
+            {!referralData ? (
+              <div className="space-y-4">
+                <p className="text-sm text-gray-600 text-center">
+                  Digite seu telefone para ver quantas indicações você tem e se ganhou um corte grátis!
+                </p>
+                <div>
+                  <input 
+                    type="tel" 
+                    placeholder="(xx) xxxxx-xxxx"
+                    value={referralPhone}
+                    onChange={(e) => setReferralPhone(e.target.value)}
+                    className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-blue-900 text-gray-800 font-bold text-center text-lg"
+                  />
+                </div>
+                {referralError && <p className="text-red-500 text-xs text-center font-bold">{referralError}</p>}
+                <button 
+                  onClick={handleCheckReferrals}
+                  disabled={referralLoading}
+                  className="w-full bg-blue-900 text-white font-black py-4 rounded-2xl shadow-lg active:scale-95 transition-transform uppercase tracking-widest text-xs flex items-center justify-center gap-2"
+                >
+                  {referralLoading ? <Loader2 className="animate-spin" size={16} /> : 'Consultar'}
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-6 text-center py-4">
+                <h4 className="text-xl font-black text-gray-900">Olá, {referralData.name.split(' ')[0]}!</h4>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-blue-50 p-4 rounded-2xl">
+                    <p className="text-[10px] font-bold text-blue-900 uppercase tracking-widest mb-1">Indicações</p>
+                    <p className="text-4xl font-black text-blue-600">{referralData.referral_count || 0}</p>
+                  </div>
+                  <div className="bg-green-50 p-4 rounded-2xl">
+                    <p className="text-[10px] font-bold text-green-900 uppercase tracking-widest mb-1">Cortes Grátis</p>
+                    <p className="text-4xl font-black text-green-600">{referralData.free_haircuts_earned || 0}</p>
+                  </div>
+                </div>
+
+                <p className="text-xs text-gray-500 font-medium px-4">
+                  A cada 3 amigos indicados que vierem cortar o cabelo, você ganha 1 corte grátis!
+                </p>
+
+                <button 
+                  onClick={() => {
+                    setShowReferralModal(false);
+                    setReferralData(null);
+                    setReferralPhone('');
+                  }}
+                  className="w-full bg-gray-100 text-gray-700 font-black py-4 rounded-2xl shadow-sm active:scale-95 transition-transform uppercase tracking-widest text-xs"
+                >
+                  Fechar
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

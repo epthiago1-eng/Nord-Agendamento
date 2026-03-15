@@ -51,6 +51,8 @@ import PaymentMethodForm from './pages/PaymentMethodForm';
 import ReportProfessionalPerformance from './pages/ReportProfessionalPerformance';
 import ReportFinancialSummary from './pages/ReportFinancialSummary';
 import ReportExpenseDetails from './pages/ReportExpenseDetails';
+import Announcements from './pages/Announcements';
+import AnnouncementForm from './pages/AnnouncementForm';
 
 // Páginas do Colaborador
 import CollaboratorFinancial from './pages/CollaboratorFinancial';
@@ -156,6 +158,10 @@ const App: React.FC = () => {
             <Route path="payment-methods" element={<PaymentMethodList />} />
             <Route path="payment-methods/new" element={<PaymentMethodForm />} />
             <Route path="payment-methods/edit/:id" element={<PaymentMethodForm />} />
+            
+            <Route path="announcements" element={<Announcements />} />
+            <Route path="announcements/new" element={<AnnouncementForm />} />
+            <Route path="announcements/edit/:id" element={<AnnouncementForm />} />
             
             <Route path="new-appointment" element={<AppointmentForm />} />
             <Route path="appointment-checkout/:id" element={<AppointmentCheckout />} />

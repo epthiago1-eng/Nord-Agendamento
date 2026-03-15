@@ -1,24 +1,42 @@
 
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, CheckCircle2, Loader2, CalendarX } from 'lucide-react';
+import { ChevronLeft, CheckCircle2, Loader2, CalendarX, Edit2, Gift, Users as UsersIcon } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { db } from '../supabase';
+import { db, supabase } from '../supabase';
 
 const ClientHistory: React.FC = () => {
   const navigate = useNavigate();
   const { id } = useParams();
   const [history, setHistory] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [clientName, setClientName] = useState('');
+  const [client, setClient] = useState<any>(null);
+  const [allClients, setAllClients] = useState<any[]>([]);
+  
+  // Modal de edição
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editForm, setEditForm] = useState({ name: '', phone: '', observation: '', referred_by: '' });
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
         if (!id) return;
         setLoading(true);
         try {
-            // 1. Buscar nome do cliente
-            const { data: client } = await db.clients().select('name').eq('id', id).single();
-            if (client) setClientName(client.name);
+            // 1. Buscar dados do cliente
+            const { data: clientData } = await db.clients().select('*').eq('id', id).single();
+            if (clientData) {
+              setClient(clientData);
+              setEditForm({
+                name: clientData.name,
+                phone: clientData.phone,
+                observation: clientData.observation || '',
+                referred_by: clientData.referred_by || ''
+              });
+            }
+
+            // Buscar todos os clientes para o select de indicação
+            const { data: allClientsData } = await db.clients().select('id, name').neq('id', id).order('name');
+            if (allClientsData) setAllClients(allClientsData);
 
             // 2. Buscar agendamentos deste cliente ("clientId")
             // Ordenando por data decrescente (mais recente primeiro)
@@ -38,21 +56,74 @@ const ClientHistory: React.FC = () => {
     fetchData();
   }, [id]);
 
+  const handleSaveEdit = async () => {
+    if (!id) return;
+    setSaving(true);
+    try {
+      const { error } = await db.clients().update({
+        name: editForm.name,
+        phone: editForm.phone,
+        observation: editForm.observation,
+        referred_by: editForm.referred_by || null
+      }).eq('id', id);
+      
+      if (error) throw error;
+      
+      setClient({ ...client, ...editForm });
+      setIsEditModalOpen(false);
+      alert('Cliente atualizado com sucesso!');
+    } catch (error) {
+      console.error('Erro ao atualizar cliente:', error);
+      alert('Erro ao atualizar cliente.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleViewDetails = (item: any) => {
     navigate(`/appointment-checkout/${item.id}`); // Redireciona para o checkout existente para ver detalhes
   };
 
   return (
     <div className="flex flex-col h-full bg-[#fcfaff]">
-      <header className="bg-[#1e3a8a] text-white px-4 py-3 flex items-center sticky top-0 z-50 shadow-md">
-        <button onClick={() => navigate(-1)}><ChevronLeft size={24} className="mr-4" /></button>
-        <div>
-            <h1 className="text-lg font-medium leading-none">Histórico</h1>
-            <p className="text-[10px] text-blue-200 font-bold uppercase tracking-widest mt-1">{clientName || 'Carregando...'}</p>
+      <header className="bg-[#1e3a8a] text-white px-4 py-3 flex items-center justify-between sticky top-0 z-50 shadow-md">
+        <div className="flex items-center">
+          <button onClick={() => navigate(-1)}><ChevronLeft size={24} className="mr-4" /></button>
+          <div>
+              <h1 className="text-lg font-medium leading-none">Histórico</h1>
+              <p className="text-[10px] text-blue-200 font-bold uppercase tracking-widest mt-1">{client?.name || 'Carregando...'}</p>
+          </div>
         </div>
+        <button onClick={() => setIsEditModalOpen(true)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+          <Edit2 size={20} />
+        </button>
       </header>
 
       <div className="p-4 space-y-6 overflow-y-auto pb-24">
+        {/* Referral Info Card */}
+        {client && (
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="bg-blue-50 p-3 rounded-full text-blue-600">
+                <UsersIcon size={24} />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-gray-500 uppercase tracking-widest">Indicações</p>
+                <p className="text-2xl font-black text-blue-900">{client.referral_count || 0}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-4">
+              <div className="bg-green-50 p-3 rounded-full text-green-600">
+                <Gift size={24} />
+              </div>
+              <div className="text-right">
+                <p className="text-xs font-bold text-gray-500 uppercase tracking-widest">Cortes Grátis</p>
+                <p className="text-2xl font-black text-green-600">{client.free_haircuts_earned || 0}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {loading ? (
             <div className="flex justify-center p-10"><Loader2 className="animate-spin text-blue-900" size={32} /></div>
         ) : history.length === 0 ? (
@@ -133,6 +204,67 @@ const ClientHistory: React.FC = () => {
             ))
         )}
       </div>
+      {/* Modal de Edição */}
+      {isEditModalOpen && (
+        <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-6 shadow-2xl space-y-5 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center px-1">
+              <h3 className="text-[#1e3a8a] font-black uppercase tracking-widest text-xs">Editar Cliente</h3>
+              <button onClick={() => setIsEditModalOpen(false)} className="text-gray-400 p-1">✕</button>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1 mb-1 block">Nome *</label>
+                <input 
+                  type="text" 
+                  value={editForm.name}
+                  onChange={(e) => setEditForm({...editForm, name: e.target.value})}
+                  className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-blue-900 text-gray-800 font-bold"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1 mb-1 block">Telefone *</label>
+                <input 
+                  type="tel" 
+                  value={editForm.phone}
+                  onChange={(e) => setEditForm({...editForm, phone: e.target.value})}
+                  className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-blue-900 text-gray-800 font-bold"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1 mb-1 block">Indicado por</label>
+                <select
+                  value={editForm.referred_by}
+                  onChange={(e) => setEditForm({...editForm, referred_by: e.target.value})}
+                  className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-blue-900 text-gray-800 font-medium appearance-none"
+                >
+                  <option value="">Ninguém (ou não informado)</option>
+                  {allClients.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1 mb-1 block">Observações</label>
+                <textarea 
+                  value={editForm.observation}
+                  onChange={(e) => setEditForm({...editForm, observation: e.target.value})}
+                  className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-blue-900 text-gray-800 font-medium resize-none h-24"
+                />
+              </div>
+            </div>
+
+            <button 
+              onClick={handleSaveEdit}
+              disabled={saving}
+              className="w-full bg-blue-900 text-white font-black py-4 rounded-2xl shadow-lg active:scale-95 transition-transform uppercase tracking-widest text-xs flex items-center justify-center gap-2"
+            >
+              {saving ? <Loader2 className="animate-spin" size={16} /> : 'Salvar Alterações'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -7,6 +7,7 @@ import {
 import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../supabase';
 import { getSettings, saveSettings } from '../data/agendaData';
+import { addTransaction, deleteTransaction } from '../data/transactions';
 
 const BillForm: React.FC = () => {
   const navigate = useNavigate();

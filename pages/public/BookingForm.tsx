@@ -14,7 +14,8 @@ const BookingForm: React.FC = () => {
   const [formData, setFormData] = useState({
     phone: editingAppointment?.clientPhone || '',
     name: editingAppointment?.clientName || '',
-    observation: editingAppointment?.observation || ''
+    observation: editingAppointment?.observation || '',
+    referredByPhone: ''
   });
 
   const [errors, setErrors] = useState<{ name?: boolean; phone?: boolean }>({});
@@ -164,9 +165,17 @@ const BookingForm: React.FC = () => {
                 
                 // Let's try to insert/upsert the client to ensure they exist in clients table
                 try {
+                    let referredById = null;
+                    if (formData.referredByPhone) {
+                        const cleanRefPhone = formData.referredByPhone.replace(/\D/g, '');
+                        const { data: refClient } = await db.clients().select('id').ilike('phone', `%${cleanRefPhone}%`).single();
+                        if (refClient) referredById = refClient.id;
+                    }
+
                     const { data: newClient } = await db.clients().upsert({
                         name: formData.name,
-                        phone: formData.phone
+                        phone: formData.phone,
+                        referred_by: referredById
                     }, { onConflict: 'phone' }).select().single();
                     
                     if (newClient) clientId = newClient.id;
@@ -214,18 +223,17 @@ const BookingForm: React.FC = () => {
     }
   };
 
-  const handleInputChange = (field: 'name' | 'phone' | 'observation', value: string) => {
+  const handleInputChange = (field: 'name' | 'phone' | 'observation' | 'referredByPhone', value: string) => {
     let finalValue = value;
-    if (field === 'phone') {
+    if (field === 'phone' || field === 'referredByPhone') {
         finalValue = formatPhone(value);
-        // Trigger search if phone is complete (14 or 15 chars with mask)
-        // (XX) X XXXX-XXXX -> 15 chars
-        // (XX) XXXX-XXXX -> 14 chars
-        if (finalValue.length >= 14 && !editingAppointment) {
-            searchClient(finalValue);
-        } else {
-            setClientFound(null);
-            setWelcomeMessage('');
+        if (field === 'phone') {
+            if (finalValue.length >= 14 && !editingAppointment) {
+                searchClient(finalValue);
+            } else {
+                setClientFound(null);
+                setWelcomeMessage('');
+            }
         }
     }
     setFormData(prev => ({ ...prev, [field]: finalValue }));
@@ -332,6 +340,26 @@ const BookingForm: React.FC = () => {
                   </p>
                 )}
             </div>
+
+            {clientFound === false && (
+              <div className="relative animate-in fade-in slide-in-from-top-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest block mb-1.5 px-1 text-gray-400">
+                    Telefone de quem te indicou (Opcional)
+                  </label>
+                  <div className="relative">
+                      <input 
+                          type="tel" 
+                          value={formData.referredByPhone}
+                          onChange={e => handleInputChange('referredByPhone', e.target.value)}
+                          placeholder="(00) 0 0000-0000" 
+                          maxLength={15}
+                          className="w-full bg-white border border-gray-200 rounded-2xl py-4 px-12 outline-none focus:ring-1 focus:ring-black text-gray-800 font-bold shadow-sm transition-all"
+                      />
+                      <Phone className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-300 transition-colors" size={20} />
+                  </div>
+                  <p className="text-[10px] text-gray-400 mt-1 px-1 font-medium">Seu amigo ganha um corte grátis a cada 3 indicações!</p>
+              </div>
+            )}
 
             <div className="relative">
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1.5 px-1">Alguma Observação?</label>

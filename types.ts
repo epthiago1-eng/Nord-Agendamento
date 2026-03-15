@@ -26,6 +26,10 @@ export interface Client {
   birthDate?: string;
   lastVisit?: string;
   daysAbsent?: number;
+  referral_count?: number;
+  free_haircuts_earned?: number;
+  referred_by?: string;
+  referral_rewarded?: boolean;
 }
 
 export interface Service {

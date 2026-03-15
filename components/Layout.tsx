@@ -2,6 +2,7 @@
 import React from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { Calendar, Menu as MenuIcon, DollarSign, Receipt, PlusCircle, Users, Bell } from 'lucide-react';
+import AnnouncementPopup from './AnnouncementPopup';
 
 const Layout: React.FC = () => {
   const navigate = useNavigate();
@@ -33,6 +34,7 @@ const Layout: React.FC = () => {
 
   return (
     <div className="flex flex-col h-screen bg-[#fcfaff] overflow-hidden">
+      <AnnouncementPopup targetAudience="ADMIN" />
       {/* Content Area */}
       <main className="flex-1 overflow-y-auto pb-20">
         <Outlet />

@@ -176,7 +176,7 @@ const FinancialAdmin: React.FC = () => {
     });
   }, [allTransactions, dateRange, selectedPro]);
 
-  // --- CÁLCULO DE GASTOS MENSAIS (PREVISTO VS PAGO) ---
+  // --- CÁLCULO DE GASTOS (PREVISTO VS PAGO) ---
   const monthlyExpenses = useMemo(() => {
     // Previsto: Contas pendentes no período
     const predicted = allBills
@@ -184,13 +184,17 @@ const FinancialAdmin: React.FC = () => {
       .reduce((acc, b) => acc + (b.value || 0), 0);
     
     // Pago: Todas as transações de COMPRA pagas no período (inclui contas, comissões, despesas, etc)
-    const paidTransactions = filteredData
-      .filter(t => t.operation === 'COMPRA' && t.status === 'Pago');
+    const paidTransactions = allTransactions
+      .filter(t => {
+        const tDate = new Date(t.date + 'T00:00:00');
+        const inRange = tDate >= dateRange.start && tDate <= dateRange.end;
+        return inRange && t.operation === 'COMPRA' && t.status === 'Pago';
+      });
       
     const paid = paidTransactions.reduce((acc, t) => acc + Math.abs(t.val), 0);
 
     return { predicted, paid, paidTransactions };
-  }, [allBills, filteredData]);
+  }, [allBills, allTransactions, dateRange]);
 
   // --- EXPORTAÇÃO EXCEL ---
   const exportToExcel = () => {
@@ -753,7 +757,7 @@ const FinancialAdmin: React.FC = () => {
                         <ClipboardList size={24} />
                     </div>
                     <div>
-                        <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Gasto Previsto (Mês)</span>
+                        <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Gasto Previsto (Período)</span>
                         <h3 className="text-xl font-black text-blue-900">R$ {monthlyExpenses.predicted.toFixed(2)}</h3>
                     </div>
                 </div>
@@ -769,7 +773,7 @@ const FinancialAdmin: React.FC = () => {
                         <CheckCircle2 size={24} />
                     </div>
                     <div>
-                        <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Gasto Pago (Mês)</span>
+                        <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Gasto Pago (Período)</span>
                         <h3 className="text-xl font-black text-green-600">R$ {monthlyExpenses.paid.toFixed(2)}</h3>
                     </div>
                 </div>

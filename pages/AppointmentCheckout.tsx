@@ -701,6 +701,36 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
 
                 if (appointment.clientId) {
                     await db.clients().update({ last_visit: new Date() }).eq('id', appointment.clientId);
+                    
+                    // Lógica de Indicação (Referral)
+                    if (appointment.status !== 'Atendimento Realizado') { // Se não estava finalizado antes
+                        try {
+                            const { data: clientData } = await db.clients().select('referred_by, referral_rewarded').eq('id', appointment.clientId).single();
+                            if (clientData && clientData.referred_by && !clientData.referral_rewarded) {
+                                // Marca que este cliente já gerou recompensa
+                                await db.clients().update({ referral_rewarded: true }).eq('id', appointment.clientId);
+                                
+                                // Incrementa a contagem do indicador
+                                const { data: referrerData } = await db.clients().select('referral_count, free_haircuts_earned').eq('id', clientData.referred_by).single();
+                                if (referrerData) {
+                                    const newCount = (referrerData.referral_count || 0) + 1;
+                                    let newEarned = referrerData.free_haircuts_earned || 0;
+                                    
+                                    // A cada 3 indicações, ganha 1 corte
+                                    if (newCount % 3 === 0) {
+                                        newEarned += 1;
+                                    }
+                                    
+                                    await db.clients().update({ 
+                                        referral_count: newCount,
+                                        free_haircuts_earned: newEarned
+                                    }).eq('id', clientData.referred_by);
+                                }
+                            }
+                        } catch (refErr) {
+                            console.error("Erro ao processar indicação:", refErr);
+                        }
+                    }
                 }
 
                 setConfirmConfig({ ...confirmConfig, show: false });

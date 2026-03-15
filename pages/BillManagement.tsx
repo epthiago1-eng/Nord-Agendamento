@@ -6,6 +6,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { supabase, db } from '../supabase';
 import { getSettings, saveSettings } from '../data/agendaData';
+import { addTransaction, deleteTransaction } from '../data/transactions';
 
 // --- COMPONENTE DO CARD DE CONTA ---
 const BillItem = ({ bill, onPay, onUnpay, onDelete, onClick }: any) => {
