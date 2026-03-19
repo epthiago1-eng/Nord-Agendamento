@@ -105,27 +105,52 @@ export const deleteBlock = async (id: string) => {
 // --- AGENDAMENTOS (CORE) ---
 
 // Helper para converter DB -> App (ROBUSTO: Aceita camelCase e snake_case)
-const mapAppointmentFromDB = (data: any): Appointment => ({
-    id: data.id,
-    clientId: data.clientId || data.client_id, 
-    clientName: data.clientName || data.client_name,
-    clientPhone: data.clientPhone || data.client_phone,
-    professionalId: data.professionalId || data.professional_id, 
-    professionalName: data.professionalName || data.professional_name,
-    date: data.date,
-    time: data.time,
-    duration: data.duration,
-    status: data.status,
-    services: data.services || [],
-    products: data.products || [],
-    totalValue: data.totalValue !== undefined ? data.totalValue : data.total_value,
-    others_value: data.others_value !== undefined ? data.others_value : data.othersValue,
-    others_description: data.others_description !== undefined ? data.others_description : data.othersDescription,
-    discount_value: data.discount_value !== undefined ? data.discount_value : data.discountValue,
-    tip_value: data.tip_value !== undefined ? data.tip_value : data.tipValue,
-    payment_method: data.payment_method || data.paymentMethod,
-    observation: data.observation
-});
+const mapAppointmentFromDB = (data: any): Appointment => {
+    let observation = data.observation;
+    let payments = data.payments || [];
+    let others_value = data.others_value !== undefined ? data.others_value : data.othersValue;
+    let others_description = data.others_description !== undefined ? data.others_description : data.othersDescription;
+    let discount_value = data.discount_value !== undefined ? data.discount_value : data.discountValue;
+    let tip_value = data.tip_value !== undefined ? data.tip_value : data.tipValue;
+
+    // Workaround para colunas ausentes: verifica se há metadados JSON na observação
+    if (observation && observation.startsWith('{"_metadata":')) {
+        try {
+            const metadata = JSON.parse(observation);
+            if (metadata.payments) payments = metadata.payments;
+            if (metadata.others_value !== undefined) others_value = metadata.others_value;
+            if (metadata.others_description !== undefined) others_description = metadata.others_description;
+            if (metadata.discount_value !== undefined) discount_value = metadata.discount_value;
+            if (metadata.tip_value !== undefined) tip_value = metadata.tip_value;
+            observation = metadata.note || '';
+        } catch (e) {
+            console.error("Erro ao parsear metadados da observação:", e);
+        }
+    }
+
+    return {
+        id: data.id,
+        clientId: data.clientId || data.client_id, 
+        clientName: data.clientName || data.client_name,
+        clientPhone: data.clientPhone || data.client_phone,
+        professionalId: data.professionalId || data.professional_id, 
+        professionalName: data.professionalName || data.professional_name,
+        date: data.date,
+        time: data.time,
+        duration: data.duration,
+        status: data.status,
+        services: data.services || [],
+        products: data.products || [],
+        totalValue: data.totalValue !== undefined ? data.totalValue : data.total_value,
+        others_value: others_value || 0,
+        others_description: others_description || null,
+        discount_value: discount_value || 0,
+        tip_value: tip_value || 0,
+        payment_method: data.payment_method || data.paymentMethod,
+        payments: payments,
+        observation: observation
+    };
+};
 
 export const getAppointments = async (filters?: { proId?: string, date?: string, startDate?: string, endDate?: string }): Promise<Appointment[]> => {
   let query = supabase.from('appointments').select('*');
@@ -230,7 +255,18 @@ export const saveAppointment = async (apt: Omit<Appointment, 'id'>) => {
   }
 
   // 2. Salvar (Tenta payload camelCase, banco deve suportar ou ter colunas aspas duplas)
-  const payload = {
+  // WORKAROUND: Empacota campos possivelmente ausentes na observação como JSON
+  const metadata = {
+      _metadata: true,
+      payments: apt.payments || [],
+      others_value: (apt as any).others_value || 0,
+      others_description: (apt as any).others_description || null,
+      discount_value: (apt as any).discount_value || 0,
+      tip_value: (apt as any).tip_value || 0,
+      note: apt.observation || ''
+  };
+
+  const payload: any = {
       clientId: apt.clientId,
       clientName: apt.clientName,
       clientPhone: apt.clientPhone,
@@ -243,12 +279,8 @@ export const saveAppointment = async (apt: Omit<Appointment, 'id'>) => {
       services: apt.services,
       products: apt.products || [],
       total_value: apt.totalValue || 0,
-      others_value: (apt as any).others_value || 0,
-      others_description: (apt as any).others_description || null,
-      discount_value: (apt as any).discount_value || 0,
-      tip_value: (apt as any).tip_value || 0,
       payment_method: apt.payment_method || null,
-      observation: apt.observation
+      observation: JSON.stringify(metadata)
   };
 
   const { data, error } = await supabase
@@ -299,15 +331,56 @@ export const updateAppointment = async (id: string, data: Partial<Appointment>) 
   if (data.date) payload.date = data.date;
   if (data.time) payload.time = data.time;
   if (data.duration) payload.duration = data.duration;
-  if (data.observation) payload.observation = data.observation;
   if (data.totalValue !== undefined) payload.total_value = data.totalValue;
-  if ((data as any).others_value !== undefined) payload.others_value = (data as any).others_value;
-  if ((data as any).others_description !== undefined) payload.others_description = (data as any).others_description;
-  if ((data as any).discount_value !== undefined) payload.discount_value = (data as any).discount_value;
-  if ((data as any).tip_value !== undefined) payload.tip_value = (data as any).tip_value;
   if (data.payment_method !== undefined) payload.payment_method = data.payment_method;
   if (data.services) payload.services = data.services;
   if (data.products) payload.products = data.products;
+
+  // Se houver campos de checkout ou observação, precisamos atualizar o JSON na observação
+  if (
+      data.observation !== undefined || 
+      data.payments !== undefined || 
+      (data as any).others_value !== undefined || 
+      (data as any).discount_value !== undefined || 
+      (data as any).tip_value !== undefined
+  ) {
+      // Busca o agendamento atual para preservar outros campos do metadado
+      const { data: current } = await supabase.from('appointments').select('observation, others_value, discount_value, tip_value, payments, others_description').eq('id', id).single();
+      
+      let currentMetadata: any = {
+          _metadata: true,
+          payments: [],
+          others_value: 0,
+          others_description: null,
+          discount_value: 0,
+          tip_value: 0,
+          note: ''
+      };
+
+      if (current?.observation && current.observation.startsWith('{"_metadata":')) {
+          try {
+              currentMetadata = JSON.parse(current.observation);
+          } catch(e) {}
+      } else {
+          // Fallback para colunas reais se existirem (caso o banco tenha sido atualizado parcialmente)
+          currentMetadata.payments = current?.payments || [];
+          currentMetadata.others_value = current?.others_value || 0;
+          currentMetadata.others_description = current?.others_description || null;
+          currentMetadata.discount_value = current?.discount_value || 0;
+          currentMetadata.tip_value = current?.tip_value || 0;
+          currentMetadata.note = current?.observation || '';
+      }
+
+      // Merge com novos dados
+      if (data.payments !== undefined) currentMetadata.payments = data.payments;
+      if ((data as any).others_value !== undefined) currentMetadata.others_value = (data as any).others_value;
+      if ((data as any).others_description !== undefined) currentMetadata.others_description = (data as any).others_description;
+      if ((data as any).discount_value !== undefined) currentMetadata.discount_value = (data as any).discount_value;
+      if ((data as any).tip_value !== undefined) currentMetadata.tip_value = (data as any).tip_value;
+      if (data.observation !== undefined) currentMetadata.note = data.observation;
+
+      payload.observation = JSON.stringify(currentMetadata);
+  }
 
   const { error } = await supabase
     .from('appointments')
@@ -338,17 +411,34 @@ export const deleteAppointment = async (id: string, reason: string = 'Exclusão 
           // Se houver constraint RESTRICT, o delete do appointment abaixo falhará de qualquer forma.
       }
 
-      // 1.1. Estorna valor do caixa se foi pago em Dinheiro/Pix
-      if (
-          apt.status === 'Atendimento Realizado' &&
-          apt.payment_method &&
-          (apt.payment_method.toLowerCase().includes('dinheiro') || apt.payment_method.toLowerCase().includes('pix'))
-      ) {
+      // 1.1. Estorna valor dos saldos se o agendamento já estava finalizado
+      if (apt.status === 'Atendimento Realizado') {
           try {
-              // Estorna o valor (passa negativo)
-              await supabase.rpc('update_cash_balance', { amount: -(apt.totalValue || 0) });
+              const { data: currentSettings } = await supabase.from('settings').select('*').single();
+              if (currentSettings) {
+                  const updates: any = {
+                      cash_balance: currentSettings.cash_balance || 0,
+                      pix_balance: currentSettings.pix_balance || 0,
+                      card_balance: currentSettings.card_balance || 0,
+                      bank_balance: currentSettings.bank_balance || 0
+                  };
+                  
+                  const prevPayments = apt.payments && apt.payments.length > 0 
+                      ? apt.payments 
+                      : [{ method: apt.payment_method || '', value: apt.totalValue || 0 }];
+
+                  prevPayments.forEach(p => {
+                      const m = p.method.toLowerCase();
+                      if (m.includes('dinheiro')) updates.cash_balance -= p.value;
+                      else if (m.includes('pix')) updates.pix_balance -= p.value;
+                      else if (m.includes('cartão') || m.includes('crédito') || m.includes('débito')) updates.card_balance -= p.value;
+                      else if (m.includes('transferência') || m.includes('banco')) updates.bank_balance -= p.value;
+                  });
+
+                  await supabase.from('settings').update(updates).eq('id', currentSettings.id);
+              }
           } catch (e) {
-              console.error("Erro ao estornar caixa na exclusão:", e);
+              console.error("Erro ao estornar saldos na exclusão:", e);
           }
       }
 

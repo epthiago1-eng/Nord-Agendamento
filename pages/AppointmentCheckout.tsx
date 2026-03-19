@@ -43,6 +43,8 @@ const AppointmentCheckout: React.FC = () => {
   // Controle de Pagamento
   const [paymentValue, setPaymentValue] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('');
+  const [payments, setPayments] = useState<{ method: string, value: number }[]>([]);
+  const [showMultiPayment, setShowMultiPayment] = useState(false);
 
   // Modais e UI
   const [showAddService, setShowAddService] = useState(false);
@@ -140,6 +142,10 @@ const AppointmentCheckout: React.FC = () => {
                 }
                 if (apt.payment_method) {
                     setPaymentMethod(apt.payment_method);
+                }
+                if (apt.payments && Array.isArray(apt.payments) && apt.payments.length > 0) {
+                    setPayments(apt.payments);
+                    setShowMultiPayment(true);
                 }
             }
         } catch (err) {
@@ -371,10 +377,29 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
     setShowCustomItemModal(false);
   };
 
+  const handleAddPayment = () => {
+    setPayments([...payments, { method: dbPaymentMethods[0]?.name || 'Dinheiro', value: 0 }]);
+  };
+
+  const handleRemovePayment = (index: number) => {
+    const newPayments = payments.filter((_, i) => i !== index);
+    setPayments(newPayments);
+  };
+
+  const handleUpdatePayment = (index: number, field: 'method' | 'value', value: string | number) => {
+    const newPayments = [...payments];
+    if (field === 'method') {
+      newPayments[index].method = value as string;
+    } else {
+      newPayments[index].value = Number(value);
+    }
+    setPayments(newPayments);
+  };
+
   const handleFinalize = () => {
     if (!appointment) return;
 
-    if (!paymentMethod) {
+    if (!paymentMethod && !showMultiPayment) {
         alert('Por favor, selecione uma forma de pagamento.');
         return;
     }
@@ -387,6 +412,15 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
             try {
                 const finalValue = parseFloat(paymentValue.replace(',', '.'));
                 
+                const finalPayments = showMultiPayment ? payments : [{ method: paymentMethod, value: totals.total }];
+                const totalPaid = finalPayments.reduce((acc, p) => acc + p.value, 0);
+
+                if (Math.abs(totalPaid - totals.total) > 0.01) {
+                    alert(`O total dos pagamentos (R$ ${totalPaid.toFixed(2)}) deve ser igual ao total do atendimento (R$ ${totals.total.toFixed(2)})`);
+                    setProcessing(false);
+                    return;
+                }
+
                 const aptUpdate: any = {
                   status: 'Atendimento Realizado',
                   services: selectedServices.map(s => {
@@ -431,8 +465,9 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                       return s.name;
                   }),
                   products: selectedProducts,
-                  total_value: finalValue,
-                  payment_method: paymentMethod,
+                  total_value: totals.total,
+                  payment_method: showMultiPayment ? finalPayments.map(p => p.method).join(' + ') : paymentMethod,
+                  payments: finalPayments,
                   others_value: totals.others,
                   others_description: othersDescription,
                   discount_value: totals.discount,
@@ -463,20 +498,15 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                     console.error("Erro ao calcular nova duração", e);
                 }
                 
-                const { error: updateError } = await db.appointments().update(aptUpdate).eq('id', appointment.id);
-                
-                if (updateError) {
-                    console.error("Erro ao atualizar agendamento:", updateError);
-                    throw new Error(`Erro ao atualizar agendamento: ${updateError.message}. Verifique se as colunas others_value, others_description, discount_value e tip_value existem no banco de dados.`);
-                }
+                await updateAppointment(appointment.id, aptUpdate);
 
                 // Busca configurações de comissão do profissional
                 const { data: commissionConfigs } = await db.professionalServices()
                     .select('*')
                     .eq('professional_id', appointment.professionalId);
 
-                // Prepara transações
-                const transactionsToSync = [];
+                // Prepara transações base (antes de dividir por método de pagamento)
+                const baseTransactions = [];
                 
                 // Lógica de Distribuição de Desconto
                 // O desconto deve ser aplicado proporcionalmente aos itens (Serviços, Produtos e Outros)
@@ -519,7 +549,7 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                         }
                     }
 
-                    transactionsToSync.push({
+                    baseTransactions.push({
                         operation: 'VENDA' as any,
                         type: 'SERVIÇO' as any,
                         category: 'Serviço',
@@ -538,7 +568,6 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                         appointment_tip: totals.tip,
 
                         client_supplier: appointment.clientName,
-                        payment_method: paymentMethod,
                         pro: appointment.professionalName,
                         professional_id: appointment.professionalId,
                         date: appointment.date,
@@ -554,7 +583,7 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                     const commissionRateP = 10;
                     const commissionAmountP = netTotalP * 0.1;
 
-                    transactionsToSync.push({
+                    baseTransactions.push({
                         operation: 'VENDA' as any,
                         type: 'PRODUTO' as any,
                         category: 'Produto',
@@ -573,7 +602,6 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                         appointment_tip: totals.tip,
 
                         client_supplier: appointment.clientName,
-                        payment_method: paymentMethod,
                         pro: appointment.professionalName,
                         professional_id: appointment.professionalId,
                         date: appointment.date,
@@ -594,7 +622,7 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                     const netOthers = totals.others * discountFactor;
                     const discountOthers = originalOthers - netOthers;
 
-                    transactionsToSync.push({
+                    baseTransactions.push({
                         operation: 'VENDA' as any,
                         type: 'OUTROS' as any,
                         category: 'Outros',
@@ -612,7 +640,6 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                         appointment_tip: totals.tip,
 
                         client_supplier: appointment.clientName,
-                        payment_method: paymentMethod,
                         pro: appointment.professionalName,
                         professional_id: appointment.professionalId,
                         date: appointment.date,
@@ -622,7 +649,7 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
 
                 // Adiciona Gorjeta (SEM DESCONTO, TIPO ESPECÍFICO)
                 if (totals.tip > 0) {
-                    transactionsToSync.push({
+                    baseTransactions.push({
                         operation: 'VENDA' as any,
                         type: 'GORJETA' as any, // Tipo específico para fácil identificação
                         category: 'Gorjeta',
@@ -640,7 +667,6 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                         appointment_tip: totals.tip,
 
                         client_supplier: appointment.clientName,
-                        payment_method: paymentMethod,
                         pro: appointment.professionalName,
                         professional_id: appointment.professionalId,
                         date: appointment.date,
@@ -648,52 +674,100 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                     });
                 }
 
+                // Divide as transações de acordo com os pagamentos
+                const transactionsToSync = [];
+                const availablePayments = finalPayments.map(p => ({ method: p.method, remaining: p.value }));
+
+                for (const baseTx of baseTransactions) {
+                    if (baseTx.val <= 0) {
+                        transactionsToSync.push({
+                            ...baseTx,
+                            payment_method: finalPayments[0]?.method || 'Dinheiro'
+                        });
+                        continue;
+                    }
+
+                    let remainingTxValue = baseTx.val;
+                    let originalTxValue = baseTx.original_value || 0;
+                    let discountTxValue = baseTx.discount_value || 0;
+                    let commissionTxValue = baseTx.commission_amount || 0;
+
+                    for (let i = 0; i < availablePayments.length && remainingTxValue > 0; i++) {
+                        let payment = availablePayments[i];
+                        if (payment.remaining <= 0) continue;
+
+                        let amountToTake = Math.min(remainingTxValue, payment.remaining);
+                        let ratio = amountToTake / baseTx.val;
+
+                        transactionsToSync.push({
+                            ...baseTx,
+                            val: amountToTake,
+                            unit_price: amountToTake,
+                            quantity: 1,
+                            original_value: originalTxValue * ratio,
+                            discount_value: discountTxValue * ratio,
+                            commission_amount: commissionTxValue * ratio,
+                            payment_method: payment.method
+                        });
+
+                        payment.remaining -= amountToTake;
+                        remainingTxValue -= amountToTake;
+                    }
+                    
+                    // Fallback se sobrar valor devido a arredondamentos
+                    if (remainingTxValue > 0.01) {
+                        let ratio = remainingTxValue / baseTx.val;
+                        transactionsToSync.push({
+                            ...baseTx,
+                            val: remainingTxValue,
+                            unit_price: remainingTxValue,
+                            quantity: 1,
+                            original_value: originalTxValue * ratio,
+                            discount_value: discountTxValue * ratio,
+                            commission_amount: commissionTxValue * ratio,
+                            payment_method: finalPayments[0]?.method || 'Dinheiro'
+                        });
+                    }
+                }
+
                 await syncAppointmentTransactions(appointment.id, transactionsToSync);
 
                 // --- ATUALIZAÇÃO DO CAIXA DA BARBEARIA ---
-                // Calcula a diferença (delta) para evitar duplicação ou inconsistência
-                
-                // 1. Valor que JÁ ESTAVA no caixa (se o agendamento já foi pago antes)
-                const previousMethod = appointment.status === 'Atendimento Realizado' ? (appointment.payment_method || '').toLowerCase() : '';
-                const previousValue = appointment.status === 'Atendimento Realizado' ? (appointment.totalValue || 0) : 0;
-
-                // 2. Valor que DEVE ESTAR no caixa agora
-                const currentMethod = paymentMethod.toLowerCase();
-                const currentValue = totals.total;
-
-                // 3. Lógica de Atualização por Método
                 try {
                     const { data: currentSettings } = await supabase.from('settings').select('*').single();
                     if (currentSettings) {
-                        const updates: any = {};
+                        const updates: any = {
+                            cash_balance: currentSettings.cash_balance || 0,
+                            pix_balance: currentSettings.pix_balance || 0,
+                            card_balance: currentSettings.card_balance || 0,
+                            bank_balance: currentSettings.bank_balance || 0
+                        };
                         
-                        // Estorna valor anterior se existia
-                        if (previousValue > 0) {
-                            if (previousMethod.includes('dinheiro')) {
-                                updates.cash_balance = (currentSettings.cash_balance || 0) - previousValue;
-                            } else if (previousMethod.includes('pix')) {
-                                updates.pix_balance = (currentSettings.pix_balance || 0) - previousValue;
-                            } else if (previousMethod.includes('cartão') || previousMethod.includes('crédito') || previousMethod.includes('débito')) {
-                                updates.card_balance = (currentSettings.card_balance || 0) - previousValue;
-                            }
+                        // 1. Estorna valores anteriores se o agendamento já estava finalizado
+                        if (appointment.status === 'Atendimento Realizado') {
+                            const prevPayments = appointment.payments && appointment.payments.length > 0 
+                                ? appointment.payments 
+                                : [{ method: appointment.payment_method || '', value: appointment.totalValue || 0 }];
+
+                            prevPayments.forEach(p => {
+                                const m = p.method.toLowerCase();
+                                if (m.includes('dinheiro')) updates.cash_balance -= p.value;
+                                else if (m.includes('pix')) updates.pix_balance -= p.value;
+                                else if (m.includes('cartão') || m.includes('crédito') || m.includes('débito')) updates.card_balance -= p.value;
+                                else if (m.includes('transferência') || m.includes('banco')) updates.bank_balance -= p.value;
+                            });
                         }
 
-                        // Aplica novo valor
-                        const baseCash = updates.cash_balance !== undefined ? updates.cash_balance : (currentSettings.cash_balance || 0);
-                        const basePix = updates.pix_balance !== undefined ? updates.pix_balance : (currentSettings.pix_balance || 0);
-                        const baseCard = updates.card_balance !== undefined ? updates.card_balance : (currentSettings.card_balance || 0);
+                        // 2. Aplica novos valores
+                        finalPayments.forEach(p => {
+                            const m = p.method.toLowerCase();
+                            if (m.includes('dinheiro')) updates.cash_balance += p.value;
+                            else if (m.includes('pix')) updates.pix_balance += p.value;
+                            else if (m.includes('cartão') || m.includes('crédito') || m.includes('débito')) updates.card_balance += p.value;
+                            else if (m.includes('transferência') || m.includes('banco')) updates.bank_balance += p.value;
+                        });
 
-                        if (currentMethod.includes('dinheiro')) {
-                            updates.cash_balance = baseCash + currentValue;
-                        } else if (currentMethod.includes('pix')) {
-                            updates.pix_balance = basePix + currentValue;
-                        } else if (currentMethod.includes('cartão') || currentMethod.includes('crédito') || currentMethod.includes('débito')) {
-                            updates.card_balance = baseCard + currentValue;
-                        }
-
-                        if (Object.keys(updates).length > 0) {
-                            await supabase.from('settings').update(updates).eq('id', currentSettings.id);
-                        }
+                        await supabase.from('settings').update(updates).eq('id', currentSettings.id);
                     }
                 } catch (e) {
                     console.error("Erro ao atualizar saldos:", e);
@@ -987,24 +1061,91 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
           </div>
         </div>
 
-        <div className="space-y-4">
-          <div className="relative">
-              <label className="text-[9px] font-black text-blue-900 uppercase absolute -top-2 left-4 bg-white px-1 z-10">Valor Pago</label>
-              <input type="text" value={paymentValue} onChange={e => setPaymentValue(e.target.value)} className="w-full bg-white border border-blue-100 rounded-2xl py-4 px-12 outline-none focus:ring-1 focus:ring-blue-900 font-black text-xl text-blue-900"/>
-              <DollarSign className="absolute left-4 top-1/2 -translate-y-1/2 text-blue-900" size={24} />
-          </div>
-          <div className="relative">
-              <label className="text-[9px] font-black text-gray-400 uppercase absolute -top-2 left-4 bg-white px-1 z-10">Forma de Pagamento *</label>
-              <select 
-                value={paymentMethod} 
-                onChange={e => setPaymentMethod(e.target.value)} 
-                className={`w-full bg-white border rounded-2xl py-4 px-4 outline-none appearance-none font-bold transition-colors ${!paymentMethod ? 'border-red-200 text-red-400 ring-2 ring-red-50' : 'border-gray-100 text-gray-700'}`}
-              >
-                <option value="">Selecione o Meio de Pagamento...</option>
-                {dbPaymentMethods.map(pm => (<option key={pm.id} value={pm.name}>{pm.name}</option>))}
-              </select>
-          </div>
+        <div className="flex justify-between items-center px-1 mb-2">
+          <h3 className="text-[#1e3a8a] font-black uppercase tracking-widest text-[10px] flex items-center gap-2">
+            <DollarSign size={14} /> Recebimento
+          </h3>
+          <button 
+            onClick={() => {
+              setShowMultiPayment(!showMultiPayment);
+              if (!showMultiPayment && payments.length === 0) {
+                setPayments([{ method: paymentMethod || dbPaymentMethods[0]?.name || 'Dinheiro', value: totals.total }]);
+              }
+            }}
+            className={`text-[9px] font-black uppercase tracking-tighter px-3 py-1.5 rounded-full transition-all active:scale-95 ${showMultiPayment ? 'bg-blue-900 text-white shadow-lg shadow-blue-900/20' : 'bg-gray-100 text-gray-400'}`}
+          >
+            {showMultiPayment ? 'Pagamento Único' : 'Múltiplos Pagamentos'}
+          </button>
         </div>
+
+        {!showMultiPayment ? (
+          <div className="space-y-4">
+            <div className="relative">
+                <label className="text-[9px] font-black text-blue-900 uppercase absolute -top-2 left-4 bg-white px-1 z-10">Valor Pago</label>
+                <input type="text" value={paymentValue} onChange={e => setPaymentValue(e.target.value)} className="w-full bg-white border border-blue-100 rounded-2xl py-4 px-12 outline-none focus:ring-1 focus:ring-blue-900 font-black text-xl text-blue-900"/>
+                <DollarSign className="absolute left-4 top-1/2 -translate-y-1/2 text-blue-900" size={24} />
+            </div>
+            <div className="relative">
+                <label className="text-[9px] font-black text-gray-400 uppercase absolute -top-2 left-4 bg-white px-1 z-10">Forma de Pagamento *</label>
+                <select 
+                  value={paymentMethod} 
+                  onChange={e => setPaymentMethod(e.target.value)} 
+                  className={`w-full bg-white border rounded-2xl py-4 px-4 outline-none appearance-none font-bold transition-colors ${!paymentMethod ? 'border-red-200 text-red-400 ring-2 ring-red-50' : 'border-gray-100 text-gray-700'}`}
+                >
+                  <option value="">Selecione o Meio de Pagamento...</option>
+                  {dbPaymentMethods.map(pm => (<option key={pm.id} value={pm.name}>{pm.name}</option>))}
+                </select>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4 bg-gray-50/50 p-4 rounded-3xl border border-gray-100">
+            {payments.map((p, index) => (
+              <div key={index} className="flex gap-2 items-end animate-in slide-in-from-right-2">
+                <div className="flex-1">
+                  <label className="text-[9px] font-black text-gray-400 uppercase mb-1 block px-1">Método</label>
+                  <select 
+                    value={p.method}
+                    onChange={(e) => handleUpdatePayment(index, 'method', e.target.value)}
+                    className="w-full bg-white border border-gray-100 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-blue-900 font-bold text-sm text-gray-700"
+                  >
+                    {dbPaymentMethods.map(pm => (<option key={pm.id} value={pm.name}>{pm.name}</option>))}
+                  </select>
+                </div>
+                <div className="w-32">
+                  <label className="text-[9px] font-black text-gray-400 uppercase mb-1 block px-1">Valor (R$)</label>
+                  <input 
+                    type="number"
+                    value={p.value}
+                    onChange={(e) => handleUpdatePayment(index, 'value', e.target.value)}
+                    className="w-full bg-white border border-gray-100 rounded-xl py-3 px-4 outline-none focus:ring-1 focus:ring-blue-900 font-black text-sm text-blue-900"
+                    placeholder="0.00"
+                  />
+                </div>
+                {payments.length > 1 && (
+                  <button 
+                    onClick={() => handleRemovePayment(index)}
+                    className="bg-red-50 text-red-500 p-3 rounded-xl hover:bg-red-100 transition-colors"
+                  >
+                    <Trash2 size={18} />
+                  </button>
+                )}
+              </div>
+            ))}
+            <button 
+              onClick={handleAddPayment}
+              className="w-full py-3 border-2 border-dashed border-gray-200 rounded-xl text-gray-400 font-bold text-[10px] uppercase tracking-widest hover:border-blue-900/20 hover:text-blue-900 transition-all flex items-center justify-center gap-2"
+            >
+              <Plus size={14} /> Adicionar Pagamento
+            </button>
+            
+            <div className="bg-white p-4 rounded-2xl flex justify-between items-center border border-gray-100 shadow-sm">
+              <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Total Informado</span>
+              <span className={`font-black text-lg ${Math.abs(payments.reduce((acc, p) => acc + p.value, 0) - totals.total) < 0.01 ? 'text-green-600' : 'text-red-500'}`}>
+                R$ {payments.reduce((acc, p) => acc + p.value, 0).toFixed(2).replace('.', ',')}
+              </span>
+            </div>
+          </div>
+        )}
 
         <button onClick={handleFinalize} disabled={processing} className="w-full bg-green-600 text-white font-black py-5 rounded-[2.5rem] shadow-xl active:scale-95 transition-transform uppercase tracking-[0.2em] text-sm flex items-center justify-center gap-3 mt-6 mb-12 disabled:opacity-70">
           {processing ? <Loader2 className="animate-spin" /> : <CheckCircle2 size={24} />}

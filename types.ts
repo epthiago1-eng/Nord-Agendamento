@@ -103,6 +103,7 @@ export interface Appointment {
   tip_value?: number;
   others_description?: string;
   payment_method?: string;
+  payments?: { method: string, value: number }[];
 }
 
 export interface Transaction {
