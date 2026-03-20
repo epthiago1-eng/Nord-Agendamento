@@ -443,17 +443,62 @@ GRANT EXECUTE ON FUNCTION public.sync_appointment_transactions(uuid, jsonb) TO a
 GRANT EXECUTE ON FUNCTION public.sync_appointment_transactions(uuid, jsonb) TO service_role;
 
 
--- 6.4. FUNÇÃO RPC PARA ATUALIZAR SALDO DO CAIXA (SEGURANÇA)
-CREATE OR REPLACE FUNCTION public.update_cash_balance(amount numeric)
-RETURNS void AS $$
+-- ==============================================================================
+-- 7. TRIGGER PARA ATUALIZAÇÃO AUTOMÁTICA DE SALDOS (SETTINGS)
+-- ==============================================================================
+
+CREATE OR REPLACE FUNCTION public.update_settings_balances()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_amount numeric;
+  v_method text;
+  v_settings_id int;
 BEGIN
-  -- Atualiza o saldo do caixa (assume id=1 para configurações globais)
-  UPDATE public.settings
-  SET cash_balance = COALESCE(cash_balance, 0) + amount
-  WHERE id = 1;
+  -- Identifica o ID das configurações (assume o primeiro registro se houver mais de um)
+  SELECT id INTO v_settings_id FROM public.settings LIMIT 1;
+  
+  IF v_settings_id IS NULL THEN
+    RETURN NULL;
+  END IF;
+
+  -- Lógica para DELETE ou UPDATE (estornar valor antigo)
+  IF (TG_OP = 'DELETE' OR TG_OP = 'UPDATE') THEN
+    v_amount := OLD.val;
+    v_method := LOWER(COALESCE(OLD.payment_method, ''));
+    
+    IF v_method ILIKE '%dinheiro%' THEN
+      UPDATE public.settings SET cash_balance = COALESCE(cash_balance, 0) - v_amount WHERE id = v_settings_id;
+    ELSIF v_method ILIKE '%pix%' THEN
+      UPDATE public.settings SET pix_balance = COALESCE(pix_balance, 0) - v_amount WHERE id = v_settings_id;
+    ELSIF v_method ILIKE '%cartão%' OR v_method ILIKE '%cartao%' OR v_method ILIKE '%crédito%' OR v_method ILIKE '%débito%' THEN
+      UPDATE public.settings SET card_balance = COALESCE(card_balance, 0) - v_amount WHERE id = v_settings_id;
+    ELSIF v_method ILIKE '%banco%' OR v_method ILIKE '%transferência%' OR v_method ILIKE '%conta%' THEN
+      UPDATE public.settings SET bank_balance = COALESCE(bank_balance, 0) - v_amount WHERE id = v_settings_id;
+    END IF;
+  END IF;
+
+  -- Lógica para INSERT ou UPDATE (aplicar novo valor)
+  IF (TG_OP = 'INSERT' OR TG_OP = 'UPDATE') THEN
+    v_amount := NEW.val;
+    v_method := LOWER(COALESCE(NEW.payment_method, ''));
+    
+    IF v_method ILIKE '%dinheiro%' THEN
+      UPDATE public.settings SET cash_balance = COALESCE(cash_balance, 0) + v_amount WHERE id = v_settings_id;
+    ELSIF v_method ILIKE '%pix%' THEN
+      UPDATE public.settings SET pix_balance = COALESCE(pix_balance, 0) + v_amount WHERE id = v_settings_id;
+    ELSIF v_method ILIKE '%cartão%' OR v_method ILIKE '%cartao%' OR v_method ILIKE '%crédito%' OR v_method ILIKE '%débito%' THEN
+      UPDATE public.settings SET card_balance = COALESCE(card_balance, 0) + v_amount WHERE id = v_settings_id;
+    ELSIF v_method ILIKE '%banco%' OR v_method ILIKE '%transferência%' OR v_method ILIKE '%conta%' THEN
+      UPDATE public.settings SET bank_balance = COALESCE(bank_balance, 0) + v_amount WHERE id = v_settings_id;
+    END IF;
+  END IF;
+
+  RETURN NULL;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
-GRANT EXECUTE ON FUNCTION public.update_cash_balance(numeric) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.update_cash_balance(numeric) TO service_role;
+DROP TRIGGER IF EXISTS tr_update_settings_balances ON public.transactions;
+CREATE TRIGGER tr_update_settings_balances
+AFTER INSERT OR UPDATE OR DELETE ON public.transactions
+FOR EACH ROW EXECUTE FUNCTION public.update_settings_balances();
 

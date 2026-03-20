@@ -404,42 +404,10 @@ export const deleteAppointment = async (id: string, reason: string = 'Exclusão 
       const apt = mapAppointmentFromDB(rawApt);
       
       // 1. Remove transações financeiras associadas ao agendamento para não sobrar "lixo" financeiro
+      // Ao excluir as transações, o trigger no banco cuidará de estornar os saldos no settings
       const { error: transError } = await supabase.from('transactions').delete().eq('appointment_id', id);
       if (transError) {
           console.error('Erro ao excluir transações do agendamento:', transError);
-          // Não interrompe o fluxo, mas loga o erro. 
-          // Se houver constraint RESTRICT, o delete do appointment abaixo falhará de qualquer forma.
-      }
-
-      // 1.1. Estorna valor dos saldos se o agendamento já estava finalizado
-      if (apt.status === 'Atendimento Realizado') {
-          try {
-              const { data: currentSettings } = await supabase.from('settings').select('*').single();
-              if (currentSettings) {
-                  const updates: any = {
-                      cash_balance: currentSettings.cash_balance || 0,
-                      pix_balance: currentSettings.pix_balance || 0,
-                      card_balance: currentSettings.card_balance || 0,
-                      bank_balance: currentSettings.bank_balance || 0
-                  };
-                  
-                  const prevPayments = apt.payments && apt.payments.length > 0 
-                      ? apt.payments 
-                      : [{ method: apt.payment_method || '', value: apt.totalValue || 0 }];
-
-                  prevPayments.forEach(p => {
-                      const m = p.method.toLowerCase();
-                      if (m.includes('dinheiro')) updates.cash_balance -= p.value;
-                      else if (m.includes('pix')) updates.pix_balance -= p.value;
-                      else if (m.includes('cartão') || m.includes('crédito') || m.includes('débito')) updates.card_balance -= p.value;
-                      else if (m.includes('transferência') || m.includes('banco')) updates.bank_balance -= p.value;
-                  });
-
-                  await supabase.from('settings').update(updates).eq('id', currentSettings.id);
-              }
-          } catch (e) {
-              console.error("Erro ao estornar saldos na exclusão:", e);
-          }
       }
 
       // 2. Remove o agendamento

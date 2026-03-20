@@ -186,36 +186,15 @@ const BillManagement: React.FC = () => {
       if (error) throw error;
 
       // 2. Atualiza Saldo
-      const settingsData = await getSettings();
-      if (settingsData) {
-          let newSettings = { ...settingsData };
-          const method = payForm.method.toLowerCase();
-          
-          if (payForm.source === 'cash') {
-              if (method.includes('dinheiro')) {
-                  newSettings.cash_balance = (newSettings.cash_balance || 0) - amount;
-              } else if (method.includes('pix')) {
-                  newSettings.pix_balance = (newSettings.pix_balance || 0) - amount;
-              } else if (method.includes('cartão') || method.includes('cartao')) {
-                  newSettings.card_balance = (newSettings.card_balance || 0) - amount;
-              } else {
-                  newSettings.cash_balance = (newSettings.cash_balance || 0) - amount;
-              }
-          } else {
-              newSettings.bank_balance = (newSettings.bank_balance || 0) - amount;
-          }
-
-          await saveSettings(newSettings);
-          setSettings(newSettings);
-      }
-
+      // REMOVIDO: Agora tratado por trigger no banco de dados ao adicionar a transação abaixo
+      
       // 3. Lança no Financeiro
       await addTransaction({
         type: 'DESPESA',
         category: bill.category,
         item: `Pgto: ${bill.description}`,
         val: -Math.abs(amount),
-        payment_method: payForm.method,
+        payment_method: payForm.source === 'bank' ? `${payForm.method} (Banco)` : payForm.method,
         pro: 'Sistema',
         date: new Date().toISOString().split('T')[0],
         status: 'Pago'
@@ -284,25 +263,8 @@ const BillManagement: React.FC = () => {
         const trans = matchingTrans[0];
         
         // Restaura saldo
-        const settingsData = await getSettings();
-        if (settingsData) {
-          const newSettings = { ...settingsData };
-          const method = (trans.payment_method || '').toLowerCase();
-          
-          if (method.includes('dinheiro')) {
-            newSettings.cash_balance = (newSettings.cash_balance || 0) + amount;
-          } else if (method.includes('pix')) {
-            newSettings.pix_balance = (newSettings.pix_balance || 0) + amount;
-          } else if (method.includes('cartão') || method.includes('cartao')) {
-            newSettings.card_balance = (newSettings.card_balance || 0) + amount;
-          } else {
-            newSettings.bank_balance = (newSettings.bank_balance || 0) + amount;
-          }
-
-          await saveSettings(newSettings);
-          setSettings(newSettings);
-        }
-
+        // REMOVIDO: Agora tratado por trigger no banco de dados ao excluir a transação abaixo
+        
         const { deleteTransaction } = await import('../data/transactions');
         await deleteTransaction(trans.id);
       }

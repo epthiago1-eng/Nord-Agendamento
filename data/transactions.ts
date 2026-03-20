@@ -192,13 +192,7 @@ export const payCommissions = async (transactionIds: string[], totalValue: numbe
         });
 
         // 3. Atualizar o saldo em dinheiro (Default para payCommissions)
-        const { data: settings } = await supabase.from('settings').select('*').single();
-        if (settings) {
-            await supabase.from('settings').update({
-                cash_balance: (settings.cash_balance || 0) - amount
-            }).eq('id', settings.id);
-        }
-
+        // REMOVIDO: Agora tratado por trigger no banco de dados
     } catch (insertError: any) {
         await supabase.from('transactions').update({ commission_paid: false }).in('id', transactionIds);
         throw new Error(`Erro ao registrar saída financeira: ${insertError.message}`);
@@ -252,26 +246,7 @@ export const processCommissionPayment = async (
         });
 
         // 3. Atualizar o saldo correspondente no settings
-        const { data: settings } = await supabase.from('settings').select('*').single();
-        if (settings) {
-            const updates: any = {};
-            const method = paymentMethod.toLowerCase();
-            
-            if (method.includes('dinheiro')) {
-                updates.cash_balance = (settings.cash_balance || 0) - amount;
-            } else if (method.includes('pix')) {
-                updates.pix_balance = (settings.pix_balance || 0) - amount;
-            } else if (method.includes('cartão') || method.includes('cartao')) {
-                updates.card_balance = (settings.card_balance || 0) - amount;
-            } else if (method.includes('banco') || method.includes('conta') || method.includes('corrente')) {
-                updates.bank_balance = (settings.bank_balance || 0) - amount;
-            }
-
-            if (Object.keys(updates).length > 0) {
-                await supabase.from('settings').update(updates).eq('id', settings.id);
-            }
-        }
-
+        // REMOVIDO: Agora tratado por trigger no banco de dados
     } catch (insertError: any) {
         // Rollback manual simples se falhar a inserção
         await supabase.from('transactions').update({ commission_paid: false }).in('id', transactionIds);

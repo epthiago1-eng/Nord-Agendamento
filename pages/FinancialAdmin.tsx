@@ -438,26 +438,68 @@ const FinancialAdmin: React.FC = () => {
     setSaving(true);
     try {
         const amount = parseFloat(managerForm.amount.replace(',', '.')) || 0;
-        let newSettings = { ...settings };
         let txItem = '';
         let txVal = 0;
         let operation: 'VENDA' | 'COMPRA' = 'COMPRA';
+        let paymentMethod = 'Sistema';
 
         if (type === 'transfer') {
             if (managerForm.target === 'bank') {
-                newSettings.cash_balance = (newSettings.cash_balance || 0) - amount;
-                newSettings.bank_balance = (newSettings.bank_balance || 0) + amount;
-                txItem = `Transferência: Caixa -> Banco (${managerForm.description})`;
+                // Saída do Caixa
+                await addTransaction({
+                    operation: 'COMPRA',
+                    type: 'OUTROS',
+                    category: 'Gerencial',
+                    item: `Transferência (Saída): Caixa -> Banco (${managerForm.description})`,
+                    val: -amount,
+                    date: new Date().toISOString().split('T')[0],
+                    payment_method: 'Dinheiro',
+                    status: 'Pago',
+                    pro: 'Admin'
+                });
+                // Entrada no Banco
+                await addTransaction({
+                    operation: 'VENDA',
+                    type: 'OUTROS',
+                    category: 'Gerencial',
+                    item: `Transferência (Entrada): Caixa -> Banco (${managerForm.description})`,
+                    val: amount,
+                    date: new Date().toISOString().split('T')[0],
+                    payment_method: 'Transferência (Banco)',
+                    status: 'Pago',
+                    pro: 'Admin'
+                });
             } else {
-                newSettings.bank_balance = (newSettings.bank_balance || 0) - amount;
-                newSettings.cash_balance = (newSettings.cash_balance || 0) + amount;
-                txItem = `Transferência: Banco -> Caixa (${managerForm.description})`;
+                // Saída do Banco
+                await addTransaction({
+                    operation: 'COMPRA',
+                    type: 'OUTROS',
+                    category: 'Gerencial',
+                    item: `Transferência (Saída): Banco -> Caixa (${managerForm.description})`,
+                    val: -amount,
+                    date: new Date().toISOString().split('T')[0],
+                    payment_method: 'Transferência (Banco)',
+                    status: 'Pago',
+                    pro: 'Admin'
+                });
+                // Entrada no Caixa
+                await addTransaction({
+                    operation: 'VENDA',
+                    type: 'OUTROS',
+                    category: 'Gerencial',
+                    item: `Transferência (Entrada): Banco -> Caixa (${managerForm.description})`,
+                    val: amount,
+                    date: new Date().toISOString().split('T')[0],
+                    payment_method: 'Dinheiro',
+                    status: 'Pago',
+                    pro: 'Admin'
+                });
             }
-            txVal = 0; 
+            txItem = ''; 
         } else if (type === 'sangria') {
-            newSettings.cash_balance = (newSettings.cash_balance || 0) - amount;
             txItem = `Sangria: ${managerForm.description}`;
             txVal = -amount;
+            paymentMethod = 'Dinheiro';
         } else if (type === 'adjust') {
             const accountName = 
                 showAdjustModal.type === 'cash' ? 'Caixa (Dinheiro)' : 
@@ -465,61 +507,53 @@ const FinancialAdmin: React.FC = () => {
                 showAdjustModal.type === 'card' ? 'Caixa (Cartão)' : 'Conta Corrente';
             
             const opType = managerForm.operationType;
+            
+            // Define o método de pagamento para o trigger
+            if (showAdjustModal.type === 'cash') paymentMethod = 'Dinheiro';
+            else if (showAdjustModal.type === 'pix') paymentMethod = 'Pix';
+            else if (showAdjustModal.type === 'card') paymentMethod = 'Cartão';
+            else paymentMethod = 'Transferência (Banco)';
 
             if (opType === 'deposit') {
-                if (showAdjustModal.type === 'cash') {
-                    newSettings.cash_balance = (newSettings.cash_balance || 0) + amount;
-                } else if (showAdjustModal.type === 'pix') {
-                    newSettings.pix_balance = (newSettings.pix_balance || 0) + amount;
-                } else if (showAdjustModal.type === 'card') {
-                    newSettings.card_balance = (newSettings.card_balance || 0) + amount;
-                } else {
-                    newSettings.bank_balance = (newSettings.bank_balance || 0) + amount;
-                }
                 txItem = `Depósito/Aporte em ${accountName}: ${managerForm.description}`;
                 txVal = amount;
                 operation = 'VENDA';
             } else if (opType === 'withdraw') {
-                if (showAdjustModal.type === 'cash') {
-                    newSettings.cash_balance = (newSettings.cash_balance || 0) - amount;
-                } else if (showAdjustModal.type === 'pix') {
-                    newSettings.pix_balance = (newSettings.pix_balance || 0) - amount;
-                } else if (showAdjustModal.type === 'card') {
-                    newSettings.card_balance = (newSettings.card_balance || 0) - amount;
-                } else {
-                    newSettings.bank_balance = (newSettings.bank_balance || 0) - amount;
-                }
                 txItem = `Saque/Sangria de ${accountName}: ${managerForm.description}`;
                 txVal = -amount;
                 operation = 'COMPRA';
             } else if (opType === 'transfer') {
                 const targetName = managerForm.target === 'bank' ? 'Conta Corrente' : 'Caixa (Dinheiro)';
-                
-                // Subtrai da origem
-                if (showAdjustModal.type === 'cash') {
-                    newSettings.cash_balance = (newSettings.cash_balance || 0) - amount;
-                } else if (showAdjustModal.type === 'pix') {
-                    newSettings.pix_balance = (newSettings.pix_balance || 0) - amount;
-                } else if (showAdjustModal.type === 'card') {
-                    newSettings.card_balance = (newSettings.card_balance || 0) - amount;
-                } else {
-                    newSettings.bank_balance = (newSettings.bank_balance || 0) - amount;
-                }
+                const targetMethod = managerForm.target === 'bank' ? 'Transferência (Banco)' : 'Dinheiro';
 
-                // Adiciona no destino
-                if (managerForm.target === 'bank') {
-                    newSettings.bank_balance = (newSettings.bank_balance || 0) + amount;
-                } else {
-                    newSettings.cash_balance = (newSettings.cash_balance || 0) + amount;
-                }
+                // Saída da Origem
+                await addTransaction({
+                    operation: 'COMPRA',
+                    type: 'OUTROS',
+                    category: 'Gerencial',
+                    item: `Transferência (Saída): ${accountName} -> ${targetName} (${managerForm.description})`,
+                    val: -amount,
+                    date: new Date().toISOString().split('T')[0],
+                    payment_method: paymentMethod,
+                    status: 'Pago',
+                    pro: 'Admin'
+                });
 
-                txItem = `Transferência: ${accountName} -> ${targetName} (${managerForm.description})`;
-                txVal = 0;
+                // Entrada no Destino
+                await addTransaction({
+                    operation: 'VENDA',
+                    type: 'OUTROS',
+                    category: 'Gerencial',
+                    item: `Transferência (Entrada): ${accountName} -> ${targetName} (${managerForm.description})`,
+                    val: amount,
+                    date: new Date().toISOString().split('T')[0],
+                    payment_method: targetMethod,
+                    status: 'Pago',
+                    pro: 'Admin'
+                });
+                txItem = '';
             }
         }
-
-        await saveSettings(newSettings);
-        setSettings(newSettings);
         
         if (txItem) {
             await addTransaction({
@@ -529,7 +563,7 @@ const FinancialAdmin: React.FC = () => {
                 item: txItem,
                 val: txVal,
                 date: new Date().toISOString().split('T')[0],
-                payment_method: 'Sistema',
+                payment_method: paymentMethod,
                 status: 'Pago',
                 pro: 'Admin'
             });
@@ -564,16 +598,7 @@ const FinancialAdmin: React.FC = () => {
             updateTransaction(t.id, { commission_paid: true })
         ));
 
-        // 2. Registra saída do caixa/banco
-        let newSettings = { ...settings };
-        if (managerForm.target === 'bank') {
-            newSettings.bank_balance = (newSettings.bank_balance || 0) - amount;
-        } else {
-            newSettings.cash_balance = (newSettings.cash_balance || 0) - amount;
-        }
-        await saveSettings(newSettings);
-
-        // 3. Registra log de saída
+        // 2. Registra log de saída
         await addTransaction({
             operation: 'COMPRA',
             type: 'DESPESA',
@@ -581,7 +606,7 @@ const FinancialAdmin: React.FC = () => {
             item: `Pagamento de Comissão: ${proName} (Período)`,
             val: -amount,
             date: new Date().toISOString().split('T')[0],
-            payment_method: managerForm.target === 'bank' ? 'Transferência' : 'Dinheiro',
+            payment_method: managerForm.target === 'bank' ? 'Transferência (Banco)' : 'Dinheiro',
             status: 'Pago',
             pro: 'Admin'
         });

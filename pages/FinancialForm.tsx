@@ -138,50 +138,10 @@ const FinancialForm: React.FC = () => {
             val: operation === 'COMPRA' ? -Math.abs(totalOperation) : Math.abs(totalOperation),
             
             client_supplier: formData.supplier,
-            payment_method: formData.paymentMethod,
+            payment_method: sourceAccount === 'bank' ? `${formData.paymentMethod} (Banco)` : formData.paymentMethod,
             status: 'Pago',
             pro: 'Caixa', // Usuário sistema
         });
-
-        // ATUALIZAR SALDO
-        const settings = await getSettings();
-        if (settings) {
-            const amount = Math.abs(totalOperation);
-            const newSettings = { ...settings };
-            const method = formData.paymentMethod.toLowerCase();
-            
-            if (operation === 'COMPRA') {
-                if (sourceAccount === 'cash') {
-                    if (method.includes('dinheiro')) {
-                        newSettings.cash_balance = (newSettings.cash_balance || 0) - amount;
-                    } else if (method.includes('pix')) {
-                        newSettings.pix_balance = (newSettings.pix_balance || 0) - amount;
-                    } else if (method.includes('cartão') || method.includes('cartao')) {
-                        newSettings.card_balance = (newSettings.card_balance || 0) - amount;
-                    } else {
-                        newSettings.cash_balance = (newSettings.cash_balance || 0) - amount;
-                    }
-                } else {
-                    newSettings.bank_balance = (newSettings.bank_balance || 0) - amount;
-                }
-            } else {
-                // VENDA (Entrada Avulsa)
-                if (sourceAccount === 'cash') {
-                    if (method.includes('dinheiro')) {
-                        newSettings.cash_balance = (newSettings.cash_balance || 0) + amount;
-                    } else if (method.includes('pix')) {
-                        newSettings.pix_balance = (newSettings.pix_balance || 0) + amount;
-                    } else if (method.includes('cartão') || method.includes('cartao')) {
-                        newSettings.card_balance = (newSettings.card_balance || 0) + amount;
-                    } else {
-                        newSettings.cash_balance = (newSettings.cash_balance || 0) + amount;
-                    }
-                } else {
-                    newSettings.bank_balance = (newSettings.bank_balance || 0) + amount;
-                }
-            }
-            await saveSettings(newSettings);
-        }
 
         alert('Lançamento realizado com sucesso!');
         navigate(-1);

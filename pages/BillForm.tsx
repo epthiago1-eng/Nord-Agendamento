@@ -184,37 +184,13 @@ const BillForm: React.FC = () => {
             // Se acabou de criar, precisamos do ID para futuras operações nesta mesma tela (embora naveguemos fora)
           }
 
-          // 1. Atualiza Saldo nas Configurações
-          const settingsData = await getSettings();
-          if (settingsData) {
-            const newSettings = { ...settingsData };
-            const method = payForm.method.toLowerCase();
-            
-            if (payForm.source === 'cash') {
-              if (method.includes('dinheiro')) {
-                newSettings.cash_balance = (newSettings.cash_balance || 0) - amount;
-              } else if (method.includes('pix')) {
-                newSettings.pix_balance = (newSettings.pix_balance || 0) - amount;
-              } else if (method.includes('cartão') || method.includes('crédito') || method.includes('débito')) {
-                newSettings.card_balance = (newSettings.card_balance || 0) - amount;
-              } else {
-                newSettings.cash_balance = (newSettings.cash_balance || 0) - amount;
-              }
-            } else {
-              newSettings.bank_balance = (newSettings.bank_balance || 0) - amount;
-            }
-            
-            await saveSettings(newSettings);
-            setSettings(newSettings);
-          }
-
-          // 2. Lança Transação
+          // 1. Lança Transação
           await addTransaction({
             type: 'DESPESA',
             category: formData.category,
             item: `Pgto: ${formData.description}`,
             val: -Math.abs(amount),
-            payment_method: payForm.method,
+            payment_method: payForm.source === 'bank' ? `${payForm.method} (Banco)` : payForm.method,
             pro: 'Sistema',
             date: new Date().toISOString().split('T')[0],
             status: 'Pago'
@@ -290,27 +266,6 @@ const BillForm: React.FC = () => {
 
           if (matchingTrans && matchingTrans.length > 0) {
              const trans = matchingTrans[0];
-             
-             // 2.1 Restaura o saldo antes de deletar a transação
-             const settingsData = await getSettings();
-             if (settingsData) {
-               const newSettings = { ...settingsData };
-               const method = (trans.payment_method || '').toLowerCase();
-               
-               if (method.includes('dinheiro')) {
-                 newSettings.cash_balance = (newSettings.cash_balance || 0) + amount;
-               } else if (method.includes('pix')) {
-                 newSettings.pix_balance = (newSettings.pix_balance || 0) + amount;
-               } else if (method.includes('cartão') || method.includes('crédito') || method.includes('débito')) {
-                 newSettings.card_balance = (newSettings.card_balance || 0) + amount;
-               } else {
-                 newSettings.bank_balance = (newSettings.bank_balance || 0) + amount;
-               }
-
-               await saveSettings(newSettings);
-               setSettings(newSettings);
-             }
-
              await deleteTransaction(trans.id);
           }
 
