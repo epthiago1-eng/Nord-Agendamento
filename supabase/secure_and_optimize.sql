@@ -1,9 +1,23 @@
 -- ==============================================================================
--- 0. GARANTIR COLUNAS NECESSÁRIAS NA TABELA SETTINGS
+-- 0. GARANTIR COLUNAS NECESSÁRIAS NA TABELA SETTINGS E TRANSACTIONS
 -- ==============================================================================
 
 ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS cash_balance numeric DEFAULT 0;
 ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS bank_balance numeric DEFAULT 0;
+ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS pix_balance numeric DEFAULT 0;
+ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS card_balance numeric DEFAULT 0;
+
+-- Adiciona colunas organizadas na tabela transactions
+ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS payment_account text CHECK (payment_account = ANY (ARRAY['CASH', 'PIX', 'CARD', 'BANK']));
+ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS operation_type text CHECK (operation_type = ANY (ARRAY['ENTRADA', 'SAÍDA']));
+
+-- Migração inicial baseada no que já existe
+UPDATE public.transactions SET operation_type = 'ENTRADA' WHERE operation = 'VENDA' AND operation_type IS NULL;
+UPDATE public.transactions SET operation_type = 'SAÍDA' WHERE operation = 'COMPRA' AND operation_type IS NULL;
+UPDATE public.transactions SET payment_account = 'CASH' WHERE payment_method ILIKE '%dinheiro%' AND payment_account IS NULL;
+UPDATE public.transactions SET payment_account = 'PIX' WHERE payment_method ILIKE '%pix%' AND payment_account IS NULL;
+UPDATE public.transactions SET payment_account = 'CARD' WHERE (payment_method ILIKE '%cartão%' OR payment_method ILIKE '%cartao%' OR payment_method ILIKE '%crédito%' OR payment_method ILIKE '%débito%') AND payment_account IS NULL;
+UPDATE public.transactions SET payment_account = 'BANK' WHERE (payment_method ILIKE '%banco%' OR payment_method ILIKE '%transferência%' OR payment_method ILIKE '%conta%') AND payment_account IS NULL;
 
 -- ==============================================================================
 -- 1. HABILITAR RLS (ROW LEVEL SECURITY) EM TODAS AS TABELAS
@@ -226,20 +240,20 @@ DECLARE
   v_net numeric := 0;
 BEGIN
   -- Calcular Entradas (Vendas)
-  SELECT COALESCE(SUM(total_value), 0)
+  SELECT COALESCE(SUM(val), 0)
   INTO v_income
   FROM public.transactions
   WHERE date >= start_date AND date <= end_date
-    AND operation = 'VENDA'
+    AND operation_type = 'ENTRADA'
     AND type != 'GORJETA'
     AND (pro_id_filter IS NULL OR professional_id = pro_id_filter);
 
   -- Calcular Saídas (Despesas)
-  SELECT COALESCE(SUM(ABS(total_value)), 0)
+  SELECT COALESCE(SUM(ABS(val)), 0)
   INTO v_expense
   FROM public.transactions
   WHERE date >= start_date AND date <= end_date
-    AND operation = 'COMPRA'
+    AND operation_type = 'SAÍDA'
     AND (pro_id_filter IS NULL OR professional_id = pro_id_filter);
 
   -- Calcular Comissões Pendentes
@@ -247,17 +261,17 @@ BEGIN
   INTO v_pending_commissions
   FROM public.transactions
   WHERE date >= start_date AND date <= end_date
-    AND operation = 'VENDA'
+    AND operation_type = 'ENTRADA'
     AND commission_paid = false
     AND (pro_id_filter IS NULL OR professional_id = pro_id_filter);
 
-  -- Calcular Recebíveis Futuros (Cartão de Crédito)
-  SELECT COALESCE(SUM(total_value), 0)
+  -- Calcular Recebíveis Futuros (Cartão)
+  SELECT COALESCE(SUM(val), 0)
   INTO v_future_receivables
   FROM public.transactions
   WHERE date >= start_date AND date <= end_date
-    AND operation = 'VENDA'
-    AND payment_method ILIKE '%crédito%'
+    AND operation_type = 'ENTRADA'
+    AND payment_account = 'CARD'
     AND (pro_id_filter IS NULL OR professional_id = pro_id_filter);
 
   v_net := v_income - v_expense;
@@ -392,6 +406,8 @@ BEGIN
     INSERT INTO public.transactions (
       appointment_id,
       operation,
+      operation_type,
+      payment_account,
       type,
       category,
       code,
@@ -415,6 +431,16 @@ BEGIN
     SELECT
       p_appointment_id,
       (t->>'operation')::text,
+      COALESCE((t->>'operation_type')::text, CASE WHEN (t->>'operation')::text = 'VENDA' THEN 'ENTRADA' ELSE 'SAÍDA' END),
+      COALESCE((t->>'payment_account')::text, 
+        CASE 
+          WHEN (t->>'payment_method')::text ILIKE '%dinheiro%' THEN 'CASH'
+          WHEN (t->>'payment_method')::text ILIKE '%pix%' THEN 'PIX'
+          WHEN (t->>'payment_method')::text ILIKE '%cartão%' OR (t->>'payment_method')::text ILIKE '%cartao%' OR (t->>'payment_method')::text ILIKE '%crédito%' OR (t->>'payment_method')::text ILIKE '%débito%' THEN 'CARD'
+          WHEN (t->>'payment_method')::text ILIKE '%banco%' OR (t->>'payment_method')::text ILIKE '%transferência%' OR (t->>'payment_method')::text ILIKE '%conta%' THEN 'BANK'
+          ELSE 'CASH'
+        END
+      ),
       (t->>'type')::text,
       (t->>'category')::text,
       (t->>'code')::text,
@@ -464,15 +490,15 @@ BEGIN
   -- Lógica para DELETE ou UPDATE (estornar valor antigo)
   IF (TG_OP = 'DELETE' OR TG_OP = 'UPDATE') THEN
     v_amount := OLD.val;
-    v_method := LOWER(COALESCE(OLD.payment_method, ''));
+    v_method := OLD.payment_account;
     
-    IF v_method ILIKE '%dinheiro%' THEN
+    IF v_method = 'CASH' THEN
       UPDATE public.settings SET cash_balance = COALESCE(cash_balance, 0) - v_amount WHERE id = v_settings_id;
-    ELSIF v_method ILIKE '%pix%' THEN
+    ELSIF v_method = 'PIX' THEN
       UPDATE public.settings SET pix_balance = COALESCE(pix_balance, 0) - v_amount WHERE id = v_settings_id;
-    ELSIF v_method ILIKE '%cartão%' OR v_method ILIKE '%cartao%' OR v_method ILIKE '%crédito%' OR v_method ILIKE '%débito%' THEN
+    ELSIF v_method = 'CARD' THEN
       UPDATE public.settings SET card_balance = COALESCE(card_balance, 0) - v_amount WHERE id = v_settings_id;
-    ELSIF v_method ILIKE '%banco%' OR v_method ILIKE '%transferência%' OR v_method ILIKE '%conta%' THEN
+    ELSIF v_method = 'BANK' THEN
       UPDATE public.settings SET bank_balance = COALESCE(bank_balance, 0) - v_amount WHERE id = v_settings_id;
     END IF;
   END IF;
@@ -480,15 +506,15 @@ BEGIN
   -- Lógica para INSERT ou UPDATE (aplicar novo valor)
   IF (TG_OP = 'INSERT' OR TG_OP = 'UPDATE') THEN
     v_amount := NEW.val;
-    v_method := LOWER(COALESCE(NEW.payment_method, ''));
+    v_method := NEW.payment_account;
     
-    IF v_method ILIKE '%dinheiro%' THEN
+    IF v_method = 'CASH' THEN
       UPDATE public.settings SET cash_balance = COALESCE(cash_balance, 0) + v_amount WHERE id = v_settings_id;
-    ELSIF v_method ILIKE '%pix%' THEN
+    ELSIF v_method = 'PIX' THEN
       UPDATE public.settings SET pix_balance = COALESCE(pix_balance, 0) + v_amount WHERE id = v_settings_id;
-    ELSIF v_method ILIKE '%cartão%' OR v_method ILIKE '%cartao%' OR v_method ILIKE '%crédito%' OR v_method ILIKE '%débito%' THEN
+    ELSIF v_method = 'CARD' THEN
       UPDATE public.settings SET card_balance = COALESCE(card_balance, 0) + v_amount WHERE id = v_settings_id;
-    ELSIF v_method ILIKE '%banco%' OR v_method ILIKE '%transferência%' OR v_method ILIKE '%conta%' THEN
+    ELSIF v_method = 'BANK' THEN
       UPDATE public.settings SET bank_balance = COALESCE(bank_balance, 0) + v_amount WHERE id = v_settings_id;
     END IF;
   END IF;

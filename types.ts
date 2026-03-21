@@ -125,6 +125,10 @@ export interface Transaction {
   
   status: 'Pendente' | 'Pago';
   
+  // Novos Campos Organizados
+  payment_account?: 'CASH' | 'PIX' | 'CARD' | 'BANK';
+  operation_type?: 'ENTRADA' | 'SAÍDA';
+  
   // Campos de Sistema
   category?: string; // Mantido para compatibilidade
   val: number; // Mantido para compatibilidade (é o total_value com sinal)

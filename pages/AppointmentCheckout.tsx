@@ -678,11 +678,23 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                 const transactionsToSync = [];
                 const availablePayments = finalPayments.map(p => ({ method: p.method, remaining: p.value }));
 
+                const getPaymentAccount = (method: string): 'CASH' | 'PIX' | 'CARD' | 'BANK' => {
+                    const m = method.toLowerCase();
+                    if (m.includes('dinheiro')) return 'CASH';
+                    if (m.includes('pix')) return 'PIX';
+                    if (m.includes('cartão') || m.includes('cartao') || m.includes('crédito') || m.includes('débito')) return 'CARD';
+                    if (m.includes('banco') || m.includes('transferência') || m.includes('conta')) return 'BANK';
+                    return 'CASH';
+                };
+
                 for (const baseTx of baseTransactions) {
                     if (baseTx.val <= 0) {
+                        const method = finalPayments[0]?.method || 'Dinheiro';
                         transactionsToSync.push({
                             ...baseTx,
-                            payment_method: finalPayments[0]?.method || 'Dinheiro'
+                            payment_method: method,
+                            payment_account: getPaymentAccount(method),
+                            operation_type: 'ENTRADA'
                         });
                         continue;
                     }
@@ -707,7 +719,9 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                             original_value: originalTxValue * ratio,
                             discount_value: discountTxValue * ratio,
                             commission_amount: commissionTxValue * ratio,
-                            payment_method: payment.method
+                            payment_method: payment.method,
+                            payment_account: getPaymentAccount(payment.method),
+                            operation_type: 'ENTRADA'
                         });
 
                         payment.remaining -= amountToTake;
@@ -717,6 +731,7 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                     // Fallback se sobrar valor devido a arredondamentos
                     if (remainingTxValue > 0.01) {
                         let ratio = remainingTxValue / baseTx.val;
+                        const method = finalPayments[0]?.method || 'Dinheiro';
                         transactionsToSync.push({
                             ...baseTx,
                             val: remainingTxValue,
@@ -725,7 +740,9 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                             original_value: originalTxValue * ratio,
                             discount_value: discountTxValue * ratio,
                             commission_amount: commissionTxValue * ratio,
-                            payment_method: finalPayments[0]?.method || 'Dinheiro'
+                            payment_method: method,
+                            payment_account: getPaymentAccount(method),
+                            operation_type: 'ENTRADA'
                         });
                     }
                 }

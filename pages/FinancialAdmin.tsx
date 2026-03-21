@@ -31,6 +31,7 @@ const FinancialAdmin: React.FC = () => {
   const [commissionConfigs, setCommissionConfigs] = useState<any[]>([]);
   const [servicesMap, setServicesMap] = useState<Record<string, string>>({});
   const [adminPros, setAdminPros] = useState<string[]>([]);
+  const [globalBalances, setGlobalBalances] = useState({ cash: 0, pix: 0, card: 0, bank: 0 });
 
   // Estados dos Modals Gerenciais
   const [showTransferModal, setShowTransferModal] = useState(false);
@@ -39,6 +40,7 @@ const FinancialAdmin: React.FC = () => {
   const [showPayModal, setShowPayModal] = useState<{show: boolean, proName: string | null, amount: number}>({ show: false, proName: null, amount: 0 });
   const [showFutureModal, setShowFutureModal] = useState(false);
   const [showPaidDetailsModal, setShowPaidDetailsModal] = useState(false);
+  const [expandedAccount, setExpandedAccount] = useState<'CASH' | 'PIX' | 'CARD' | 'BANK' | null>(null);
   const [managerForm, setManagerForm] = useState<{
       amount: string, 
       description: string, 
@@ -82,18 +84,52 @@ const FinancialAdmin: React.FC = () => {
       const startStr = dateRange.start.toISOString().split('T')[0];
       const endStr = dateRange.end.toISOString().split('T')[0];
 
-      const [txData, settingsData, prosRes, servicesRes, configsRes, adminProfilesRes, billsRes] = await Promise.all([
+      const [txData, settingsData, prosRes, servicesRes, configsRes, adminProfilesRes, billsRes, allTxRes] = await Promise.all([
           getTransactions({ startDate: startStr, endDate: endStr }),
           getSettings(),
           db.professionals().select('id, name'),
           db.services().select('id, name'),
           db.professionalServices().select('*'),
           db.profiles().select('professional_id').eq('role', 'ADMIN'),
-          supabase.from('bills').select('*').gte('due_date', startStr).lte('due_date', endStr)
+          supabase.from('bills').select('*').gte('due_date', startStr).lte('due_date', endStr),
+          supabase.from('transactions').select('val, total_value, payment_method, operation_type, operation')
       ]);
 
       setAllTransactions(txData);
       setSettings(settingsData);
+      
+      // Calcular saldos globais
+      if (allTxRes.data && settingsData) {
+          let cashSum = 0;
+          let pixSum = 0;
+          let cardSum = 0;
+          let bankSum = 0;
+
+          allTxRes.data.forEach((t: any) => {
+              const val = t.val !== undefined ? t.val : (t.total_value || 0);
+              const method = (t.payment_method || '').toLowerCase();
+              
+              if (method.includes('pix')) {
+                  pixSum += val;
+              } else if (method.includes('cartão') || method.includes('cartao') || method.includes('crédito') || method.includes('débito')) {
+                  cardSum += val;
+              } else if (method.includes('banco') || method.includes('transferência') || method.includes('conta')) {
+                  bankSum += val;
+              } else if (method.includes('dinheiro')) {
+                  cashSum += val;
+              } else {
+                  // Default to cash if no method or unrecognized
+                  cashSum += val;
+              }
+          });
+
+          setGlobalBalances({
+              cash: (settingsData.cash_balance || 0) + cashSum,
+              pix: (settingsData.pix_balance || 0) + pixSum,
+              card: (settingsData.card_balance || 0) + cardSum,
+              bank: (settingsData.bank_balance || 0) + bankSum
+          });
+      }
       
       if (billsRes.data) {
           setAllBills(billsRes.data);
@@ -272,18 +308,47 @@ const FinancialAdmin: React.FC = () => {
     // Dados para Top Clientes
     const clientsMap: Record<string, number> = {};
 
+    // Dados por Conta de Pagamento (Somente Entradas conforme solicitado)
+    const accountStats: Record<string, { income: number, transactions: Transaction[] }> = {
+      'CASH': { income: 0, transactions: [] },
+      'PIX': { income: 0, transactions: [] },
+      'CARD': { income: 0, transactions: [] },
+      'BANK': { income: 0, transactions: [] },
+    };
+
     filteredData.forEach(t => {
       const comm = calculateCommission(t);
+      const isIncome = t.operation_type === 'ENTRADA' || t.operation === 'VENDA' || t.val > 0;
+
+      // Totais por Conta (Somente Entradas)
+      if (isIncome) {
+        const method = (t.payment_method || '').toLowerCase();
+        let acc = 'CASH'; // Default
+        if (method.includes('pix')) acc = 'PIX';
+        else if (method.includes('cartão') || method.includes('cartao') || method.includes('crédito') || method.includes('débito')) acc = 'CARD';
+        else if (method.includes('banco') || method.includes('transferência') || method.includes('conta')) acc = 'BANK';
+        else if (method.includes('dinheiro')) acc = 'CASH';
+        
+        // Usa estritamente a lógica do payment_method conforme solicitado
+        const finalAcc = acc;
+
+        if (accountStats[finalAcc]) {
+          accountStats[finalAcc].income += t.val;
+          accountStats[finalAcc].transactions.push(t);
+        }
+      }
 
       // Totais Gerais
-      if (t.operation === 'VENDA') {
+      if (isIncome) {
         if (t.category !== 'Gorjeta' && t.type !== 'GORJETA') {
           income += t.val;
           totalCommissions += comm;
           if (!t.commission_paid) pendingCommissions += comm;
           
           // A Receber (Futuro) - Exemplo: Cartão de Crédito
-          if (t.payment_method?.toLowerCase().includes('crédito') || t.payment_method?.toLowerCase().includes('cartão')) {
+          const method = (t.payment_method || '').toLowerCase();
+          const isCard = method.includes('cartão') || method.includes('cartao') || method.includes('crédito') || method.includes('débito');
+          if (t.payment_account === 'CARD' || isCard) {
               futureReceivables += t.val;
               futureTransactions.push(t);
           }
@@ -296,7 +361,7 @@ const FinancialAdmin: React.FC = () => {
       const dayLabel = new Date(t.date + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
       if (!chartMap[dayLabel]) chartMap[dayLabel] = { name: dayLabel, entrada: 0, saida: 0, lucro: 0, totalVendas: 0 };
       
-      if (t.operation === 'VENDA') {
+      if (isIncome) {
         if (t.category !== 'Gorjeta' && t.type !== 'GORJETA') {
           chartMap[dayLabel].entrada += t.val;
           chartMap[dayLabel].lucro += (t.val - comm);
@@ -320,7 +385,7 @@ const FinancialAdmin: React.FC = () => {
       }
 
       // Produção por Barbeiro
-      if (t.operation === 'VENDA' && t.pro) {
+      if (isIncome && t.pro) {
         if (t.category !== 'Gorjeta' && t.type !== 'GORJETA') {
           const proId = t.professional_id || professionalsMap[t.pro];
           const isAdmin = proId && adminPros.includes(proId);
@@ -338,7 +403,7 @@ const FinancialAdmin: React.FC = () => {
       }
 
       // Top Produtos
-      if (t.type === 'PRODUTO' && t.operation === 'VENDA') {
+      if (t.type === 'PRODUTO' && isIncome) {
         productsMap[t.item] = (productsMap[t.item] || 0) + (t.quantity || 1);
       }
 
@@ -380,7 +445,8 @@ const FinancialAdmin: React.FC = () => {
         chartData, 
         prosData, 
         topProducts, 
-        topClients 
+        topClients,
+        accountStats
     };
   }, [filteredData, commissionConfigs, servicesMap, professionalsMap, adminPros]);
 
@@ -448,24 +514,28 @@ const FinancialAdmin: React.FC = () => {
                 // Saída do Caixa
                 await addTransaction({
                     operation: 'COMPRA',
+                    operation_type: 'SAÍDA',
                     type: 'OUTROS',
                     category: 'Gerencial',
                     item: `Transferência (Saída): Caixa -> Banco (${managerForm.description})`,
                     val: -amount,
                     date: new Date().toISOString().split('T')[0],
                     payment_method: 'Dinheiro',
+                    payment_account: 'CASH',
                     status: 'Pago',
                     pro: 'Admin'
                 });
                 // Entrada no Banco
                 await addTransaction({
                     operation: 'VENDA',
+                    operation_type: 'ENTRADA',
                     type: 'OUTROS',
                     category: 'Gerencial',
                     item: `Transferência (Entrada): Caixa -> Banco (${managerForm.description})`,
                     val: amount,
                     date: new Date().toISOString().split('T')[0],
                     payment_method: 'Transferência (Banco)',
+                    payment_account: 'BANK',
                     status: 'Pago',
                     pro: 'Admin'
                 });
@@ -473,24 +543,28 @@ const FinancialAdmin: React.FC = () => {
                 // Saída do Banco
                 await addTransaction({
                     operation: 'COMPRA',
+                    operation_type: 'SAÍDA',
                     type: 'OUTROS',
                     category: 'Gerencial',
                     item: `Transferência (Saída): Banco -> Caixa (${managerForm.description})`,
                     val: -amount,
                     date: new Date().toISOString().split('T')[0],
                     payment_method: 'Transferência (Banco)',
+                    payment_account: 'BANK',
                     status: 'Pago',
                     pro: 'Admin'
                 });
                 // Entrada no Caixa
                 await addTransaction({
                     operation: 'VENDA',
+                    operation_type: 'ENTRADA',
                     type: 'OUTROS',
                     category: 'Gerencial',
                     item: `Transferência (Entrada): Banco -> Caixa (${managerForm.description})`,
                     val: amount,
                     date: new Date().toISOString().split('T')[0],
                     payment_method: 'Dinheiro',
+                    payment_account: 'CASH',
                     status: 'Pago',
                     pro: 'Admin'
                 });
@@ -507,34 +581,64 @@ const FinancialAdmin: React.FC = () => {
                 showAdjustModal.type === 'card' ? 'Caixa (Cartão)' : 'Conta Corrente';
             
             const opType = managerForm.operationType;
+            let paymentAccount: 'CASH' | 'PIX' | 'CARD' | 'BANK' = 'CASH';
             
             // Define o método de pagamento para o trigger
-            if (showAdjustModal.type === 'cash') paymentMethod = 'Dinheiro';
-            else if (showAdjustModal.type === 'pix') paymentMethod = 'Pix';
-            else if (showAdjustModal.type === 'card') paymentMethod = 'Cartão';
-            else paymentMethod = 'Transferência (Banco)';
+            if (showAdjustModal.type === 'cash') { paymentMethod = 'Dinheiro'; paymentAccount = 'CASH'; }
+            else if (showAdjustModal.type === 'pix') { paymentMethod = 'Pix'; paymentAccount = 'PIX'; }
+            else if (showAdjustModal.type === 'card') { paymentMethod = 'Cartão'; paymentAccount = 'CARD'; }
+            else { paymentMethod = 'Transferência (Banco)'; paymentAccount = 'BANK'; }
 
             if (opType === 'deposit') {
                 txItem = `Depósito/Aporte em ${accountName}: ${managerForm.description}`;
                 txVal = amount;
                 operation = 'VENDA';
+                await addTransaction({
+                    operation: operation,
+                    operation_type: 'ENTRADA',
+                    type: 'OUTROS',
+                    category: 'Gerencial',
+                    item: txItem,
+                    val: txVal,
+                    date: new Date().toISOString().split('T')[0],
+                    payment_method: paymentMethod,
+                    payment_account: paymentAccount,
+                    status: 'Pago',
+                    pro: 'Admin'
+                });
             } else if (opType === 'withdraw') {
                 txItem = `Saque/Sangria de ${accountName}: ${managerForm.description}`;
                 txVal = -amount;
                 operation = 'COMPRA';
+                await addTransaction({
+                    operation: operation,
+                    operation_type: 'SAÍDA',
+                    type: 'OUTROS',
+                    category: 'Gerencial',
+                    item: txItem,
+                    val: txVal,
+                    date: new Date().toISOString().split('T')[0],
+                    payment_method: paymentMethod,
+                    payment_account: paymentAccount,
+                    status: 'Pago',
+                    pro: 'Admin'
+                });
             } else if (opType === 'transfer') {
                 const targetName = managerForm.target === 'bank' ? 'Conta Corrente' : 'Caixa (Dinheiro)';
                 const targetMethod = managerForm.target === 'bank' ? 'Transferência (Banco)' : 'Dinheiro';
+                const targetAccount = managerForm.target === 'bank' ? 'BANK' : 'CASH';
 
                 // Saída da Origem
                 await addTransaction({
                     operation: 'COMPRA',
+                    operation_type: 'SAÍDA',
                     type: 'OUTROS',
                     category: 'Gerencial',
                     item: `Transferência (Saída): ${accountName} -> ${targetName} (${managerForm.description})`,
                     val: -amount,
                     date: new Date().toISOString().split('T')[0],
                     payment_method: paymentMethod,
+                    payment_account: paymentAccount,
                     status: 'Pago',
                     pro: 'Admin'
                 });
@@ -542,28 +646,32 @@ const FinancialAdmin: React.FC = () => {
                 // Entrada no Destino
                 await addTransaction({
                     operation: 'VENDA',
+                    operation_type: 'ENTRADA',
                     type: 'OUTROS',
                     category: 'Gerencial',
                     item: `Transferência (Entrada): ${accountName} -> ${targetName} (${managerForm.description})`,
                     val: amount,
                     date: new Date().toISOString().split('T')[0],
                     payment_method: targetMethod,
+                    payment_account: targetAccount,
                     status: 'Pago',
                     pro: 'Admin'
                 });
-                txItem = '';
             }
+            txItem = '';
         }
         
-        if (txItem) {
+        if (txItem && type === 'sangria') {
             await addTransaction({
                 operation: operation,
+                operation_type: 'SAÍDA',
                 type: 'OUTROS',
                 category: 'Gerencial',
                 item: txItem,
                 val: txVal,
                 date: new Date().toISOString().split('T')[0],
                 payment_method: paymentMethod,
+                payment_account: 'CASH',
                 status: 'Pago',
                 pro: 'Admin'
             });
@@ -744,7 +852,7 @@ const FinancialAdmin: React.FC = () => {
                             Detalhar
                         </button>
                     </div>
-                    <h2 className="text-2xl font-black text-blue-900">R$ {((settings?.cash_balance || 0) + (settings?.pix_balance || 0)).toFixed(2)}</h2>
+                    <h2 className="text-2xl font-black text-blue-900">R$ {(globalBalances.cash + globalBalances.pix).toFixed(2)}</h2>
                     <p className="text-[9px] text-gray-400 font-medium mt-1">Soma de Dinheiro e Pix em caixa.</p>
                 </div>
             </div>
@@ -772,6 +880,70 @@ const FinancialAdmin: React.FC = () => {
                     <p className="text-[9px] text-gray-400 font-medium mt-1">Lucro bruto (Faturamento - Comissões).</p>
                 </div>
             </div>
+        </div>
+
+        {/* NOVOS CARDS DE MOVIMENTAÇÃO POR CONTA */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {[
+                { id: 'CASH', name: 'Dinheiro', icon: Banknote, color: 'text-green-600', bg: 'bg-green-50' },
+                { id: 'PIX', name: 'Pix', icon: ArrowLeftRight, color: 'text-blue-500', bg: 'bg-blue-50' },
+                { id: 'CARD', name: 'Cartão', icon: ShoppingBag, color: 'text-purple-600', bg: 'bg-purple-50' },
+                { id: 'BANK', name: 'Banco', icon: Landmark, color: 'text-gray-600', bg: 'bg-gray-50' }
+            ].map(acc => {
+                const data = stats.accountStats[acc.id];
+                const isExpanded = expandedAccount === acc.id;
+
+                return (
+                    <div key={acc.id} className="bg-white rounded-[2rem] border border-gray-100 shadow-sm overflow-hidden transition-all duration-300">
+                        <div className="p-5 space-y-4">
+                            <div className="flex justify-between items-start">
+                                <div className={`${acc.bg} ${acc.color} p-2 rounded-xl`}>
+                                    <acc.icon size={20} />
+                                </div>
+                                <button 
+                                    onClick={() => setExpandedAccount(isExpanded ? null : acc.id as any)}
+                                    className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-2 py-1 rounded-lg hover:bg-blue-100 transition-colors"
+                                >
+                                    {isExpanded ? 'Recolher' : 'Ver Origem'}
+                                </button>
+                            </div>
+                            
+                            <div>
+                                <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">{acc.name}</span>
+                                <div className="mt-1">
+                                    <span className="text-lg font-black text-gray-900">R$ {data.income.toFixed(2)}</span>
+                                    <span className="text-[10px] font-bold text-green-600 block">Total Recebido</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {isExpanded && (
+                            <div className="border-t border-gray-50 bg-gray-50/50 max-h-60 overflow-y-auto">
+                                <div className="p-4 space-y-2">
+                                    <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-2">Transações do Período</p>
+                                    {data.transactions.length > 0 ? (
+                                        data.transactions.map(t => {
+                                            const isIncome = t.operation_type === 'ENTRADA' || t.operation === 'VENDA' || t.val > 0;
+                                            return (
+                                            <div key={t.id} className="flex justify-between items-center bg-white p-2 rounded-xl border border-gray-100 shadow-sm">
+                                                <div className="flex flex-col">
+                                                    <span className="text-[10px] font-bold text-gray-800 truncate max-w-[120px]">{t.item}</span>
+                                                    <span className="text-[8px] text-gray-400">{new Date(t.date + 'T00:00:00').toLocaleDateString('pt-BR')}</span>
+                                                </div>
+                                                <span className={`text-[10px] font-black ${isIncome ? 'text-green-600' : 'text-red-600'}`}>
+                                                    {isIncome ? '+' : '-'} R$ {Math.abs(t.val).toFixed(2)}
+                                                </span>
+                                            </div>
+                                        )})
+                                    ) : (
+                                        <p className="text-[10px] text-gray-400 text-center py-4 italic">Nenhuma movimentação</p>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                );
+            })}
         </div>
 
         {/* CONTROLE DE GASTOS MENSAIS */}
@@ -838,7 +1010,7 @@ const FinancialAdmin: React.FC = () => {
                         </div>
                     </div>
                     <div className="flex items-center gap-3">
-                        <span className="text-sm font-black text-gray-900">R$ {(settings?.cash_balance || 0).toFixed(2)}</span>
+                        <span className="text-sm font-black text-gray-900">R$ {globalBalances.cash.toFixed(2)}</span>
                         <button 
                             onClick={() => setShowAdjustModal({ show: true, type: 'cash' })}
                             className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-3 py-1.5 rounded-lg active:scale-95 transition-all"
@@ -860,7 +1032,7 @@ const FinancialAdmin: React.FC = () => {
                         </div>
                     </div>
                     <div className="flex items-center gap-3">
-                        <span className="text-sm font-black text-gray-900">R$ {(settings?.pix_balance || 0).toFixed(2)}</span>
+                        <span className="text-sm font-black text-gray-900">R$ {globalBalances.pix.toFixed(2)}</span>
                         <button 
                             onClick={() => setShowAdjustModal({ show: true, type: 'pix' as any })}
                             className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-3 py-1.5 rounded-lg active:scale-95 transition-all"
@@ -882,7 +1054,7 @@ const FinancialAdmin: React.FC = () => {
                         </div>
                     </div>
                     <div className="flex items-center gap-3">
-                        <span className="text-sm font-black text-gray-900">R$ {(settings?.card_balance || 0).toFixed(2)}</span>
+                        <span className="text-sm font-black text-gray-900">R$ {globalBalances.card.toFixed(2)}</span>
                         <button 
                             onClick={() => setShowAdjustModal({ show: true, type: 'card' as any })}
                             className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-3 py-1.5 rounded-lg active:scale-95 transition-all"
@@ -904,7 +1076,7 @@ const FinancialAdmin: React.FC = () => {
                         </div>
                     </div>
                     <div className="flex items-center gap-3">
-                        <span className="text-sm font-black text-gray-900">R$ {(settings?.bank_balance || 0).toFixed(2)}</span>
+                        <span className="text-sm font-black text-gray-900">R$ {globalBalances.bank.toFixed(2)}</span>
                         <button 
                             onClick={() => setShowAdjustModal({ show: true, type: 'bank' })}
                             className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-3 py-1.5 rounded-lg active:scale-95 transition-all"

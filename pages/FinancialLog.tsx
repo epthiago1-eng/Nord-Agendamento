@@ -93,21 +93,29 @@ const FinancialLog: React.FC = () => {
           {filteredData.map((t) => (
             <div key={t.id} className="bg-white mx-2 p-3 rounded-2xl border border-gray-100 shadow-sm flex flex-col gap-2 relative overflow-hidden">
               {/* Left Stripe Indicator */}
-              <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${t.operation === 'COMPRA' ? 'bg-red-500' : 'bg-green-500'}`} />
+              <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${t.operation_type === 'SAÍDA' ? 'bg-red-500' : 'bg-green-500'}`} />
               
               <div className="pl-3 flex justify-between items-start">
                 <div>
                     <div className="flex items-center gap-2 mb-1">
                         <span className="text-[10px] font-black bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-md uppercase tracking-tight">{t.code || '---'}</span>
                         <h4 className="text-xs font-black text-gray-900 uppercase truncate max-w-[180px]">{t.item}</h4>
+                        <span className={`text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter ${
+                          t.payment_account === 'CASH' ? 'bg-green-100 text-green-700' :
+                          t.payment_account === 'PIX' ? 'bg-blue-100 text-blue-700' :
+                          t.payment_account === 'CARD' ? 'bg-purple-100 text-purple-700' :
+                          'bg-gray-100 text-gray-700'
+                        }`}>
+                          {t.payment_account || '---'}
+                        </span>
                     </div>
                     <p className="text-[10px] font-medium text-gray-400 uppercase flex items-center gap-1">
                         {formatDate(t.date)} • {t.type} • {t.client_supplier || 'Balcão'}
                     </p>
                 </div>
                 <div className="text-right">
-                    <p className={`text-sm font-black ${t.operation === 'COMPRA' ? 'text-red-500' : 'text-green-600'}`}>
-                        {t.operation === 'COMPRA' ? '-' : '+'} R$ {Math.abs(t.total_value || t.val).toFixed(2).replace('.', ',')}
+                    <p className={`text-sm font-black ${t.operation_type === 'SAÍDA' ? 'text-red-500' : 'text-green-600'}`}>
+                        {t.operation_type === 'SAÍDA' ? '-' : '+'} R$ {Math.abs(t.total_value || t.val).toFixed(2).replace('.', ',')}
                     </p>
                     <p className="text-[9px] font-bold text-gray-300 uppercase">{t.quantity} un.</p>
                 </div>

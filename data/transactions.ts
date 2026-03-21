@@ -31,21 +31,39 @@ export const getTransactions = async (filters?: { proId?: string, month?: string
 };
 
 export const addTransaction = async (transaction: Partial<Transaction> & { method?: string }) => {
+  // Mapeamento automático para as novas colunas organizadas
+  const method = transaction.method || transaction.payment_method || '';
+  const val = transaction.val || 0;
+  const operation = transaction.operation || (val < 0 ? 'COMPRA' : 'VENDA');
+
+  const payment_account = transaction.payment_account || ((): any => {
+    const m = method.toLowerCase();
+    if (m.includes('dinheiro')) return 'CASH';
+    if (m.includes('pix')) return 'PIX';
+    if (m.includes('cartão') || m.includes('cartao') || m.includes('crédito') || m.includes('débito')) return 'CARD';
+    if (m.includes('banco') || m.includes('transferência') || m.includes('conta')) return 'BANK';
+    return 'CASH'; // Default
+  })();
+
+  const operation_type = transaction.operation_type || (operation === 'VENDA' || val > 0 ? 'ENTRADA' : 'SAÍDA');
+
   // Ajusta payload para corresponder às colunas do banco
   const payload: any = {
     date: transaction.date,
-    operation: transaction.operation || (transaction.val && transaction.val < 0 ? 'COMPRA' : 'VENDA'),
+    operation: operation,
+    operation_type: operation_type,
+    payment_account: payment_account,
     type: transaction.type || 'OUTROS',
     code: transaction.code || '',
     item: transaction.item,
     
-    unit_price: transaction.unit_price || Math.abs(transaction.val || 0),
+    unit_price: transaction.unit_price || Math.abs(val),
     cost_value: transaction.cost_value || 0,
     quantity: transaction.quantity || 1,
-    total_value: transaction.val, 
+    total_value: val, 
     
     client_supplier: transaction.client_supplier,
-    payment_method: transaction.method || transaction.payment_method,
+    payment_method: method,
     pro: transaction.pro,
     
     status: transaction.status,
@@ -66,7 +84,7 @@ export const addTransaction = async (transaction: Partial<Transaction> & { metho
 
     // Campos Legados mantidos apenas se existirem colunas no banco
     category: transaction.category || transaction.type,
-    val: transaction.val,
+    val: val,
   };
 
   // Remove chaves com valores undefined para evitar erros no Supabase
@@ -91,8 +109,21 @@ export const updateTransaction = async (id: string, updates: Partial<Transaction
   if (updates.val !== undefined) {
       payload.total_value = updates.val;
       payload.val = updates.val;
-      // Atualiza unit_price apenas se for razoável (assumindo quantidade 1 para edições simples)
       payload.unit_price = Math.abs(updates.val);
+      
+      // Atualiza operation_type se o valor mudar de sinal
+      if (!updates.operation_type) {
+        payload.operation_type = updates.val >= 0 ? 'ENTRADA' : 'SAÍDA';
+      }
+  }
+
+  // Sincroniza payment_account se payment_method mudar
+  if (updates.payment_method && !updates.payment_account) {
+    const m = updates.payment_method.toLowerCase();
+    if (m.includes('dinheiro')) payload.payment_account = 'CASH';
+    else if (m.includes('pix')) payload.payment_account = 'PIX';
+    else if (m.includes('cartão') || m.includes('cartao') || m.includes('crédito') || m.includes('débito')) payload.payment_account = 'CARD';
+    else if (m.includes('banco') || m.includes('transferência') || m.includes('conta')) payload.payment_account = 'BANK';
   }
   
   if (updates.item !== undefined) {

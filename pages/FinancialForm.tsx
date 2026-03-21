@@ -13,7 +13,7 @@ const FinancialForm: React.FC = () => {
   const [operation, setOperation] = useState<'COMPRA' | 'VENDA'>('COMPRA');
   const [expenseCategory, setExpenseCategory] = useState('PRODUTO'); // PRODUTO, EQUIPAMENTO, LIMPEZA, OUTROS
   const [loading, setLoading] = useState(false);
-  const [sourceAccount, setSourceAccount] = useState<'cash' | 'bank'>('cash');
+  const [paymentAccount, setPaymentAccount] = useState<'CASH' | 'PIX' | 'CARD' | 'BANK'>('CASH');
   
   // Lista de Produtos para o Dropdown
   const [productsList, setProductsList] = useState<any[]>([]);
@@ -138,7 +138,9 @@ const FinancialForm: React.FC = () => {
             val: operation === 'COMPRA' ? -Math.abs(totalOperation) : Math.abs(totalOperation),
             
             client_supplier: formData.supplier,
-            payment_method: sourceAccount === 'bank' ? `${formData.paymentMethod} (Banco)` : formData.paymentMethod,
+            payment_method: formData.paymentMethod,
+            payment_account: paymentAccount,
+            operation_type: operation === 'COMPRA' ? 'SAÍDA' : 'ENTRADA',
             status: 'Pago',
             pro: 'Caixa', // Usuário sistema
         });
@@ -328,14 +330,28 @@ const FinancialForm: React.FC = () => {
 
             <div>
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1.5 px-1">Conta de {operation === 'COMPRA' ? 'Saída' : 'Entrada'}</label>
-                <select 
-                    value={sourceAccount}
-                    onChange={e => setSourceAccount(e.target.value as 'cash' | 'bank')}
-                    className="w-full bg-white border border-gray-200 rounded-xl py-3 px-4 font-bold text-gray-700 text-sm outline-none"
-                >
-                    <option value="cash">Caixa da Barbearia</option>
-                    <option value="bank">Conta Corrente</option>
-                </select>
+                <div className="grid grid-cols-2 gap-2">
+                    {[
+                        { id: 'CASH', label: 'Dinheiro / Caixa', color: 'bg-orange-500' },
+                        { id: 'BANK', label: 'Conta Bancária', color: 'bg-blue-600' },
+                        { id: 'PIX', label: 'Pix / Digital', color: 'bg-teal-500' },
+                        { id: 'CARD', label: 'Cartão / Maquininha', color: 'bg-purple-600' }
+                    ].map(acc => (
+                        <button
+                            key={acc.id}
+                            type="button"
+                            onClick={() => setPaymentAccount(acc.id as any)}
+                            className={`py-3 px-2 rounded-xl border text-[10px] font-bold uppercase transition-all flex flex-col items-center gap-1 ${
+                                paymentAccount === acc.id 
+                                ? 'border-blue-900 bg-blue-50 text-blue-900' 
+                                : 'border-gray-100 bg-white text-gray-500'
+                            }`}
+                        >
+                            <div className={`w-2 h-2 rounded-full ${acc.color}`} />
+                            {acc.label}
+                        </button>
+                    ))}
+                </div>
             </div>
 
             <div>
