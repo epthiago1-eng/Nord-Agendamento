@@ -16,6 +16,8 @@ import { EstablishmentSettings } from '../types';
 const FinancialAdmin: React.FC = () => {
   const navigate = useNavigate();
   const [allTransactions, setAllTransactions] = useState<Transaction[]>([]);
+  const [weeklyTransactions, setWeeklyTransactions] = useState<Transaction[]>([]);
+  const [selectedWeek, setSelectedWeek] = useState<any | null>(null);
   const [allBills, setAllBills] = useState<any[]>([]);
   const [viewMode, setViewMode] = useState<'week' | 'month'>('month');
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -84,7 +86,16 @@ const FinancialAdmin: React.FC = () => {
       const startStr = dateRange.start.toISOString().split('T')[0];
       const endStr = dateRange.end.toISOString().split('T')[0];
 
-      const [txData, settingsData, prosRes, servicesRes, configsRes, adminProfilesRes, billsRes, allTxRes] = await Promise.all([
+      // Calcular range de 5 semanas para o gráfico histórico
+      const now = new Date();
+      const day = now.getDay();
+      const diffToSunday = day === 0 ? 0 : 7 - day;
+      const fiveWeeksEnd = new Date(now);
+      fiveWeeksEnd.setDate(now.getDate() + diffToSunday);
+      const fiveWeeksStart = new Date(fiveWeeksEnd);
+      fiveWeeksStart.setDate(fiveWeeksEnd.getDate() - (5 * 7) + 1);
+
+      const [txData, settingsData, prosRes, servicesRes, configsRes, adminProfilesRes, billsRes, allTxRes, weeklyTxData] = await Promise.all([
           getTransactions({ startDate: startStr, endDate: endStr }),
           getSettings(),
           db.professionals().select('id, name'),
@@ -92,10 +103,12 @@ const FinancialAdmin: React.FC = () => {
           db.professionalServices().select('*'),
           db.profiles().select('professional_id').eq('role', 'ADMIN'),
           supabase.from('bills').select('*').gte('due_date', startStr).lte('due_date', endStr),
-          supabase.from('transactions').select('val, total_value, payment_method, operation_type, operation')
+          supabase.from('transactions').select('val, total_value, payment_method, operation_type, operation'),
+          getTransactions({ startDate: fiveWeeksStart.toISOString().split('T')[0], endDate: fiveWeeksEnd.toISOString().split('T')[0] })
       ]);
 
       setAllTransactions(txData);
+      setWeeklyTransactions(weeklyTxData);
       setSettings(settingsData);
       
       // Calcular saldos globais
@@ -449,6 +462,76 @@ const FinancialAdmin: React.FC = () => {
         accountStats
     };
   }, [filteredData, commissionConfigs, servicesMap, professionalsMap, adminPros]);
+
+  // --- CÁLCULO DE ESTATÍSTICAS SEMANAIS (5 SEMANAS) ---
+  const weeklyStats = useMemo(() => {
+    const weeks = [];
+    const now = new Date();
+    
+    // Encontrar o domingo da semana atual (fim da semana)
+    const currentSunday = new Date(now);
+    const day = currentSunday.getDay();
+    const diffToSunday = day === 0 ? 0 : 7 - day;
+    currentSunday.setDate(currentSunday.getDate() + diffToSunday);
+    currentSunday.setHours(23, 59, 59, 999);
+
+    for (let i = 0; i < 5; i++) {
+      const end = new Date(currentSunday);
+      end.setDate(end.getDate() - (i * 7));
+      
+      const start = new Date(end);
+      start.setDate(start.getDate() - 6);
+      start.setHours(0, 0, 0, 0);
+
+      const weekTransactions = weeklyTransactions.filter(t => {
+        const tDate = new Date(t.date + 'T00:00:00');
+        return tDate >= start && tDate <= end;
+      });
+
+      let income = 0;
+      let expenses = 0;
+      let commissions = 0;
+      let cash = 0;
+      let pix = 0;
+      let card = 0;
+
+      weekTransactions.forEach(t => {
+        const isIncome = t.operation_type === 'ENTRADA' || t.operation === 'VENDA' || t.val > 0;
+        const comm = calculateCommission(t);
+
+        if (isIncome) {
+          if (t.category !== 'Gorjeta' && t.type !== 'GORJETA') {
+            income += t.val;
+            commissions += comm;
+            
+            const method = (t.payment_method || '').toLowerCase();
+            if (method.includes('pix')) pix += t.val;
+            else if (method.includes('cartão') || method.includes('cartao') || method.includes('crédito') || method.includes('débito')) card += t.val;
+            else if (method.includes('dinheiro')) cash += t.val;
+            else cash += t.val;
+          }
+        } else {
+          expenses += Math.abs(t.val);
+        }
+      });
+
+      weeks.push({
+        name: `S${5-i}`,
+        label: `${start.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} - ${end.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}`,
+        netRevenue: income - commissions,
+        details: {
+          cash,
+          pix,
+          card,
+          expenses,
+          totalIncome: income,
+          totalCommissions: commissions
+        }
+      });
+    }
+
+    return weeks.reverse();
+  }, [weeklyTransactions, commissionConfigs, servicesMap, professionalsMap, adminPros]);
 
   // --- AÇÕES DO MODAL ---
   const handleOpenEdit = (t: Transaction) => {
@@ -1170,6 +1253,97 @@ const FinancialAdmin: React.FC = () => {
                     </BarChart>
                 </ResponsiveContainer>
             </div>
+        </div>
+
+        {/* NOVO GRÁFICO: RESULTADO LÍQUIDO SEMANAL (5 SEMANAS) */}
+        <div className="bg-white p-6 rounded-[2.5rem] border border-gray-100 shadow-sm">
+            <div className="flex justify-between items-center mb-6">
+                <h3 className="text-xs font-black text-gray-900 uppercase tracking-widest flex items-center gap-2">
+                    <BarChart3 size={16} className="text-blue-900" /> Resultado Líquido Semanal (Últimas 5 Semanas)
+                </h3>
+                <span className="text-[9px] text-gray-400 font-bold uppercase">Clique na barra para detalhes</span>
+            </div>
+            <div className="h-64 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                    <BarChart 
+                        data={weeklyStats}
+                        onClick={(data) => {
+                            if (data && data.activePayload && data.activePayload.length > 0) {
+                                setSelectedWeek(data.activePayload[0].payload);
+                            }
+                        }}
+                    >
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                        <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{fontSize: 8, fill: '#9ca3af'}} />
+                        <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#9ca3af'}} />
+                        <Tooltip 
+                            cursor={{fill: '#f3f4f6'}}
+                            content={({ active, payload }) => {
+                                if (active && payload && payload.length) {
+                                    const data = payload[0].payload;
+                                    return (
+                                        <div className="bg-white p-3 rounded-2xl shadow-xl border border-gray-50">
+                                            <p className="text-[10px] font-black text-gray-400 uppercase mb-1">{data.label}</p>
+                                            <p className="text-sm font-black text-blue-900">Líquido: R$ {data.netRevenue.toFixed(2)}</p>
+                                        </div>
+                                    );
+                                }
+                                return null;
+                            }}
+                        />
+                        <Bar 
+                            dataKey="netRevenue" 
+                            name="Resultado Líquido" 
+                            fill="#1e3a8a" 
+                            radius={[8, 8, 0, 0]}
+                            className="cursor-pointer"
+                        >
+                            {weeklyStats.map((entry, index) => (
+                                <Cell 
+                                    key={`cell-${index}`} 
+                                    fill={selectedWeek?.label === entry.label ? '#10b981' : '#1e3a8a'} 
+                                />
+                            ))}
+                        </Bar>
+                    </BarChart>
+                </ResponsiveContainer>
+            </div>
+
+            {/* Detalhes da Semana Selecionada */}
+            {selectedWeek && (
+                <div className="mt-6 p-4 bg-gray-50 rounded-[2rem] border border-gray-100 animate-in fade-in slide-in-from-top-2">
+                    <div className="flex justify-between items-center mb-4">
+                        <h4 className="text-[10px] font-black text-blue-900 uppercase tracking-widest">
+                            Detalhes: {selectedWeek.label}
+                        </h4>
+                        <button onClick={() => setSelectedWeek(null)} className="text-gray-400 hover:text-gray-600">
+                            <X size={16} />
+                        </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div className="bg-white p-3 rounded-2xl shadow-sm border border-gray-100">
+                            <span className="text-[8px] font-black text-gray-400 uppercase block">Dinheiro</span>
+                            <span className="text-xs font-black text-green-600">R$ {selectedWeek.details.cash.toFixed(2)}</span>
+                        </div>
+                        <div className="bg-white p-3 rounded-2xl shadow-sm border border-gray-100">
+                            <span className="text-[8px] font-black text-gray-400 uppercase block">Pix</span>
+                            <span className="text-xs font-black text-blue-500">R$ {selectedWeek.details.pix.toFixed(2)}</span>
+                        </div>
+                        <div className="bg-white p-3 rounded-2xl shadow-sm border border-gray-100">
+                            <span className="text-[8px] font-black text-gray-400 uppercase block">Cartões</span>
+                            <span className="text-xs font-black text-purple-600">R$ {selectedWeek.details.card.toFixed(2)}</span>
+                        </div>
+                        <div className="bg-white p-3 rounded-2xl shadow-sm border border-gray-100">
+                            <span className="text-[8px] font-black text-gray-400 uppercase block">Gastos</span>
+                            <span className="text-xs font-black text-red-500">R$ {selectedWeek.details.expenses.toFixed(2)}</span>
+                        </div>
+                    </div>
+                    <div className="mt-3 p-3 bg-blue-900 rounded-2xl flex justify-between items-center">
+                        <span className="text-[8px] font-black text-blue-200 uppercase">Resultado Líquido</span>
+                        <span className="text-sm font-black text-white">R$ {selectedWeek.netRevenue.toFixed(2)}</span>
+                    </div>
+                </div>
+            )}
         </div>
 
         {/* PRODUÇÃO DA EQUIPE - DETALHADO */}

@@ -26,10 +26,18 @@
     <script type="module" src="/index.tsx"></script>
     <script>
       // Registro de SW resiliente a erros de ambiente de desenvolvimento
-      /*
       if ('serviceWorker' in navigator && window.location.protocol === 'https:') {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
+          // Desregistra SWs antigos para evitar conflitos de cache/redirecionamento
+          navigator.serviceWorker.getRegistrations().then(registrations => {
+            for (let registration of registrations) {
+              if (registration.active && !registration.active.scriptURL.includes('service-worker.js')) {
+                registration.unregister();
+              }
+            }
+          });
+
+          navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' })
             .then(reg => {
               console.log('SW registrado com sucesso:', reg.scope);
               reg.update(); // Força atualização imediata
@@ -42,7 +50,6 @@
             });
         });
       }
-      */
     </script>
 </body>
 </html>
