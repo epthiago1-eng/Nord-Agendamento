@@ -392,7 +392,6 @@ export const saveAppointment = async (apt: Omit<Appointment, 'id'>) => {
       status: apt.status,
       // services e products removidos do topo para evitar erro de schema cache
       totalValue: apt.totalValue || 0,
-      total_value: apt.totalValue || 0,
       payment_method: apt.payment_method || null,
       observation: JSON.stringify(metadata)
   };
@@ -461,7 +460,7 @@ export const updateAppointment = async (id: string, data: Partial<Appointment>) 
   else if (data.date && data.time) payload.appointment_time = `${data.date}T${data.time}:00`;
   
   if (data.duration) payload.duration = data.duration;
-  if (data.totalValue !== undefined) payload.total_value = data.totalValue;
+  if (data.totalValue !== undefined) payload.totalValue = data.totalValue;
   if (data.payment_method !== undefined) payload.payment_method = data.payment_method;
   // services e products serão tratados no metadata abaixo
 

@@ -481,7 +481,7 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                       name: s.name
                   })),
                   products: selectedProducts,
-                  total_value: totals.total,
+                  totalValue: totals.total,
                   payment_method: showMultiPayment ? finalPayments.map(p => p.method).join(' + ') : paymentMethod,
                   payments: finalPayments,
                   others_value: totals.others,
