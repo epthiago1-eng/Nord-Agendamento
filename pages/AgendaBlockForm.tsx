@@ -71,10 +71,10 @@ const AgendaBlockForm: React.FC = () => {
       // VERIFICAÇÃO DE CONFLITO ROBUSTA
       // 1. Busca agendamentos do dia (ou intervalo) para o profissional
       const { data: appointmentsInRange, error } = await db.appointments()
-        .select('appointment_time, duration, "clientName", status')
-        .or(`professionalId.eq.${selectedProId},professional_id.eq.${selectedProId}`) 
-        .gte('appointment_time', `${formData.startDate}T00:00:00`) 
-        .lte('appointment_time', `${formData.endDate}T23:59:59`); 
+        .select('date, time, duration, clientName, status')
+        .eq('professionalId', selectedProId) 
+        .gte('date', formData.startDate) // Otimização: filtra pelo dia
+        .lte('date', formData.endDate);  // Otimização: filtra pelo dia
 
       if (error) {
           console.error("Erro ao verificar conflitos:", error);
@@ -89,7 +89,7 @@ const AgendaBlockForm: React.FC = () => {
       // 3. Verifica colisão de horário exato
       const conflict = activeAppointments.find(apt => {
           // Constrói data do agendamento
-          const aptStart = new Date(apt.appointment_time).getTime();
+          const aptStart = new Date(`${apt.date}T${apt.time}`).getTime();
           // Duração em ms (padrão 30 se nulo)
           const durationMs = (apt.duration || 30) * 60 * 1000;
           const aptEnd = aptStart + durationMs;
@@ -98,21 +98,16 @@ const AgendaBlockForm: React.FC = () => {
           const hasOverlap = (aptStart < blockEnd) && (aptEnd > blockStart);
           
           if (hasOverlap) {
-              const d = new Date(apt.appointment_time);
-              const timeStr = d.toTimeString().split(' ')[0].substring(0, 5);
-              console.log("Conflito detectado com:", apt.clientName, timeStr);
+              console.log("Conflito detectado com:", apt.clientName, apt.time);
           }
           return hasOverlap;
       });
 
       if (conflict) {
-          const d = new Date(conflict.appointment_time);
-          const dateStr = d.toISOString().split('T')[0];
-          const timeStr = d.toTimeString().split(' ')[0].substring(0, 5);
           setConflictError({
               clientName: conflict.clientName,
-              time: timeStr,
-              date: dateStr,
+              time: conflict.time,
+              date: conflict.date,
               duration: conflict.duration || 30
           });
           setLoading(false);

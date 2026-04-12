@@ -32,6 +32,5 @@ export const db = {
   costCenters: () => supabase.from('cost_centers'),
   professionalServices: () => supabase.from('professional_services'),
   professionalHours: () => supabase.from('professional_hours'),
-  notifications: () => supabase.from('notifications'),
-  appointmentServices: () => supabase.from('appointment_services')
+  notifications: () => supabase.from('notifications')
 };

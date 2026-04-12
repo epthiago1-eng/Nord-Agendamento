@@ -105,30 +105,13 @@ export const deleteBlock = async (id: string) => {
 // --- AGENDAMENTOS (CORE) ---
 
 // Helper para converter DB -> App (ROBUSTO: Aceita camelCase e snake_case)
-export const mapAppointmentFromDB = (data: any): Appointment => {
+const mapAppointmentFromDB = (data: any): Appointment => {
     let observation = data.observation;
     let payments = data.payments || [];
     let others_value = data.others_value !== undefined ? data.others_value : data.othersValue;
     let others_description = data.others_description !== undefined ? data.others_description : data.othersDescription;
     let discount_value = data.discount_value !== undefined ? data.discount_value : data.discountValue;
     let tip_value = data.tip_value !== undefined ? data.tip_value : data.tipValue;
-    let services = data.services || [];
-    let service_items = data.service_items || [];
-    let products = data.products || [];
-
-    // Se vier da query com join da nova tabela appointment_services
-    if (data.appointment_services && Array.isArray(data.appointment_services)) {
-        const dbServices = data.appointment_services.map((as: any) => ({
-            service_id: as.service_id,
-            price: as.price,
-            name: as.services?.name || 'Serviço'
-        }));
-        
-        if (dbServices.length > 0) {
-            service_items = dbServices;
-            services = dbServices.map((s: any) => s.name);
-        }
-    }
 
     // Workaround para colunas ausentes: verifica se há metadados JSON na observação
     if (observation && observation.startsWith('{"_metadata":')) {
@@ -139,9 +122,6 @@ export const mapAppointmentFromDB = (data: any): Appointment => {
             if (metadata.others_description !== undefined) others_description = metadata.others_description;
             if (metadata.discount_value !== undefined) discount_value = metadata.discount_value;
             if (metadata.tip_value !== undefined) tip_value = metadata.tip_value;
-            if (metadata.services && services.length === 0) services = metadata.services;
-            if (metadata.service_items && service_items.length === 0) service_items = metadata.service_items;
-            if (metadata.products) products = metadata.products;
             observation = metadata.note || '';
         } catch (e) {
             console.error("Erro ao parsear metadados da observação:", e);
@@ -175,9 +155,8 @@ export const mapAppointmentFromDB = (data: any): Appointment => {
         appointment_time: data.appointment_time,
         duration: data.duration,
         status: data.status,
-        services: services,
-        service_items: service_items,
-        products: products,
+        services: data.services || [],
+        products: data.products || [],
         totalValue: data.totalValue !== undefined ? data.totalValue : data.total_value,
         total_value: data.total_value !== undefined ? data.total_value : data.totalValue,
         others_value: others_value || 0,
@@ -190,79 +169,28 @@ export const mapAppointmentFromDB = (data: any): Appointment => {
     };
 };
 
-const APPOINTMENT_COLUMNS = `
-  id,
-  "clientId",
-  "clientName",
-  "clientPhone",
-  "professionalId",
-  "professionalName",
-  duration,
-  status,
-  observation,
-  "totalValue",
-  created_at,
-  products,
-  others_value,
-  others_description,
-  discount_value,
-  tip_value,
-  payment_method,
-  appointment_time,
-  client_id,
-  professional_id
-`;
-
-const APPOINTMENT_SELECT = `
-  ${APPOINTMENT_COLUMNS},
-  appointment_services(
-    service_id,
-    price,
-    services(name)
-  )
-`;
-
 export const getAppointments = async (filters?: { proId?: string, date?: string, startDate?: string, endDate?: string }): Promise<Appointment[]> => {
-  let query = supabase.from('appointments').select(APPOINTMENT_SELECT);
+  let query = supabase.from('appointments').select('*');
   
-  // Filtro por Profissional (Tenta colunas novas e antigas)
+  // Tenta filtrar por professionalId (camelCase como no banco, com aspas duplas implícitas pelo client)
   if (filters?.proId) {
-      query = query.or(`professional_id.eq.${filters.proId},professionalId.eq.${filters.proId}`);
+      // Tenta filtrar por ambas as colunas possíveis
+      query = query.or(`professionalId.eq.${filters.proId},professional_id.eq.${filters.proId}`);
   }
   
-  // Filtro por Data (Prioriza appointment_time que é o novo padrão)
   if (filters?.date) {
-      query = query.gte('appointment_time', `${filters.date}T00:00:00`)
-                   .lte('appointment_time', `${filters.date}T23:59:59`);
+      // Tenta filtrar por date ou appointment_time
+      query = query.or(`date.eq.${filters.date},and(appointment_time.gte.${filters.date}T00:00:00,appointment_time.lte.${filters.date}T23:59:59)`);
   } else if (filters?.startDate && filters?.endDate) {
-      query = query.gte('appointment_time', `${filters.startDate}T00:00:00`)
-                   .lte('appointment_time', `${filters.endDate}T23:59:59`);
+      query = query.or(`and(date.gte.${filters.startDate},date.lte.${filters.endDate}),and(appointment_time.gte.${filters.startDate}T00:00:00,appointment_time.lte.${filters.endDate}T23:59:59)`);
   }
 
   const { data, error } = await query;
   
   // Fallback: Se der erro na query especifica (ex: coluna nao existe), tenta buscar tudo e filtrar no JS
   if (error) {
-      // Se o erro for especificamente sobre a coluna 'date' ou 'professionalId' não existir,
-      // tentamos uma query mais limpa apenas com as colunas novas.
-      const isColumnError = error.message?.includes('does not exist');
-      
-      if (isColumnError) {
-          let retryQuery = supabase.from('appointments').select(APPOINTMENT_SELECT);
-          if (filters?.proId) retryQuery = retryQuery.eq('professional_id', filters.proId);
-          if (filters?.date) {
-              retryQuery = retryQuery.gte('appointment_time', `${filters.date}T00:00:00`)
-                                     .lte('appointment_time', `${filters.date}T23:59:59`);
-          } else if (filters?.startDate && filters?.endDate) {
-              retryQuery = retryQuery.gte('appointment_time', `${filters.startDate}T00:00:00`)
-                                     .lte('appointment_time', `${filters.endDate}T23:59:59`);
-          }
-          const { data: retryData, error: retryError } = await retryQuery;
-          if (!retryError) return retryData ? retryData.map(mapAppointmentFromDB) : [];
-      }
-
       console.warn('Erro na query de agendamentos, tentando busca genérica...', error.message);
-      const { data: allData } = await supabase.from('appointments').select(APPOINTMENT_SELECT);
+      const { data: allData } = await supabase.from('appointments').select('*');
       let result = allData ? allData.map(mapAppointmentFromDB) : [];
       
       if (filters?.date) result = result.filter(a => a.date === filters.date);
@@ -280,19 +208,12 @@ export const getAppointments = async (filters?: { proId?: string, date?: string,
 export const getAppointmentsByPhone = async (phone: string): Promise<Appointment[]> => {
   const { data, error } = await supabase
     .from('appointments')
-    .select(APPOINTMENT_SELECT)
-    .order('appointment_time', { ascending: false }); 
+    .select('*')
+    //.eq('clientPhone', phone) // Tentativa direta
+    // .gte('date', new Date().toISOString().split('T')[0]) // REMOVIDO: Queremos todo o histórico
+    .order('date', { ascending: false }); // Ordena do mais recente para o mais antigo
 
-  if (error) {
-      // Fallback para ordenação por date se appointment_time falhar
-      const { data: fallbackData, error: fallbackError } = await supabase
-        .from('appointments')
-        .select(APPOINTMENT_SELECT);
-      
-      if (fallbackError) throw fallbackError;
-      const mapped = fallbackData ? fallbackData.map(mapAppointmentFromDB) : [];
-      return mapped.filter(a => a.clientPhone === phone).sort((a, b) => b.date.localeCompare(a.date));
-  }
+  if (error) throw error;
   
   // Filtragem no cliente para garantir match independente do nome da coluna
   const mapped = data ? data.map(mapAppointmentFromDB) : [];
@@ -300,31 +221,23 @@ export const getAppointmentsByPhone = async (phone: string): Promise<Appointment
 };
 
 export const checkClientSpam = async (phone: string, date: string): Promise<{ allowed: boolean, reason?: string }> => {
-    // 1. Verificar agendamentos no mesmo dia usando appointment_time
-    const { data: sameDay, error: sameDayError } = await supabase
+    // 1. Verificar agendamentos no mesmo dia
+    const { data: sameDay } = await supabase
         .from('appointments')
-        .select(APPOINTMENT_COLUMNS)
-        .gte('appointment_time', `${date}T00:00:00`)
-        .lte('appointment_time', `${date}T23:59:59`)
-        .neq('status', 'Cancelaram') 
+        .select('*')
+        .eq('date', date)
+        .neq('status', 'Cancelaram') // Ignora cancelados
         .neq('status', 'Desmarcou');
 
-    let sameDayApps = [];
-    if (sameDayError) {
-        // Fallback manual se appointment_time falhar
-        const { data: all } = await supabase.from('appointments').select(APPOINTMENT_COLUMNS);
-        sameDayApps = all ? all.map(mapAppointmentFromDB).filter(a => a.clientPhone === phone && a.date === date && !['Cancelaram', 'Desmarcou'].includes(a.status)) : [];
-    } else {
-        sameDayApps = sameDay ? sameDay.map(mapAppointmentFromDB).filter(a => a.clientPhone === phone) : [];
-    }
+    const sameDayApps = sameDay ? sameDay.map(mapAppointmentFromDB).filter(a => a.clientPhone === phone) : [];
     
     if (sameDayApps.length > 0) {
         return { allowed: false, reason: 'Você já possui um agendamento para este dia.' };
     }
 
-    // 2. Verificar agendamentos na mesma semana
+    // 2. Verificar agendamentos na mesma semana (Domingo a Sábado)
     const targetDate = new Date(date + 'T12:00:00');
-    const day = targetDate.getDay(); 
+    const day = targetDate.getDay(); // 0 (Dom) a 6 (Sab)
     
     const startOfWeek = new Date(targetDate);
     startOfWeek.setDate(targetDate.getDate() - day);
@@ -334,21 +247,15 @@ export const checkClientSpam = async (phone: string, date: string): Promise<{ al
     endOfWeek.setDate(targetDate.getDate() + (6 - day));
     const endStr = endOfWeek.toISOString().split('T')[0];
 
-    const { data: sameWeek, error: sameWeekError } = await supabase
+    const { data: sameWeek } = await supabase
         .from('appointments')
-        .select(APPOINTMENT_COLUMNS)
-        .gte('appointment_time', `${startStr}T00:00:00`)
-        .lte('appointment_time', `${endStr}T23:59:59`)
+        .select('*')
+        .gte('date', startStr)
+        .lte('date', endStr)
         .neq('status', 'Cancelaram')
         .neq('status', 'Desmarcou');
 
-    let sameWeekApps = [];
-    if (sameWeekError) {
-        const { data: all } = await supabase.from('appointments').select(APPOINTMENT_COLUMNS);
-        sameWeekApps = all ? all.map(mapAppointmentFromDB).filter(a => a.clientPhone === phone && a.date >= startStr && a.date <= endStr && !['Cancelaram', 'Desmarcou'].includes(a.status)) : [];
-    } else {
-        sameWeekApps = sameWeek ? sameWeek.map(mapAppointmentFromDB).filter(a => a.clientPhone === phone) : [];
-    }
+    const sameWeekApps = sameWeek ? sameWeek.map(mapAppointmentFromDB).filter(a => a.clientPhone === phone) : [];
 
     if (sameWeekApps.length >= 2) {
         return { allowed: false, reason: 'Limite de 2 agendamentos por semana atingido.' };
@@ -369,9 +276,6 @@ export const saveAppointment = async (apt: Omit<Appointment, 'id'>) => {
   const metadata = {
       _metadata: true,
       payments: apt.payments || [],
-      services: apt.services || [],
-      service_items: apt.service_items || [],
-      products: apt.products || [],
       others_value: (apt as any).others_value || 0,
       others_description: (apt as any).others_description || null,
       discount_value: (apt as any).discount_value || 0,
@@ -387,11 +291,15 @@ export const saveAppointment = async (apt: Omit<Appointment, 'id'>) => {
       professionalId: apt.professionalId,
       professional_id: apt.professional_id || (apt.professionalId && apt.professionalId.length > 20 ? apt.professionalId : null),
       professionalName: apt.professionalName,
+      date: apt.date,
+      time: apt.time,
       appointment_time: apt.appointment_time || `${apt.date}T${apt.time}:00`,
       duration: apt.duration,
       status: apt.status,
-      // services e products removidos do topo para evitar erro de schema cache
+      services: apt.services,
+      products: apt.products || [],
       totalValue: apt.totalValue || 0,
+      total_value: apt.totalValue || 0,
       payment_method: apt.payment_method || null,
       observation: JSON.stringify(metadata)
   };
@@ -399,25 +307,13 @@ export const saveAppointment = async (apt: Omit<Appointment, 'id'>) => {
   const { data, error } = await supabase
     .from('appointments')
     .insert(payload)
-    .select(APPOINTMENT_COLUMNS)
+    .select()
     .single();
 
   if (error) {
       console.error("Erro ao salvar agendamento:", error);
       throw error;
   }
-
-  // 3. Salvar Serviços na tabela junction
-  if (apt.service_items && apt.service_items.length > 0) {
-      const servicesPayload = apt.service_items.map(si => ({
-          appointment_id: data.id,
-          service_id: si.service_id,
-          price: si.price
-      }));
-      const { error: servicesError } = await supabase.from('appointment_services').insert(servicesPayload);
-      if (servicesError) console.error("Erro ao salvar serviços do agendamento:", servicesError);
-  }
-
   return mapAppointmentFromDB(data);
 };
 
@@ -451,40 +347,30 @@ export const updateAppointment = async (id: string, data: Partial<Appointment>) 
 
   const payload: any = {};
   if (data.status) payload.status = data.status;
-  if (data.professionalId) {
-      payload.professionalId = data.professionalId;
-      payload.professional_id = data.professionalId;
-  }
+  if (data.professionalId) payload.professionalId = data.professionalId;
   if (data.professionalName) payload.professionalName = data.professionalName;
-  if (data.appointment_time) payload.appointment_time = data.appointment_time;
-  else if (data.date && data.time) payload.appointment_time = `${data.date}T${data.time}:00`;
-  
+  if (data.date) payload.date = data.date;
+  if (data.time) payload.time = data.time;
   if (data.duration) payload.duration = data.duration;
-  if (data.totalValue !== undefined) payload.totalValue = data.totalValue;
+  if (data.totalValue !== undefined) payload.total_value = data.totalValue;
   if (data.payment_method !== undefined) payload.payment_method = data.payment_method;
-  // services e products serão tratados no metadata abaixo
+  if (data.services) payload.services = data.services;
+  if (data.products) payload.products = data.products;
 
   // Se houver campos de checkout ou observação, precisamos atualizar o JSON na observação
   if (
       data.observation !== undefined || 
       data.payments !== undefined || 
-      data.services !== undefined ||
-      data.service_items !== undefined ||
-      data.products !== undefined ||
       (data as any).others_value !== undefined || 
       (data as any).discount_value !== undefined || 
       (data as any).tip_value !== undefined
   ) {
       // Busca o agendamento atual para preservar outros campos do metadado
-      // Usamos select('*') para evitar erros se colunas específicas (como services/products) não existirem no schema cache
-      const { data: current } = await supabase.from('appointments').select(APPOINTMENT_COLUMNS).eq('id', id).single();
+      const { data: current } = await supabase.from('appointments').select('observation, others_value, discount_value, tip_value, payments, others_description').eq('id', id).single();
       
       let currentMetadata: any = {
           _metadata: true,
           payments: [],
-          services: [],
-          service_items: [],
-          products: [],
           others_value: 0,
           others_description: null,
           discount_value: 0,
@@ -498,9 +384,7 @@ export const updateAppointment = async (id: string, data: Partial<Appointment>) 
           } catch(e) {}
       } else {
           // Fallback para colunas reais se existirem (caso o banco tenha sido atualizado parcialmente)
-          currentMetadata.payments = (current as any)?.payments || [];
-          currentMetadata.services = (current as any)?.services || [];
-          currentMetadata.products = current?.products || [];
+          currentMetadata.payments = current?.payments || [];
           currentMetadata.others_value = current?.others_value || 0;
           currentMetadata.others_description = current?.others_description || null;
           currentMetadata.discount_value = current?.discount_value || 0;
@@ -510,9 +394,6 @@ export const updateAppointment = async (id: string, data: Partial<Appointment>) 
 
       // Merge com novos dados
       if (data.payments !== undefined) currentMetadata.payments = data.payments;
-      if (data.services !== undefined) currentMetadata.services = data.services;
-      if (data.service_items !== undefined) currentMetadata.service_items = data.service_items;
-      if (data.products !== undefined) currentMetadata.products = data.products;
       if ((data as any).others_value !== undefined) currentMetadata.others_value = (data as any).others_value;
       if ((data as any).others_description !== undefined) currentMetadata.others_description = (data as any).others_description;
       if ((data as any).discount_value !== undefined) currentMetadata.discount_value = (data as any).discount_value;
@@ -520,40 +401,13 @@ export const updateAppointment = async (id: string, data: Partial<Appointment>) 
       if (data.observation !== undefined) currentMetadata.note = data.observation;
 
       payload.observation = JSON.stringify(currentMetadata);
-
-      // Sincroniza tabela appointment_services se service_items foi enviado
-      if (data.service_items && data.service_items.length > 0) {
-          // Remove antigos
-          await supabase.from('appointment_services').delete().eq('appointment_id', id);
-          
-          // Insere novos
-          const serviceItems = data.service_items
-            .filter(si => si.service_id && si.service_id.length > 20)
-            .map(si => ({
-              appointment_id: id,
-              service_id: si.service_id,
-              price: si.price
-          }));
-
-          if (serviceItems.length > 0) {
-              await supabase.from('appointment_services').insert(serviceItems);
-          }
-      }
   }
 
-  const { data: updatedData, error } = await supabase
+  const { error } = await supabase
     .from('appointments')
     .update(payload)
-    .eq('id', id)
-    .select(APPOINTMENT_COLUMNS)
-    .single();
-
-  if (error) {
-      console.error("Erro ao atualizar agendamento:", error);
-      throw error;
-  }
-
-  return mapAppointmentFromDB(updatedData);
+    .eq('id', id);
+  if (error) throw error;
 };
 
 export const cancelAppointmentPublic = async (id: string, phone: string) => {
@@ -565,7 +419,7 @@ export const cancelAppointmentPublic = async (id: string, phone: string) => {
 };
 
 export const deleteAppointment = async (id: string, reason: string = 'Exclusão manual') => {
-  const { data: rawApt } = await supabase.from('appointments').select(APPOINTMENT_COLUMNS).eq('id', id).single();
+  const { data: rawApt } = await supabase.from('appointments').select('*').eq('id', id).single();
   
   if (rawApt) {
       const apt = mapAppointmentFromDB(rawApt);
@@ -661,41 +515,18 @@ export const checkAvailability = async (
         return { available: false, reason: 'Horário bloqueado pelo profissional.' };
     }
 
-    // Busca agendamentos do dia usando appointment_time
-    const { data: appointments, error: aptError } = await supabase
+    // Busca agendamentos do dia (busca genérica para filtrar no JS e evitar erro de coluna)
+    const { data: appointments } = await supabase
         .from('appointments')
-        .select(APPOINTMENT_COLUMNS)
-        .gte('appointment_time', `${date}T00:00:00`)
-        .lte('appointment_time', `${date}T23:59:59`);
+        .select('*')
+        .eq('date', date);
 
-    if (aptError) {
-        // Fallback total se a query falhar
-        const { data: all } = await supabase.from('appointments').select(APPOINTMENT_COLUMNS);
-        if (all) {
-            const mappedApts = all.map(mapAppointmentFromDB);
-            const proApts = mappedApts.filter(a => 
-                (a.professionalId === proId || a.professional_id === proId) && 
-                a.date === date &&
-                !['Cancelaram', 'Desmarcou'].includes(a.status) &&
-                a.id !== excludeAptId
-            );
-
-            const hasConflict = proApts.some(apt => {
-                const aptStart = new Date(`${date}T${apt.time}`);
-                const aptEnd = aptStart.getTime() + (apt.duration || 30) * 60000;
-                const proposedEndTime = proposedEnd.getTime();
-                const proposedStartTime = proposedStart.getTime();
-                return (proposedStartTime < aptEnd && proposedEndTime > aptStart.getTime());
-            });
-
-            if (hasConflict) return { available: false, reason: 'Horário já ocupado por outro cliente.' };
-        }
-    } else if (appointments) {
+    if (appointments) {
         const mappedApts = appointments.map(mapAppointmentFromDB);
         
         // Filtra pelo profissional e status
         const proApts = mappedApts.filter(a => 
-            (a.professionalId === proId || a.professional_id === proId) && 
+            a.professionalId === proId && 
             !['Cancelaram', 'Desmarcou'].includes(a.status) &&
             a.id !== excludeAptId
         );
@@ -768,25 +599,15 @@ export const getAvailableSlotsForPro = async (proId: string, dateStr: string, se
       return [];
     }
 
-    const { data: appointmentsData, error: aptError } = await supabase
+    const { data: appointmentsData } = await supabase
       .from('appointments')
-      .select(APPOINTMENT_COLUMNS)
-      .gte('appointment_time', `${dateStr}T00:00:00`)
-      .lte('appointment_time', `${dateStr}T23:59:59`);
+      .select('*')
+      .eq('date', dateStr);
       
-    let appointments = [];
-    if (aptError) {
-        const { data: all } = await supabase.from('appointments').select(APPOINTMENT_COLUMNS);
-        appointments = all ? all
-            .map(mapAppointmentFromDB)
-            .filter(a => (a.professionalId === proId || a.professional_id === proId) && a.date === dateStr && !['Desmarcou', 'Cancelaram'].includes(a.status) && a.id !== excludeAptId) 
-            : [];
-    } else {
-        appointments = appointmentsData ? appointmentsData
-            .map(mapAppointmentFromDB)
-            .filter(a => (a.professionalId === proId || a.professional_id === proId) && !['Desmarcou', 'Cancelaram'].includes(a.status) && a.id !== excludeAptId) 
-            : [];
-    }
+    const appointments = appointmentsData ? appointmentsData
+        .map(mapAppointmentFromDB)
+        .filter(a => a.professionalId === proId && !['Desmarcou', 'Cancelaram'].includes(a.status) && a.id !== excludeAptId) 
+        : [];
 
     const { data: blocks } = await supabase
       .from('agenda_blocks')

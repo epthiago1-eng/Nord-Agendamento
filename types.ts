@@ -99,7 +99,6 @@ export interface Appointment {
   status: 'Aberto' | 'Atendido' | 'Chegou' | 'Confirmado' | 'Desmarcou' | 'Faltou' | 'Particular' | 'Atendimento Realizado' | 'Cancelaram';
   observation?: string;
   services: string[];
-  service_items?: { service_id: string, price: number, name?: string }[]; // Novo campo para a tabela appointment_services
   products?: { id: string, name: string, price: number, quantity: number }[]; // Novo campo: Lista de produtos
   totalValue?: number;
   total_value?: number; // Compatibilidade
