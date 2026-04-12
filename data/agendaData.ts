@@ -128,20 +128,37 @@ const mapAppointmentFromDB = (data: any): Appointment => {
         }
     }
 
+    // Lógica para extrair data e hora do appointment_time se as colunas originais estiverem ausentes
+    let date = data.date;
+    let time = data.time;
+    if (!date && data.appointment_time) {
+        const d = new Date(data.appointment_time);
+        // Ajuste para fuso horário local ao extrair a data
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        date = `${year}-${month}-${day}`;
+        time = d.toTimeString().split(' ')[0].substring(0, 5);
+    }
+
     return {
         id: data.id,
         clientId: data.clientId || data.client_id, 
+        client_id: data.client_id,
         clientName: data.clientName || data.client_name,
         clientPhone: data.clientPhone || data.client_phone,
         professionalId: data.professionalId || data.professional_id, 
+        professional_id: data.professional_id,
         professionalName: data.professionalName || data.professional_name,
-        date: data.date,
-        time: data.time,
+        date: date,
+        time: time,
+        appointment_time: data.appointment_time,
         duration: data.duration,
         status: data.status,
         services: data.services || [],
         products: data.products || [],
         totalValue: data.totalValue !== undefined ? data.totalValue : data.total_value,
+        total_value: data.total_value !== undefined ? data.total_value : data.totalValue,
         others_value: others_value || 0,
         others_description: others_description || null,
         discount_value: discount_value || 0,
@@ -155,20 +172,43 @@ const mapAppointmentFromDB = (data: any): Appointment => {
 export const getAppointments = async (filters?: { proId?: string, date?: string, startDate?: string, endDate?: string }): Promise<Appointment[]> => {
   let query = supabase.from('appointments').select('*');
   
-  // Tenta filtrar por professionalId (camelCase como no banco, com aspas duplas implícitas pelo client)
-  if (filters?.proId) query = query.eq('professionalId', filters.proId); 
+  // Filtro por Profissional (Tenta colunas novas e antigas)
+  if (filters?.proId) {
+      query = query.or(`professional_id.eq.${filters.proId},professionalId.eq.${filters.proId}`);
+  }
   
+  // Filtro por Data (Prioriza appointment_time que é o novo padrão)
   if (filters?.date) {
-      query = query.eq('date', filters.date);
+      query = query.gte('appointment_time', `${filters.date}T00:00:00`)
+                   .lte('appointment_time', `${filters.date}T23:59:59`);
   } else if (filters?.startDate && filters?.endDate) {
-      query = query.gte('date', filters.startDate).lte('date', filters.endDate);
+      query = query.gte('appointment_time', `${filters.startDate}T00:00:00`)
+                   .lte('appointment_time', `${filters.endDate}T23:59:59`);
   }
 
   const { data, error } = await query;
   
   // Fallback: Se der erro na query especifica (ex: coluna nao existe), tenta buscar tudo e filtrar no JS
-  if (error && error.code === 'PGRST204') { // Column not found
-      console.warn('Coluna não encontrada, tentando busca genérica...');
+  if (error) {
+      // Se o erro for especificamente sobre a coluna 'date' ou 'professionalId' não existir,
+      // tentamos uma query mais limpa apenas com as colunas novas.
+      const isColumnError = error.message?.includes('does not exist');
+      
+      if (isColumnError) {
+          let retryQuery = supabase.from('appointments').select('*');
+          if (filters?.proId) retryQuery = retryQuery.eq('professional_id', filters.proId);
+          if (filters?.date) {
+              retryQuery = retryQuery.gte('appointment_time', `${filters.date}T00:00:00`)
+                                     .lte('appointment_time', `${filters.date}T23:59:59`);
+          } else if (filters?.startDate && filters?.endDate) {
+              retryQuery = retryQuery.gte('appointment_time', `${filters.startDate}T00:00:00`)
+                                     .lte('appointment_time', `${filters.endDate}T23:59:59`);
+          }
+          const { data: retryData, error: retryError } = await retryQuery;
+          if (!retryError) return retryData ? retryData.map(mapAppointmentFromDB) : [];
+      }
+
+      console.warn('Erro na query de agendamentos, tentando busca genérica...', error.message);
       const { data: allData } = await supabase.from('appointments').select('*');
       let result = allData ? allData.map(mapAppointmentFromDB) : [];
       
@@ -176,15 +216,11 @@ export const getAppointments = async (filters?: { proId?: string, date?: string,
       if (filters?.startDate && filters?.endDate) {
           result = result.filter(a => a.date >= filters.startDate! && a.date <= filters.endDate!);
       }
-      if (filters?.proId) result = result.filter(a => a.professionalId === filters.proId);
+      if (filters?.proId) result = result.filter(a => a.professionalId === filters.proId || a.professional_id === filters.proId);
       
       return result;
   }
 
-  if (error) {
-      console.error('Erro ao buscar agendamentos:', error);
-      return [];
-  }
   return data ? data.map(mapAppointmentFromDB) : [];
 };
 
@@ -192,11 +228,18 @@ export const getAppointmentsByPhone = async (phone: string): Promise<Appointment
   const { data, error } = await supabase
     .from('appointments')
     .select('*')
-    //.eq('clientPhone', phone) // Tentativa direta
-    // .gte('date', new Date().toISOString().split('T')[0]) // REMOVIDO: Queremos todo o histórico
-    .order('date', { ascending: false }); // Ordena do mais recente para o mais antigo
+    .order('appointment_time', { ascending: false }); 
 
-  if (error) throw error;
+  if (error) {
+      // Fallback para ordenação por date se appointment_time falhar
+      const { data: fallbackData, error: fallbackError } = await supabase
+        .from('appointments')
+        .select('*');
+      
+      if (fallbackError) throw fallbackError;
+      const mapped = fallbackData ? fallbackData.map(mapAppointmentFromDB) : [];
+      return mapped.filter(a => a.clientPhone === phone).sort((a, b) => b.date.localeCompare(a.date));
+  }
   
   // Filtragem no cliente para garantir match independente do nome da coluna
   const mapped = data ? data.map(mapAppointmentFromDB) : [];
@@ -204,23 +247,31 @@ export const getAppointmentsByPhone = async (phone: string): Promise<Appointment
 };
 
 export const checkClientSpam = async (phone: string, date: string): Promise<{ allowed: boolean, reason?: string }> => {
-    // 1. Verificar agendamentos no mesmo dia
-    const { data: sameDay } = await supabase
+    // 1. Verificar agendamentos no mesmo dia usando appointment_time
+    const { data: sameDay, error: sameDayError } = await supabase
         .from('appointments')
         .select('*')
-        .eq('date', date)
-        .neq('status', 'Cancelaram') // Ignora cancelados
+        .gte('appointment_time', `${date}T00:00:00`)
+        .lte('appointment_time', `${date}T23:59:59`)
+        .neq('status', 'Cancelaram') 
         .neq('status', 'Desmarcou');
 
-    const sameDayApps = sameDay ? sameDay.map(mapAppointmentFromDB).filter(a => a.clientPhone === phone) : [];
+    let sameDayApps = [];
+    if (sameDayError) {
+        // Fallback manual se appointment_time falhar
+        const { data: all } = await supabase.from('appointments').select('*');
+        sameDayApps = all ? all.map(mapAppointmentFromDB).filter(a => a.clientPhone === phone && a.date === date && !['Cancelaram', 'Desmarcou'].includes(a.status)) : [];
+    } else {
+        sameDayApps = sameDay ? sameDay.map(mapAppointmentFromDB).filter(a => a.clientPhone === phone) : [];
+    }
     
     if (sameDayApps.length > 0) {
         return { allowed: false, reason: 'Você já possui um agendamento para este dia.' };
     }
 
-    // 2. Verificar agendamentos na mesma semana (Domingo a Sábado)
+    // 2. Verificar agendamentos na mesma semana
     const targetDate = new Date(date + 'T12:00:00');
-    const day = targetDate.getDay(); // 0 (Dom) a 6 (Sab)
+    const day = targetDate.getDay(); 
     
     const startOfWeek = new Date(targetDate);
     startOfWeek.setDate(targetDate.getDate() - day);
@@ -230,15 +281,21 @@ export const checkClientSpam = async (phone: string, date: string): Promise<{ al
     endOfWeek.setDate(targetDate.getDate() + (6 - day));
     const endStr = endOfWeek.toISOString().split('T')[0];
 
-    const { data: sameWeek } = await supabase
+    const { data: sameWeek, error: sameWeekError } = await supabase
         .from('appointments')
         .select('*')
-        .gte('date', startStr)
-        .lte('date', endStr)
+        .gte('appointment_time', `${startStr}T00:00:00`)
+        .lte('appointment_time', `${endStr}T23:59:59`)
         .neq('status', 'Cancelaram')
         .neq('status', 'Desmarcou');
 
-    const sameWeekApps = sameWeek ? sameWeek.map(mapAppointmentFromDB).filter(a => a.clientPhone === phone) : [];
+    let sameWeekApps = [];
+    if (sameWeekError) {
+        const { data: all } = await supabase.from('appointments').select('*');
+        sameWeekApps = all ? all.map(mapAppointmentFromDB).filter(a => a.clientPhone === phone && a.date >= startStr && a.date <= endStr && !['Cancelaram', 'Desmarcou'].includes(a.status)) : [];
+    } else {
+        sameWeekApps = sameWeek ? sameWeek.map(mapAppointmentFromDB).filter(a => a.clientPhone === phone) : [];
+    }
 
     if (sameWeekApps.length >= 2) {
         return { allowed: false, reason: 'Limite de 2 agendamentos por semana atingido.' };
@@ -268,16 +325,18 @@ export const saveAppointment = async (apt: Omit<Appointment, 'id'>) => {
 
   const payload: any = {
       clientId: apt.clientId,
+      client_id: apt.client_id || (apt.clientId && apt.clientId.length > 20 ? apt.clientId : null),
       clientName: apt.clientName,
       clientPhone: apt.clientPhone,
       professionalId: apt.professionalId,
+      professional_id: apt.professional_id || (apt.professionalId && apt.professionalId.length > 20 ? apt.professionalId : null),
       professionalName: apt.professionalName,
-      date: apt.date,
-      time: apt.time,
+      appointment_time: apt.appointment_time || `${apt.date}T${apt.time}:00`,
       duration: apt.duration,
       status: apt.status,
       services: apt.services,
       products: apt.products || [],
+      totalValue: apt.totalValue || 0,
       total_value: apt.totalValue || 0,
       payment_method: apt.payment_method || null,
       observation: JSON.stringify(metadata)
@@ -326,10 +385,14 @@ export const updateAppointment = async (id: string, data: Partial<Appointment>) 
 
   const payload: any = {};
   if (data.status) payload.status = data.status;
-  if (data.professionalId) payload.professionalId = data.professionalId;
+  if (data.professionalId) {
+      payload.professionalId = data.professionalId;
+      payload.professional_id = data.professionalId;
+  }
   if (data.professionalName) payload.professionalName = data.professionalName;
-  if (data.date) payload.date = data.date;
-  if (data.time) payload.time = data.time;
+  if (data.appointment_time) payload.appointment_time = data.appointment_time;
+  else if (data.date && data.time) payload.appointment_time = `${data.date}T${data.time}:00`;
+  
   if (data.duration) payload.duration = data.duration;
   if (data.totalValue !== undefined) payload.total_value = data.totalValue;
   if (data.payment_method !== undefined) payload.payment_method = data.payment_method;
@@ -494,18 +557,41 @@ export const checkAvailability = async (
         return { available: false, reason: 'Horário bloqueado pelo profissional.' };
     }
 
-    // Busca agendamentos do dia (busca genérica para filtrar no JS e evitar erro de coluna)
-    const { data: appointments } = await supabase
+    // Busca agendamentos do dia usando appointment_time
+    const { data: appointments, error: aptError } = await supabase
         .from('appointments')
         .select('*')
-        .eq('date', date);
+        .gte('appointment_time', `${date}T00:00:00`)
+        .lte('appointment_time', `${date}T23:59:59`);
 
-    if (appointments) {
+    if (aptError) {
+        // Fallback total se a query falhar
+        const { data: all } = await supabase.from('appointments').select('*');
+        if (all) {
+            const mappedApts = all.map(mapAppointmentFromDB);
+            const proApts = mappedApts.filter(a => 
+                (a.professionalId === proId || a.professional_id === proId) && 
+                a.date === date &&
+                !['Cancelaram', 'Desmarcou'].includes(a.status) &&
+                a.id !== excludeAptId
+            );
+
+            const hasConflict = proApts.some(apt => {
+                const aptStart = new Date(`${date}T${apt.time}`);
+                const aptEnd = aptStart.getTime() + (apt.duration || 30) * 60000;
+                const proposedEndTime = proposedEnd.getTime();
+                const proposedStartTime = proposedStart.getTime();
+                return (proposedStartTime < aptEnd && proposedEndTime > aptStart.getTime());
+            });
+
+            if (hasConflict) return { available: false, reason: 'Horário já ocupado por outro cliente.' };
+        }
+    } else if (appointments) {
         const mappedApts = appointments.map(mapAppointmentFromDB);
         
         // Filtra pelo profissional e status
         const proApts = mappedApts.filter(a => 
-            a.professionalId === proId && 
+            (a.professionalId === proId || a.professional_id === proId) && 
             !['Cancelaram', 'Desmarcou'].includes(a.status) &&
             a.id !== excludeAptId
         );
@@ -578,15 +664,25 @@ export const getAvailableSlotsForPro = async (proId: string, dateStr: string, se
       return [];
     }
 
-    const { data: appointmentsData } = await supabase
+    const { data: appointmentsData, error: aptError } = await supabase
       .from('appointments')
       .select('*')
-      .eq('date', dateStr);
+      .gte('appointment_time', `${dateStr}T00:00:00`)
+      .lte('appointment_time', `${dateStr}T23:59:59`);
       
-    const appointments = appointmentsData ? appointmentsData
-        .map(mapAppointmentFromDB)
-        .filter(a => a.professionalId === proId && !['Desmarcou', 'Cancelaram'].includes(a.status) && a.id !== excludeAptId) 
-        : [];
+    let appointments = [];
+    if (aptError) {
+        const { data: all } = await supabase.from('appointments').select('*');
+        appointments = all ? all
+            .map(mapAppointmentFromDB)
+            .filter(a => (a.professionalId === proId || a.professional_id === proId) && a.date === dateStr && !['Desmarcou', 'Cancelaram'].includes(a.status) && a.id !== excludeAptId) 
+            : [];
+    } else {
+        appointments = appointmentsData ? appointmentsData
+            .map(mapAppointmentFromDB)
+            .filter(a => (a.professionalId === proId || a.professional_id === proId) && !['Desmarcou', 'Cancelaram'].includes(a.status) && a.id !== excludeAptId) 
+            : [];
+    }
 
     const { data: blocks } = await supabase
       .from('agenda_blocks')

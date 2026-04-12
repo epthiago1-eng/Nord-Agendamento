@@ -34,6 +34,13 @@ const FinancialAdmin: React.FC = () => {
   const [servicesMap, setServicesMap] = useState<Record<string, string>>({});
   const [adminPros, setAdminPros] = useState<string[]>([]);
   const [globalBalances, setGlobalBalances] = useState({ cash: 0, pix: 0, card: 0, bank: 0 });
+  const [allTransactionsForBalance, setAllTransactionsForBalance] = useState<any[]>([]);
+  const [isEditingBalances, setIsEditingBalances] = useState(false);
+  const [editableBalances, setEditableBalances] = useState({ cash: 0, pix: 0, card: 0, bank: 0 });
+
+  // Estados de Reconciliação
+  const [showReconciliation, setShowReconciliation] = useState(false);
+  const [actualBalances, setActualBalances] = useState({ cash: '', pix: '', card: '', bank: '' });
 
   // Estados dos Modals Gerenciais
   const [showTransferModal, setShowTransferModal] = useState(false);
@@ -103,7 +110,7 @@ const FinancialAdmin: React.FC = () => {
           db.professionalServices().select('*'),
           db.profiles().select('professional_id').eq('role', 'ADMIN'),
           supabase.from('bills').select('*').gte('due_date', startStr).lte('due_date', endStr),
-          supabase.from('transactions').select('val, total_value, payment_method, operation_type, operation'),
+          supabase.from('transactions').select('val, total_value, payment_method, operation_type, operation, date'),
           getTransactions({ startDate: fiveWeeksStart.toISOString().split('T')[0], endDate: fiveWeeksEnd.toISOString().split('T')[0] })
       ]);
 
@@ -111,37 +118,19 @@ const FinancialAdmin: React.FC = () => {
       setWeeklyTransactions(weeklyTxData);
       setSettings(settingsData);
       
-      // Calcular saldos globais
-      if (allTxRes.data && settingsData) {
-          let cashSum = 0;
-          let pixSum = 0;
-          let cardSum = 0;
-          let bankSum = 0;
+      // Calcular saldos globais (AGORA ESTÁTICOS DAS CONFIGURAÇÕES)
+      if (settingsData) {
+          setAllTransactionsForBalance(allTxRes.data || []);
+          
+          const balances = {
+              cash: settingsData.cash_balance || 0,
+              pix: settingsData.pix_balance || 0,
+              card: settingsData.card_balance || 0,
+              bank: settingsData.bank_balance || 0
+          };
 
-          allTxRes.data.forEach((t: any) => {
-              const val = t.val !== undefined ? t.val : (t.total_value || 0);
-              const method = (t.payment_method || '').toLowerCase();
-              
-              if (method.includes('pix')) {
-                  pixSum += val;
-              } else if (method.includes('cartão') || method.includes('cartao') || method.includes('crédito') || method.includes('débito')) {
-                  cardSum += val;
-              } else if (method.includes('banco') || method.includes('transferência') || method.includes('conta')) {
-                  bankSum += val;
-              } else if (method.includes('dinheiro')) {
-                  cashSum += val;
-              } else {
-                  // Default to cash if no method or unrecognized
-                  cashSum += val;
-              }
-          });
-
-          setGlobalBalances({
-              cash: (settingsData.cash_balance || 0) + cashSum,
-              pix: (settingsData.pix_balance || 0) + pixSum,
-              card: (settingsData.card_balance || 0) + cardSum,
-              bank: (settingsData.bank_balance || 0) + bankSum
-          });
+          setGlobalBalances(balances);
+          setEditableBalances(balances);
       }
       
       if (billsRes.data) {
@@ -447,6 +436,35 @@ const FinancialAdmin: React.FC = () => {
       .sort((a, b) => b.count - a.count)
       .slice(0, 5);
 
+    // Auditoria por Forma de Pagamento (Agrupamento de Itens)
+    const auditByMethod: Record<string, Record<string, { count: number, total: number }>> = {
+      'CASH': {}, 'PIX': {}, 'CARD': {}, 'BANK': {}
+    };
+
+    // Distribuição de Gastos
+    const expenseDistribution: Record<string, number> = {};
+
+    filteredData.forEach(t => {
+      const val = t.val !== undefined ? t.val : (t.total_value || 0);
+      const isIncome = t.operation_type === 'ENTRADA' || t.operation === 'VENDA' || t.val > 0;
+
+      if (isIncome) {
+        const method = (t.payment_method || '').toLowerCase();
+        let acc = 'CASH';
+        if (method.includes('pix')) acc = 'PIX';
+        else if (method.includes('cartão') || method.includes('cartao') || method.includes('crédito') || method.includes('débito')) acc = 'CARD';
+        else if (method.includes('banco') || method.includes('transferência') || method.includes('conta')) acc = 'BANK';
+        else if (method.includes('dinheiro')) acc = 'CASH';
+
+        if (!auditByMethod[acc][t.item]) auditByMethod[acc][t.item] = { count: 0, total: 0 };
+        auditByMethod[acc][t.item].count += (t.quantity || 1);
+        auditByMethod[acc][t.item].total += val;
+      } else {
+        const cat = t.category || t.type || 'Outros';
+        expenseDistribution[cat] = (expenseDistribution[cat] || 0) + Math.abs(val);
+      }
+    });
+
     return { 
         income, 
         expense, 
@@ -459,9 +477,91 @@ const FinancialAdmin: React.FC = () => {
         prosData, 
         topProducts, 
         topClients,
-        accountStats
+        accountStats,
+        auditByMethod,
+        expenseDistribution
     };
   }, [filteredData, commissionConfigs, servicesMap, professionalsMap, adminPros]);
+
+  const handleSaveBalances = async () => {
+    if (!settings) return;
+    setSaving(true);
+    try {
+      await saveSettings({
+        ...settings,
+        cash_balance: editableBalances.cash,
+        pix_balance: editableBalances.pix,
+        card_balance: editableBalances.card,
+        bank_balance: editableBalances.bank
+      });
+      setGlobalBalances(editableBalances);
+      setIsEditingBalances(false);
+      // Atualiza o estado local de settings também
+      setSettings({
+        ...settings,
+        cash_balance: editableBalances.cash,
+        pix_balance: editableBalances.pix,
+        card_balance: editableBalances.card,
+        bank_balance: editableBalances.bank
+      });
+    } catch (error) {
+      console.error("Erro ao salvar saldos:", error);
+      alert("Erro ao salvar saldos.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // --- LÓGICA DE RECONCILIAÇÃO ---
+  const reconciliationData = useMemo(() => {
+    if (!settings || !allTransactionsForBalance.length) return null;
+
+    const startStr = dateRange.start.toISOString().split('T')[0];
+    const endStr = dateRange.end.toISOString().split('T')[0];
+
+    const starting = { cash: settings.cash_balance || 0, pix: settings.pix_balance || 0, card: settings.card_balance || 0, bank: settings.bank_balance || 0 };
+    const flow = { cash: 0, pix: 0, card: 0, bank: 0 };
+
+    allTransactionsForBalance.forEach(t => {
+      const val = t.val !== undefined ? t.val : (t.total_value || 0);
+      const method = (t.payment_method || '').toLowerCase();
+      let acc: 'cash' | 'pix' | 'card' | 'bank' = 'cash';
+
+      if (method.includes('pix')) acc = 'pix';
+      else if (method.includes('cartão') || method.includes('cartao') || method.includes('crédito') || method.includes('débito')) acc = 'card';
+      else if (method.includes('banco') || method.includes('transferência') || method.includes('conta')) acc = 'bank';
+      else if (method.includes('dinheiro')) acc = 'cash';
+
+      if (t.date < startStr) {
+        starting[acc] += val;
+      } else if (t.date <= endStr) {
+        flow[acc] += val;
+      }
+    });
+
+    const expected = {
+      cash: starting.cash + flow.cash,
+      pix: starting.pix + flow.pix,
+      card: starting.card + flow.card,
+      bank: starting.bank + flow.bank
+    };
+
+    const actual = {
+      cash: parseFloat(actualBalances.cash.replace(',', '.')) || 0,
+      pix: parseFloat(actualBalances.pix.replace(',', '.')) || 0,
+      card: parseFloat(actualBalances.card.replace(',', '.')) || 0,
+      bank: parseFloat(actualBalances.bank.replace(',', '.')) || 0
+    };
+
+    const diff = {
+      cash: actual.cash - expected.cash,
+      pix: actual.pix - expected.pix,
+      card: actual.card - expected.card,
+      bank: actual.bank - expected.bank
+    };
+
+    return { starting, flow, expected, actual, diff };
+  }, [allTransactionsForBalance, dateRange, settings, actualBalances]);
 
   // --- CÁLCULO DE ESTATÍSTICAS SEMANAIS (5 SEMANAS) ---
   const weeklyStats = useMemo(() => {
@@ -1076,9 +1176,146 @@ const FinancialAdmin: React.FC = () => {
 
         {/* COMPOSIÇÃO DO CAIXA E OBRIGAÇÕES */}
         <div id="composicao-caixa" className="bg-white p-6 rounded-[2.5rem] border border-gray-100 shadow-sm space-y-6">
-            <h3 className="text-xs font-black text-gray-900 uppercase tracking-widest flex items-center gap-2">
-                <Landmark size={16} className="text-blue-900" /> Composição do Caixa
-            </h3>
+            <div className="flex justify-between items-center">
+                <div className="flex items-center gap-4">
+                    <h3 className="text-xs font-black text-gray-900 uppercase tracking-widest flex items-center gap-2">
+                        <Landmark size={16} className="text-blue-900" /> Composição do Caixa
+                    </h3>
+                    {!isEditingBalances ? (
+                        <button 
+                            onClick={() => setIsEditingBalances(true)}
+                            className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-3 py-1 rounded-lg hover:bg-blue-100 transition-colors flex items-center gap-1"
+                        >
+                            <Edit2 size={12} /> Editar Saldos
+                        </button>
+                    ) : (
+                        <div className="flex items-center gap-2">
+                            <button 
+                                onClick={handleSaveBalances}
+                                disabled={saving}
+                                className="text-[10px] font-black text-white uppercase tracking-widest bg-green-600 px-3 py-1 rounded-lg hover:bg-green-700 transition-colors flex items-center gap-1"
+                            >
+                                {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />} Salvar
+                            </button>
+                            <button 
+                                onClick={() => {
+                                    setIsEditingBalances(false);
+                                    setEditableBalances(globalBalances);
+                                }}
+                                className="text-[10px] font-black text-gray-500 uppercase tracking-widest bg-gray-100 px-3 py-1 rounded-lg hover:bg-gray-200 transition-colors"
+                            >
+                                Cancelar
+                            </button>
+                        </div>
+                    )}
+                </div>
+                <button 
+                    onClick={() => setShowReconciliation(!showReconciliation)}
+                    className={`text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-xl transition-all flex items-center gap-2 ${showReconciliation ? 'bg-blue-900 text-white' : 'bg-blue-50 text-blue-900'}`}
+                >
+                    <ClipboardList size={14} />
+                    {showReconciliation ? 'Fechar Reconciliação' : 'Reconciliar Período'}
+                </button>
+            </div>
+
+            {showReconciliation && reconciliationData && (
+                <div className="bg-blue-50/50 p-5 rounded-3xl border border-blue-100 space-y-6 animate-in fade-in slide-in-from-top-4">
+                    <div className="text-center space-y-1">
+                        <h4 className="text-sm font-black text-blue-900 uppercase">Reconciliação do Período</h4>
+                        <p className="text-[10px] text-blue-400 font-bold uppercase tracking-widest">Confira se o saldo esperado bate com o real</p>
+                    </div>
+
+                    <div className="space-y-4">
+                        {[
+                            { id: 'cash', name: 'Dinheiro', icon: Banknote, color: 'text-green-600' },
+                            { id: 'pix', name: 'Pix', icon: ArrowLeftRight, color: 'text-blue-500' },
+                            { id: 'card', name: 'Cartão', icon: ShoppingBag, color: 'text-purple-600' },
+                            { id: 'bank', name: 'Banco', icon: Landmark, color: 'text-gray-600' }
+                        ].map(acc => {
+                            const key = acc.id as keyof typeof reconciliationData.starting;
+                            const start = reconciliationData.starting[key];
+                            const flow = reconciliationData.flow[key];
+                            const expected = reconciliationData.expected[key];
+                            const diff = reconciliationData.diff[key];
+                            const actual = actualBalances[key as keyof typeof actualBalances];
+
+                            return (
+                                <div key={acc.id} className="bg-white p-4 rounded-2xl border border-blue-100 shadow-sm space-y-4">
+                                    <div className="flex justify-between items-center">
+                                        <div className="flex items-center gap-2">
+                                            <acc.icon size={16} className={acc.color} />
+                                            <span className="text-xs font-black text-gray-800 uppercase">{acc.name}</span>
+                                        </div>
+                                        <div className="text-right">
+                                            <span className="text-[8px] font-black text-gray-400 uppercase block">Saldo Inicial</span>
+                                            <span className="text-[10px] font-bold text-gray-600">R$ {start.toFixed(2)}</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="space-y-1">
+                                            <span className="text-[8px] font-black text-gray-400 uppercase block">Fluxo (Entradas - Saídas)</span>
+                                            <span className={`text-xs font-black ${flow >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                                {flow >= 0 ? '+' : '-'} R$ {Math.abs(flow).toFixed(2)}
+                                            </span>
+                                        </div>
+                                        <div className="space-y-1">
+                                            <span className="text-[8px] font-black text-blue-400 uppercase block">Saldo Esperado</span>
+                                            <span className="text-xs font-black text-blue-900">R$ {expected.toFixed(2)}</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="pt-3 border-t border-gray-50 flex items-end gap-4">
+                                        <div className="flex-1">
+                                            <label className="text-[8px] font-black text-gray-400 uppercase block mb-1">Saldo Real (Físico/Extrato)</label>
+                                            <input 
+                                                type="text"
+                                                placeholder="0,00"
+                                                value={actual}
+                                                onChange={e => setActualBalances({...actualBalances, [acc.id]: e.target.value})}
+                                                className="w-full bg-gray-50 border border-gray-100 rounded-xl py-2 px-3 text-xs font-black text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/20"
+                                            />
+                                        </div>
+                                        <div className="text-right min-w-[80px]">
+                                            <span className="text-[8px] font-black text-gray-400 uppercase block mb-1">Diferença</span>
+                                            <span className={`text-xs font-black ${diff === 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                                {diff > 0 ? '+' : ''} R$ {diff.toFixed(2)}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    
+                                    {diff !== 0 && (
+                                        <div className={`p-2 rounded-lg flex items-center gap-2 ${diff > 0 ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                                            <AlertCircle size={12} />
+                                            <span className="text-[9px] font-bold">
+                                                {diff > 0 ? 'Sobra identificada' : 'Falta identificada'} no valor de R$ {Math.abs(diff).toFixed(2)}
+                                            </span>
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    <div className="bg-blue-900 p-4 rounded-2xl flex justify-between items-center shadow-lg shadow-blue-200">
+                        <div>
+                            <span className="text-[8px] font-black text-blue-300 uppercase block">Diferença Total</span>
+                            <h5 className="text-sm font-black text-white">
+                                R$ {(reconciliationData.diff.cash + reconciliationData.diff.pix + reconciliationData.diff.card + reconciliationData.diff.bank).toFixed(2)}
+                            </h5>
+                        </div>
+                        <button 
+                            onClick={() => {
+                                // Aqui poderíamos salvar um log de fechamento
+                                alert('Fechamento conferido! Para registrar formalmente, use o botão de Ajuste abaixo se necessário.');
+                            }}
+                            className="bg-white text-blue-900 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all"
+                        >
+                            Conferido
+                        </button>
+                    </div>
+                </div>
+            )}
             
             <div className="space-y-4">
                 {/* Dinheiro */}
@@ -1093,13 +1330,16 @@ const FinancialAdmin: React.FC = () => {
                         </div>
                     </div>
                     <div className="flex items-center gap-3">
-                        <span className="text-sm font-black text-gray-900">R$ {globalBalances.cash.toFixed(2)}</span>
-                        <button 
-                            onClick={() => setShowAdjustModal({ show: true, type: 'cash' })}
-                            className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-3 py-1.5 rounded-lg active:scale-95 transition-all"
-                        >
-                            Ajustar
-                        </button>
+                        {isEditingBalances ? (
+                            <input 
+                                type="number"
+                                value={editableBalances.cash}
+                                onChange={e => setEditableBalances({...editableBalances, cash: parseFloat(e.target.value) || 0})}
+                                className="w-24 bg-white border border-gray-200 rounded-lg px-2 py-1 text-xs font-black text-gray-900 outline-none focus:ring-2 focus:ring-blue-500/20"
+                            />
+                        ) : (
+                            <span className="text-sm font-black text-gray-900">R$ {globalBalances.cash.toFixed(2)}</span>
+                        )}
                     </div>
                 </div>
 
@@ -1115,13 +1355,16 @@ const FinancialAdmin: React.FC = () => {
                         </div>
                     </div>
                     <div className="flex items-center gap-3">
-                        <span className="text-sm font-black text-gray-900">R$ {globalBalances.pix.toFixed(2)}</span>
-                        <button 
-                            onClick={() => setShowAdjustModal({ show: true, type: 'pix' as any })}
-                            className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-3 py-1.5 rounded-lg active:scale-95 transition-all"
-                        >
-                            Ajustar
-                        </button>
+                        {isEditingBalances ? (
+                            <input 
+                                type="number"
+                                value={editableBalances.pix}
+                                onChange={e => setEditableBalances({...editableBalances, pix: parseFloat(e.target.value) || 0})}
+                                className="w-24 bg-white border border-gray-200 rounded-lg px-2 py-1 text-xs font-black text-gray-900 outline-none focus:ring-2 focus:ring-blue-500/20"
+                            />
+                        ) : (
+                            <span className="text-sm font-black text-gray-900">R$ {globalBalances.pix.toFixed(2)}</span>
+                        )}
                     </div>
                 </div>
 
@@ -1137,13 +1380,16 @@ const FinancialAdmin: React.FC = () => {
                         </div>
                     </div>
                     <div className="flex items-center gap-3">
-                        <span className="text-sm font-black text-gray-900">R$ {globalBalances.card.toFixed(2)}</span>
-                        <button 
-                            onClick={() => setShowAdjustModal({ show: true, type: 'card' as any })}
-                            className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-3 py-1.5 rounded-lg active:scale-95 transition-all"
-                        >
-                            Ajustar
-                        </button>
+                        {isEditingBalances ? (
+                            <input 
+                                type="number"
+                                value={editableBalances.card}
+                                onChange={e => setEditableBalances({...editableBalances, card: parseFloat(e.target.value) || 0})}
+                                className="w-24 bg-white border border-gray-200 rounded-lg px-2 py-1 text-xs font-black text-gray-900 outline-none focus:ring-2 focus:ring-blue-500/20"
+                            />
+                        ) : (
+                            <span className="text-sm font-black text-gray-900">R$ {globalBalances.card.toFixed(2)}</span>
+                        )}
                     </div>
                 </div>
 
@@ -1159,13 +1405,16 @@ const FinancialAdmin: React.FC = () => {
                         </div>
                     </div>
                     <div className="flex items-center gap-3">
-                        <span className="text-sm font-black text-gray-900">R$ {globalBalances.bank.toFixed(2)}</span>
-                        <button 
-                            onClick={() => setShowAdjustModal({ show: true, type: 'bank' })}
-                            className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-3 py-1.5 rounded-lg active:scale-95 transition-all"
-                        >
-                            Ajustar
-                        </button>
+                        {isEditingBalances ? (
+                            <input 
+                                type="number"
+                                value={editableBalances.bank}
+                                onChange={e => setEditableBalances({...editableBalances, bank: parseFloat(e.target.value) || 0})}
+                                className="w-24 bg-white border border-gray-200 rounded-lg px-2 py-1 text-xs font-black text-gray-900 outline-none focus:ring-2 focus:ring-blue-500/20"
+                            />
+                        ) : (
+                            <span className="text-sm font-black text-gray-900">R$ {globalBalances.bank.toFixed(2)}</span>
+                        )}
                     </div>
                 </div>
             </div>
@@ -1424,6 +1673,82 @@ const FinancialAdmin: React.FC = () => {
                 </div>
             </div>
         )}
+
+        {/* AUDITORIA POR FORMA DE PAGAMENTO */}
+        <div className="bg-white p-6 rounded-[2.5rem] border border-gray-100 shadow-sm space-y-6">
+            <h3 className="text-xs font-black text-gray-900 uppercase tracking-widest flex items-center gap-2">
+                <Filter size={16} className="text-blue-900" /> Auditoria por Forma de Pagamento
+            </h3>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {[
+                    { id: 'CASH', name: 'Dinheiro', icon: Banknote, color: 'text-green-600', bg: 'bg-green-50' },
+                    { id: 'PIX', name: 'Pix', icon: ArrowLeftRight, color: 'text-blue-500', bg: 'bg-blue-50' },
+                    { id: 'CARD', name: 'Cartão', icon: ShoppingBag, color: 'text-purple-600', bg: 'bg-purple-50' },
+                    { id: 'BANK', name: 'Banco', icon: Landmark, color: 'text-gray-600', bg: 'bg-gray-50' }
+                ].map(acc => {
+                    const items = stats.auditByMethod[acc.id] as Record<string, { count: number, total: number }>;
+                    const sortedItems = Object.entries(items).sort((a, b) => b[1].total - a[1].total);
+                    
+                    if (sortedItems.length === 0) return null;
+
+                    return (
+                        <div key={acc.id} className="space-y-3">
+                            <div className="flex items-center gap-2 px-1">
+                                <div className={`${acc.bg} ${acc.color} p-1.5 rounded-lg`}>
+                                    <acc.icon size={14} />
+                                </div>
+                                <span className="text-[10px] font-black text-gray-800 uppercase tracking-widest">{acc.name}</span>
+                            </div>
+                            <div className="bg-gray-50/50 rounded-2xl border border-gray-100 overflow-hidden">
+                                {sortedItems.map(([name, data], idx) => (
+                                    <div key={name} className={`flex justify-between items-center p-3 ${idx !== sortedItems.length - 1 ? 'border-b border-gray-100' : ''}`}>
+                                        <div className="flex flex-col">
+                                            <span className="text-[10px] font-bold text-gray-700 truncate max-w-[150px]">{name}</span>
+                                            <span className="text-[8px] text-gray-400 font-bold uppercase">{data.count} un</span>
+                                        </div>
+                                        <span className="text-[10px] font-black text-gray-900">R$ {data.total.toFixed(2)}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+
+        {/* DISTRIBUIÇÃO DE GASTOS */}
+        <div className="bg-white p-6 rounded-[2.5rem] border border-gray-100 shadow-sm space-y-6">
+            <h3 className="text-xs font-black text-gray-900 uppercase tracking-widest flex items-center gap-2">
+                <TrendingDown size={16} className="text-red-600" /> Distribuição de Gastos por Categoria
+            </h3>
+            
+            {Object.keys(stats.expenseDistribution).length === 0 ? (
+                <p className="text-center text-[10px] text-gray-400 italic py-4">Nenhum gasto registrado no período.</p>
+            ) : (
+                <div className="space-y-4">
+                    {Object.entries(stats.expenseDistribution as Record<string, number>)
+                        .sort((a, b) => b[1] - a[1])
+                        .map(([cat, val]) => {
+                            const percent = (val / (stats.expense || 1)) * 100;
+                            return (
+                                <div key={cat} className="space-y-1.5">
+                                    <div className="flex justify-between items-center px-1">
+                                        <span className="text-[10px] font-black text-gray-700 uppercase tracking-widest">{cat}</span>
+                                        <span className="text-[10px] font-black text-red-600">R$ {val.toFixed(2)} ({percent.toFixed(0)}%)</span>
+                                    </div>
+                                    <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                                        <div 
+                                            className="h-full bg-red-500 rounded-full" 
+                                            style={{ width: `${percent}%` }}
+                                        />
+                                    </div>
+                                </div>
+                            );
+                        })}
+                </div>
+            )}
+        </div>
 
         {/* RANKINGS (LADO A LADO EM TELAS MAIORES, EMPILHADO NO MOBILE) */}
         <div className="grid grid-cols-1 gap-4">

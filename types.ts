@@ -86,18 +86,22 @@ export interface Package {
 export interface Appointment {
   id: string;
   clientId: string;
+  client_id?: string; // Novo campo UUID
   clientName: string;
   clientPhone?: string;
   professionalId: string;
+  professional_id?: string; // Novo campo UUID
   professionalName: string;
   date: string;
   time: string;
+  appointment_time?: string; // Novo campo unificado
   duration: number;
   status: 'Aberto' | 'Atendido' | 'Chegou' | 'Confirmado' | 'Desmarcou' | 'Faltou' | 'Particular' | 'Atendimento Realizado' | 'Cancelaram';
   observation?: string;
   services: string[];
   products?: { id: string, name: string, price: number, quantity: number }[]; // Novo campo: Lista de produtos
   totalValue?: number;
+  total_value?: number; // Compatibilidade
   others_value?: number;
   discount_value?: number;
   tip_value?: number;
@@ -118,6 +122,7 @@ export interface Transaction {
   cost_value?: number; // VR CUSTO
   quantity: number; // QTD.
   total_value: number; // TOTAL (Calculado)
+  amount?: number; // Novo campo do banco
   
   client_supplier?: string; // CLIENTE / FORNEC
   payment_method: string; // FORMA PAG.

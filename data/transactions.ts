@@ -25,7 +25,7 @@ export const getTransactions = async (filters?: { proId?: string, month?: string
   // Mapeia para garantir compatibilidade com o frontend
   return data?.map((t: any) => ({
     ...t,
-    val: t.total_value || t.val, // Fallback
+    val: t.total_value || t.val || t.amount, // Fallback
     item: t.item || t.description // Fallback para leitura
   })) || [];
 };
@@ -64,6 +64,7 @@ export const addTransaction = async (transaction: Partial<Transaction> & { metho
     
     client_supplier: transaction.client_supplier,
     payment_method: method,
+    method: method, // Novo campo do banco
     pro: transaction.pro,
     
     status: transaction.status,
@@ -85,6 +86,7 @@ export const addTransaction = async (transaction: Partial<Transaction> & { metho
     // Campos Legados mantidos apenas se existirem colunas no banco
     category: transaction.category || transaction.type,
     val: val,
+    amount: val, // Novo campo do banco
   };
 
   // Remove chaves com valores undefined para evitar erros no Supabase
@@ -109,6 +111,7 @@ export const updateTransaction = async (id: string, updates: Partial<Transaction
   if (updates.val !== undefined) {
       payload.total_value = updates.val;
       payload.val = updates.val;
+      payload.amount = updates.val; // Novo campo
       payload.unit_price = Math.abs(updates.val);
       
       // Atualiza operation_type se o valor mudar de sinal
@@ -119,6 +122,7 @@ export const updateTransaction = async (id: string, updates: Partial<Transaction
 
   // Sincroniza payment_account se payment_method mudar
   if (updates.payment_method && !updates.payment_account) {
+    payload.method = updates.payment_method; // Novo campo
     const m = updates.payment_method.toLowerCase();
     if (m.includes('dinheiro')) payload.payment_account = 'CASH';
     else if (m.includes('pix')) payload.payment_account = 'PIX';

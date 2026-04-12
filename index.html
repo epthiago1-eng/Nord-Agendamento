@@ -25,29 +25,27 @@
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
     <script>
-      // Registro de SW resiliente a erros de ambiente de desenvolvimento
-      if ('serviceWorker' in navigator && window.location.protocol === 'https:') {
+      // Registro de SW resiliente
+      if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          // Desregistra SWs antigos para evitar conflitos de cache/redirecionamento
+          // Primeiro, tenta desregistrar qualquer SW antigo para limpar o estado do navegador
           navigator.serviceWorker.getRegistrations().then(registrations => {
             for (let registration of registrations) {
-              if (registration.active && !registration.active.scriptURL.includes('service-worker.js')) {
-                registration.unregister();
-              }
+              // Se for o antigo sw.js ou qualquer outro, desregistra
+              registration.unregister();
+            }
+          }).then(() => {
+            // Agora registra o novo com um nome diferente para evitar redirecionamentos cacheados
+            if (window.location.protocol === 'https:') {
+              navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' })
+                .then(reg => {
+                  console.log('SW registrado com sucesso');
+                })
+                .catch(err => {
+                  console.warn('SW registro falhou:', err.message);
+                });
             }
           });
-
-          navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' })
-            .then(reg => {
-              console.log('SW registrado com sucesso:', reg.scope);
-              reg.update(); // Força atualização imediata
-            })
-            .catch(err => {
-              // Silencia erros de origem cruzada comuns em previews
-              if (!err.message.includes('origin')) {
-                console.warn('SW Info:', err.message);
-              }
-            });
         });
       }
     </script>

@@ -40,13 +40,25 @@ const ClientHistory: React.FC = () => {
 
             // 2. Buscar agendamentos deste cliente ("clientId")
             // Ordenando por data decrescente (mais recente primeiro)
-            const { data: appointments } = await db.appointments()
+            const { data: appointments, error: aptError } = await db.appointments()
                 .select('*')
-                .eq('clientId', id)
-                .order('date', { ascending: false })
-                .order('time', { ascending: false });
+                .or(`clientId.eq.${id},client_id.eq.${id}`)
+                .order('appointment_time', { ascending: false });
             
-            if (appointments) setHistory(appointments);
+            if (aptError) {
+                // Fallback se appointment_time ou client_id falharem
+                const { data: all } = await db.appointments().select('*');
+                if (all) {
+                    const filtered = all.filter(a => a.clientId === id || a.client_id === id);
+                    setHistory(filtered.sort((a, b) => {
+                        const dateA = a.appointment_time || a.date;
+                        const dateB = b.appointment_time || b.date;
+                        return dateB.localeCompare(dateA);
+                    }));
+                }
+            } else if (appointments) {
+                setHistory(appointments);
+            }
         } catch (err) {
             console.error('Erro ao buscar histórico:', err);
         } finally {
@@ -138,9 +150,11 @@ const ClientHistory: React.FC = () => {
                 <div className="px-5 py-4 flex justify-between items-start border-b border-gray-50 bg-white">
                     <div>
                         <span className="text-[11px] font-bold text-gray-800 block mb-0.5">Profissional:</span>
-                        <span className="text-[13px] font-bold text-gray-900 uppercase">{h.professionalName}</span>
+                        <span className="text-[13px] font-bold text-gray-900 uppercase">{h.professionalName || h.professional_name}</span>
                     </div>
-                    <span className="text-[11px] text-gray-400 font-medium">{new Date(h.date).toLocaleDateString('pt-BR')}</span>
+                    <span className="text-[11px] text-gray-400 font-medium">
+                        {h.appointment_time ? new Date(h.appointment_time).toLocaleDateString('pt-BR') : new Date(h.date).toLocaleDateString('pt-BR')}
+                    </span>
                 </div>
 
                 {/* Timeline Body */}
@@ -167,7 +181,7 @@ const ClientHistory: React.FC = () => {
                     <div className="flex-1 space-y-4">
                         <div>
                             <h4 className="text-gray-900 font-medium text-lg tracking-tight flex items-center gap-2">
-                                {h.time} 
+                                {h.appointment_time ? new Date(h.appointment_time).toTimeString().substring(0, 5) : h.time} 
                                 <span className={`text-[10px] px-2 py-0.5 rounded-full uppercase font-black ${
                                     h.status === 'Atendimento Realizado' ? 'bg-green-100 text-green-700' : 
                                     h.status === 'Cancelaram' ? 'bg-red-100 text-red-700' : 'bg-blue-50 text-blue-700'
