@@ -71,7 +71,7 @@ const AgendaBlockForm: React.FC = () => {
       // VERIFICAÇÃO DE CONFLITO ROBUSTA
       // 1. Busca agendamentos do dia (ou intervalo) para o profissional
       const { data: appointmentsInRange, error } = await db.appointments()
-        .select('appointment_time, duration, clientName, status')
+        .select('appointment_time, duration, "clientName", status')
         .or(`professionalId.eq.${selectedProId},professional_id.eq.${selectedProId}`) 
         .gte('appointment_time', `${formData.startDate}T00:00:00`) 
         .lte('appointment_time', `${formData.endDate}T23:59:59`); 

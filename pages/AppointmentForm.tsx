@@ -230,6 +230,11 @@ const AppointmentForm: React.FC = () => {
             duration: totalDuration,
             status: formData.status as any,
             services: selectedServices.map(s => s.name),
+            service_items: selectedServices.map(s => ({
+                service_id: s.id,
+                price: s.price,
+                name: s.name
+            })),
             observation: formData.observation,
             totalValue: totalValue
         });

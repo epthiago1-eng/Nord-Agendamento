@@ -120,6 +120,12 @@ const BookingForm: React.FC = () => {
                 time: time,
                 duration: totalDuration,
                 status: 'Confirmado', // Reseta status se estava cancelado
+                services: selectedServices?.map((s: any) => s.name) || [],
+                service_items: selectedServices?.map((s: any) => ({
+                    service_id: s.id,
+                    price: s.price,
+                    name: s.name
+                })) || [],
                 observation: formData.observation,
                 clientPhone: editingAppointment.clientPhone // Necessário para validação pública
             });
@@ -195,6 +201,11 @@ const BookingForm: React.FC = () => {
                 duration: totalDuration,
                 status: 'Confirmado',
                 services: selectedServices?.map((s: any) => s.name) || [],
+                service_items: selectedServices?.map((s: any) => ({
+                    service_id: s.id,
+                    price: s.price,
+                    name: s.name
+                })) || [],
                 observation: formData.observation
             });
 

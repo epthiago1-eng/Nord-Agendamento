@@ -106,25 +106,36 @@ const AppointmentCheckout: React.FC = () => {
                 setAppointment(apt);
                 
                 // Mapear serviços do agendamento
-                const initialServices = apt.services.map(sName => {
-                    // Verifica se é um serviço customizado com preço embutido (ex: "Corte Especial|50.00")
-                    if (sName.includes('|')) {
-                        const [name, priceStr] = sName.split('|');
-                        const price = parseFloat(priceStr);
-                        if (!isNaN(price)) {
-                            return { 
-                                id: `custom-${Math.random().toString(36).substr(2, 9)}`, 
-                                name: name, 
-                                duration: 30, 
-                                price: price, 
-                                code: 'S-OUT' 
-                            };
+                let initialServices = [];
+                if (apt.service_items && apt.service_items.length > 0) {
+                    initialServices = apt.service_items.map(si => ({
+                        id: si.service_id,
+                        name: si.name || 'Serviço',
+                        price: si.price,
+                        duration: 30,
+                        code: 'S00'
+                    }));
+                } else {
+                    initialServices = apt.services.map(sName => {
+                        // Verifica se é um serviço customizado com preço embutido (ex: "Corte Especial|50.00")
+                        if (sName.includes('|')) {
+                            const [name, priceStr] = sName.split('|');
+                            const price = parseFloat(priceStr);
+                            if (!isNaN(price)) {
+                                return { 
+                                    id: `custom-${Math.random().toString(36).substr(2, 9)}`, 
+                                    name: name, 
+                                    duration: 30, 
+                                    price: price, 
+                                    code: 'S-OUT' 
+                                };
+                            }
                         }
-                    }
 
-                    const found = servicesRes.data?.find(s => s.name === sName);
-                    return found || { id: Math.random().toString(), name: sName, duration: 30, price: 0, code: 'S00' };
-                });
+                        const found = servicesRes.data?.find(s => s.name === sName);
+                        return found || { id: Math.random().toString(), name: sName, duration: 30, price: 0, code: 'S00' };
+                    });
+                }
                 setSelectedServices(initialServices);
 
                 // Mapear produtos
@@ -464,6 +475,11 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                       }
                       return s.name;
                   }),
+                  service_items: selectedServices.map(s => ({
+                      service_id: s.id,
+                      price: s.price,
+                      name: s.name
+                  })),
                   products: selectedProducts,
                   total_value: totals.total,
                   payment_method: showMultiPayment ? finalPayments.map(p => p.method).join(' + ') : paymentMethod,

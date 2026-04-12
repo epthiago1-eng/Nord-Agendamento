@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { ChevronLeft, CheckCircle2, Loader2, CalendarX, Edit2, Gift, Users as UsersIcon } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { db, supabase } from '../supabase';
+import { mapAppointmentFromDB, Appointment } from '../data/agendaData';
 
 const ClientHistory: React.FC = () => {
   const navigate = useNavigate();
@@ -41,15 +42,16 @@ const ClientHistory: React.FC = () => {
             // 2. Buscar agendamentos deste cliente ("clientId")
             // Ordenando por data decrescente (mais recente primeiro)
             const { data: appointments, error: aptError } = await db.appointments()
-                .select('*')
+                .select('id, "clientId", "clientName", "clientPhone", "professionalId", "professionalName", duration, status, observation, "totalValue", created_at, products, appointment_time, client_id, professional_id')
                 .or(`clientId.eq.${id},client_id.eq.${id}`)
                 .order('appointment_time', { ascending: false });
             
             if (aptError) {
                 // Fallback se appointment_time ou client_id falharem
-                const { data: all } = await db.appointments().select('*');
+                const { data: all } = await db.appointments().select('id, "clientId", "clientName", "clientPhone", "professionalId", "professionalName", duration, status, observation, "totalValue", created_at, products, appointment_time, client_id, professional_id');
                 if (all) {
-                    const filtered = all.filter(a => a.clientId === id || a.client_id === id);
+                    const mapped = all.map(mapAppointmentFromDB) as Appointment[];
+                    const filtered = mapped.filter(a => a.clientId === id || a.client_id === id);
                     setHistory(filtered.sort((a, b) => {
                         const dateA = a.appointment_time || a.date;
                         const dateB = b.appointment_time || b.date;
@@ -57,7 +59,7 @@ const ClientHistory: React.FC = () => {
                     }));
                 }
             } else if (appointments) {
-                setHistory(appointments);
+                setHistory(appointments.map(mapAppointmentFromDB) as Appointment[]);
             }
         } catch (err) {
             console.error('Erro ao buscar histórico:', err);
