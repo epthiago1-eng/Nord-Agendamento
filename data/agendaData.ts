@@ -128,37 +128,20 @@ const mapAppointmentFromDB = (data: any): Appointment => {
         }
     }
 
-    // Lógica para extrair data e hora do appointment_time se as colunas originais estiverem ausentes
-    let date = data.date;
-    let time = data.time;
-    if (!date && data.appointment_time) {
-        const d = new Date(data.appointment_time);
-        // Ajuste para fuso horário local ao extrair a data
-        const year = d.getFullYear();
-        const month = String(d.getMonth() + 1).padStart(2, '0');
-        const day = String(d.getDate()).padStart(2, '0');
-        date = `${year}-${month}-${day}`;
-        time = d.toTimeString().split(' ')[0].substring(0, 5);
-    }
-
     return {
         id: data.id,
         clientId: data.clientId || data.client_id, 
-        client_id: data.client_id,
         clientName: data.clientName || data.client_name,
         clientPhone: data.clientPhone || data.client_phone,
         professionalId: data.professionalId || data.professional_id, 
-        professional_id: data.professional_id,
         professionalName: data.professionalName || data.professional_name,
-        date: date,
-        time: time,
-        appointment_time: data.appointment_time,
+        date: data.date,
+        time: data.time,
         duration: data.duration,
         status: data.status,
         services: data.services || [],
         products: data.products || [],
         totalValue: data.totalValue !== undefined ? data.totalValue : data.total_value,
-        total_value: data.total_value !== undefined ? data.total_value : data.totalValue,
         others_value: others_value || 0,
         others_description: others_description || null,
         discount_value: discount_value || 0,
@@ -173,23 +156,19 @@ export const getAppointments = async (filters?: { proId?: string, date?: string,
   let query = supabase.from('appointments').select('*');
   
   // Tenta filtrar por professionalId (camelCase como no banco, com aspas duplas implícitas pelo client)
-  if (filters?.proId) {
-      // Tenta filtrar por ambas as colunas possíveis
-      query = query.or(`professionalId.eq.${filters.proId},professional_id.eq.${filters.proId}`);
-  }
+  if (filters?.proId) query = query.eq('professionalId', filters.proId); 
   
   if (filters?.date) {
-      // Tenta filtrar por date ou appointment_time
-      query = query.or(`date.eq.${filters.date},and(appointment_time.gte.${filters.date}T00:00:00,appointment_time.lte.${filters.date}T23:59:59)`);
+      query = query.eq('date', filters.date);
   } else if (filters?.startDate && filters?.endDate) {
-      query = query.or(`and(date.gte.${filters.startDate},date.lte.${filters.endDate}),and(appointment_time.gte.${filters.startDate}T00:00:00,appointment_time.lte.${filters.endDate}T23:59:59)`);
+      query = query.gte('date', filters.startDate).lte('date', filters.endDate);
   }
 
   const { data, error } = await query;
   
   // Fallback: Se der erro na query especifica (ex: coluna nao existe), tenta buscar tudo e filtrar no JS
-  if (error) {
-      console.warn('Erro na query de agendamentos, tentando busca genérica...', error.message);
+  if (error && error.code === 'PGRST204') { // Column not found
+      console.warn('Coluna não encontrada, tentando busca genérica...');
       const { data: allData } = await supabase.from('appointments').select('*');
       let result = allData ? allData.map(mapAppointmentFromDB) : [];
       
@@ -197,11 +176,15 @@ export const getAppointments = async (filters?: { proId?: string, date?: string,
       if (filters?.startDate && filters?.endDate) {
           result = result.filter(a => a.date >= filters.startDate! && a.date <= filters.endDate!);
       }
-      if (filters?.proId) result = result.filter(a => a.professionalId === filters.proId || a.professional_id === filters.proId);
+      if (filters?.proId) result = result.filter(a => a.professionalId === filters.proId);
       
       return result;
   }
 
+  if (error) {
+      console.error('Erro ao buscar agendamentos:', error);
+      return [];
+  }
   return data ? data.map(mapAppointmentFromDB) : [];
 };
 
@@ -285,20 +268,16 @@ export const saveAppointment = async (apt: Omit<Appointment, 'id'>) => {
 
   const payload: any = {
       clientId: apt.clientId,
-      client_id: apt.client_id || (apt.clientId && apt.clientId.length >= 20 ? apt.clientId : null),
       clientName: apt.clientName,
       clientPhone: apt.clientPhone,
       professionalId: apt.professionalId,
-      professional_id: apt.professional_id || (apt.professionalId && apt.professionalId.length >= 20 ? apt.professionalId : null),
       professionalName: apt.professionalName,
       date: apt.date,
       time: apt.time,
-      appointment_time: apt.appointment_time || `${apt.date}T${apt.time}:00`,
       duration: apt.duration,
       status: apt.status,
       services: apt.services,
       products: apt.products || [],
-      totalValue: apt.totalValue || 0,
       total_value: apt.totalValue || 0,
       payment_method: apt.payment_method || null,
       observation: JSON.stringify(metadata)

@@ -13,18 +13,9 @@ const BookingSchedule: React.FC = () => {
   const editingAppointment = location.state?.editingAppointment; // Recebe o agendamento original se for edição
   
   const [settings, setSettings] = useState<EstablishmentSettings | null>(null);
-  // Helper para obter a data atual no fuso de Brasília (GMT-3)
-  const getBrasiliaDate = () => {
-    // Cria uma data e ajusta para o fuso de Brasília
-    // Em um ambiente de navegador, new Date() já é local. 
-    // Mas para garantir consistência, podemos forçar o ajuste se necessário.
-    const now = new Date();
-    return now;
-  };
-
-  const [selectedDate, setSelectedDate] = useState(getBrasiliaDate());
+  const [selectedDate, setSelectedDate] = useState(new Date());
   const [showCalendar, setShowCalendar] = useState(false);
-  const [pickerMonth, setPickerMonth] = useState(getBrasiliaDate());
+  const [pickerMonth, setPickerMonth] = useState(new Date());
   const [proSlots, setProSlots] = useState<Record<string, string[]>>({});
   
   const [professionals, setProfessionals] = useState<any[]>([]);
@@ -60,12 +51,7 @@ const BookingSchedule: React.FC = () => {
     }, 0) || 30;
   }, [selectedServices]);
 
-  const dateStr = useMemo(() => {
-    const year = selectedDate.getFullYear();
-    const month = String(selectedDate.getMonth() + 1).padStart(2, '0');
-    const day = String(selectedDate.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  }, [selectedDate]);
+  const dateStr = useMemo(() => selectedDate.toISOString().split('T')[0], [selectedDate]);
 
   // Buscar Slots Disponíveis
   useEffect(() => {
@@ -111,11 +97,9 @@ const BookingSchedule: React.FC = () => {
     const days = [];
     for (let i = 0; i < firstDay; i++) days.push(<div key={`empty-${i}`} />);
     for (let d = 1; d <= daysInMonth; d++) {
-        const date = new Date(year, month, d, 12, 0, 0); // Meio-dia para evitar problemas de fuso
+        const date = new Date(year, month, d);
         const isSelected = date.toDateString() === selectedDate.toDateString();
-        const today = new Date();
-        today.setHours(0,0,0,0);
-        const isPast = date < today;
+        const isPast = date < new Date(new Date().setHours(0,0,0,0));
 
         days.push(
             <button
@@ -193,7 +177,7 @@ const BookingSchedule: React.FC = () => {
         <div className="bg-gray-50 border border-gray-100 rounded-3xl p-2 shadow-sm flex items-center justify-between sticky top-4 z-20 backdrop-blur-sm bg-white/80">
             <button 
                 onClick={() => changeDay(-1)} 
-                disabled={selectedDate.toDateString() === new Date().toDateString() || selectedDate < new Date()}
+                disabled={selectedDate <= new Date(new Date().setHours(0,0,0,0))}
                 className="p-3 text-black disabled:opacity-20 active:scale-90"
             >
                 <ChevronLeft size={24} />

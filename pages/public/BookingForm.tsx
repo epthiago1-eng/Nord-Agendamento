@@ -151,42 +151,36 @@ const BookingForm: React.FC = () => {
             // But the current implementation of saveAppointment takes clientId as a string.
             // If we found a client, we should probably use their real ID.
             
-            let clientId = crypto.randomUUID ? crypto.randomUUID() : 'public-' + Date.now();
+            let clientId = 'public-' + Date.now();
             
             // Try to get real client ID if we found them
             if (clientFound) {
-                 const { data, error: searchError } = await db.clients().select('id').eq('phone', formData.phone).maybeSingle();
-                 if (data) {
-                     clientId = data.id;
-                 } else {
-                     // If not found by phone, we'll try to create/upsert below
-                     setClientFound(false);
-                 }
-            }
-            
-            if (!clientFound) {
-                // If not found, we MUST create/upsert the client record properly
-                // to get a valid UUID that satisfies the appointments table constraints
+                 const { data } = await db.clients().select('id').eq('phone', formData.phone).single();
+                 if (data) clientId = data.id;
+            } else {
+                // If not found, maybe we should create the client record properly?
+                // For now, let's stick to the existing behavior but try to reuse if possible.
+                // Or just let the backend/trigger handle it if there is one.
+                // The current saveAppointment just inserts into appointments.
+                
+                // Let's try to insert/upsert the client to ensure they exist in clients table
                 try {
                     let referredById = null;
                     if (formData.referredByPhone) {
                         const cleanRefPhone = formData.referredByPhone.replace(/\D/g, '');
-                        const { data: refClient } = await db.clients().select('id').ilike('phone', `%${cleanRefPhone}%`).maybeSingle();
+                        const { data: refClient } = await db.clients().select('id').ilike('phone', `%${cleanRefPhone}%`).single();
                         if (refClient) referredById = refClient.id;
                     }
 
-                    const { data: newClient, error: upsertError } = await db.clients().upsert({
+                    const { data: newClient } = await db.clients().upsert({
                         name: formData.name,
                         phone: formData.phone,
                         referred_by: referredById
                     }, { onConflict: 'phone' }).select().single();
                     
-                    if (upsertError) throw upsertError;
                     if (newClient) clientId = newClient.id;
                 } catch (e) {
                     console.error("Error upserting client", e);
-                    // If upsert fails, we might still have a problem if client_id is NOT NULL
-                    // But we've already set a temporary UUID-like ID above
                 }
             }
 
