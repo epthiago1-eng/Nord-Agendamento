@@ -285,11 +285,11 @@ export const saveAppointment = async (apt: Omit<Appointment, 'id'>) => {
 
   const payload: any = {
       clientId: apt.clientId,
-      client_id: apt.client_id || (apt.clientId && apt.clientId.length > 20 ? apt.clientId : null),
+      client_id: apt.client_id || (apt.clientId && apt.clientId.length >= 20 ? apt.clientId : null),
       clientName: apt.clientName,
       clientPhone: apt.clientPhone,
       professionalId: apt.professionalId,
-      professional_id: apt.professional_id || (apt.professionalId && apt.professionalId.length > 20 ? apt.professionalId : null),
+      professional_id: apt.professional_id || (apt.professionalId && apt.professionalId.length >= 20 ? apt.professionalId : null),
       professionalName: apt.professionalName,
       date: apt.date,
       time: apt.time,
