@@ -61,6 +61,8 @@ const Login: React.FC = () => {
         localStorage.setItem('user_role', profile.role);
         localStorage.setItem('user_name', profile.full_name);
         localStorage.setItem('user_pro_id', profile.professional_id || '');
+        localStorage.setItem('can_delete_appointments', profile.can_delete_appointments ? 'true' : 'false');
+        localStorage.setItem('can_transfer_appointments', profile.can_transfer_appointments ? 'true' : 'false');
       }
 
       localStorage.setItem('is_logged_in', 'true');

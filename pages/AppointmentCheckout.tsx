@@ -801,6 +801,13 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
   if (loading) return <div className="flex h-screen items-center justify-center"><Loader2 className="animate-spin text-blue-900" size={40} /></div>;
   if (!appointment) return <div className="p-8 text-center">Agendamento não encontrado.</div>;
 
+  const userRole = localStorage.getItem('user_role');
+  const canDelete = localStorage.getItem('can_delete_appointments') === 'true';
+  const canTransfer = localStorage.getItem('can_transfer_appointments') === 'true';
+
+  const showDeleteButton = userRole === 'ADMIN' || canDelete;
+  const showTransferButton = userRole === 'ADMIN' || canTransfer;
+
   // Verifica se está atrasado para mostrar alerta
   const isOverdue = new Date(`${appointment.date}T${appointment.time}`) < new Date() && appointment.status !== 'Atendimento Realizado' && appointment.status !== 'Cancelaram';
 
@@ -858,10 +865,12 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                 <MessageCircle size={18} className="text-green-600" />
                 <span className="text-[8px] font-bold uppercase text-green-700">Lembrete</span>
             </button>
-            <button onClick={() => setShowTransferModal(true)} className="bg-white border border-gray-200 p-3 rounded-2xl flex flex-col items-center justify-center gap-1 active:bg-gray-50">
-                <ArrowRightLeft size={18} className="text-blue-900" />
-                <span className="text-[8px] font-bold uppercase text-gray-600">Transferir</span>
-            </button>
+            {showTransferButton && (
+                <button onClick={() => setShowTransferModal(true)} className="bg-white border border-gray-200 p-3 rounded-2xl flex flex-col items-center justify-center gap-1 active:bg-gray-50">
+                    <ArrowRightLeft size={18} className="text-blue-900" />
+                    <span className="text-[8px] font-bold uppercase text-gray-600">Transferir</span>
+                </button>
+            )}
             <button onClick={() => handleChangeStatus('Faltou')} className="bg-white border border-gray-200 p-3 rounded-2xl flex flex-col items-center justify-center gap-1 active:bg-gray-50">
                 <UserX size={18} className="text-orange-500" />
                 <span className="text-[8px] font-bold uppercase text-gray-600">Faltou</span>
@@ -870,10 +879,12 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                 <XCircle size={18} className="text-red-500" />
                 <span className="text-[8px] font-bold uppercase text-gray-600">Cancelar</span>
             </button>
-            <button onClick={handleDelete} className="bg-red-50 border border-red-100 p-3 rounded-2xl flex flex-col items-center justify-center gap-1 active:bg-red-100">
-                <Trash2 size={18} className="text-red-600" />
-                <span className="text-[8px] font-bold uppercase text-red-700">Apagar</span>
-            </button>
+            {showDeleteButton && (
+                <button onClick={handleDelete} className="bg-red-50 border border-red-100 p-3 rounded-2xl flex flex-col items-center justify-center gap-1 active:bg-red-100">
+                    <Trash2 size={18} className="text-red-600" />
+                    <span className="text-[8px] font-bold uppercase text-red-700">Apagar</span>
+                </button>
+            )}
         </div>
 
         {/* LISTA DE SERVIÇOS */}

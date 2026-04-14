@@ -15,7 +15,9 @@ const ProfessionalAccessForm: React.FC = () => {
     email: proData?.email || '',
     password: '',
     confirmPassword: '',
-    role: 'COLLABORATOR' as 'ADMIN' | 'COLLABORATOR'
+    role: 'COLLABORATOR' as 'ADMIN' | 'COLLABORATOR',
+    canDelete: false,
+    canTransfer: false
   });
   
   const [loading, setLoading] = useState(false);
@@ -43,7 +45,9 @@ const ProfessionalAccessForm: React.FC = () => {
                 setFormData(currentForm => {
                     const newForm = {
                         ...currentForm,
-                        role: profile.role || 'COLLABORATOR'
+                        role: profile.role || 'COLLABORATOR',
+                        canDelete: profile.can_delete_appointments || false,
+                        canTransfer: profile.can_transfer_appointments || false
                     };
                     if (!newForm.email && proData?.email) {
                          newForm.email = proData.email;
@@ -129,7 +133,9 @@ const ProfessionalAccessForm: React.FC = () => {
             id: targetId,
             full_name: proData?.name,
             role: formData.role, // Atualiza a Role
-            professional_id: id 
+            professional_id: id,
+            can_delete_appointments: formData.canDelete,
+            can_transfer_appointments: formData.canTransfer
           });
 
           if (profileError) throw new Error(`Erro ao salvar perfil: ${profileError.message}`);
@@ -269,6 +275,35 @@ const ProfessionalAccessForm: React.FC = () => {
                     placeholder="Repita a senha" 
                     className="w-full bg-white border border-gray-300 rounded-lg py-3.5 px-4 outline-none focus:ring-1 focus:ring-blue-900 text-gray-700 shadow-sm"
                 />
+                </div>
+            )}
+
+            {/* PERMISSÕES ADICIONAIS (APENAS PARA COLABORADOR) */}
+            {formData.role === 'COLLABORATOR' && (
+                <div className="space-y-3 animate-in fade-in slide-in-from-top-2 pt-4">
+                    <label className="text-sm font-medium text-gray-800 block px-1">Permissões Adicionais</label>
+                    <div className="bg-gray-50 p-4 rounded-xl border border-gray-100 space-y-4">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <span className="block font-bold text-sm text-gray-800">Excluir Agendamentos</span>
+                                <span className="text-[10px] text-gray-500">Permite apagar registros da agenda.</span>
+                            </div>
+                            <label className="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" className="sr-only peer" checked={formData.canDelete} onChange={(e) => setFormData({...formData, canDelete: e.target.checked})} />
+                                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                            </label>
+                        </div>
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <span className="block font-bold text-sm text-gray-800">Transferir Agendamentos</span>
+                                <span className="text-[10px] text-gray-500">Permite mover para outro profissional.</span>
+                            </div>
+                            <label className="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" className="sr-only peer" checked={formData.canTransfer} onChange={(e) => setFormData({...formData, canTransfer: e.target.checked})} />
+                                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                            </label>
+                        </div>
+                    </div>
                 </div>
             )}
 
