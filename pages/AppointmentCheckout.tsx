@@ -58,6 +58,9 @@ const AppointmentCheckout: React.FC = () => {
   const [customItemName, setCustomItemName] = useState('');
   const [customItemPrice, setCustomItemPrice] = useState('');
 
+  const [showTimeModal, setShowTimeModal] = useState(false);
+  const [newTime, setNewTime] = useState('');
+
   const [confirmConfig, setConfirmConfig] = useState<{
     show: boolean,
     title: string,
@@ -285,6 +288,36 @@ const AppointmentCheckout: React.FC = () => {
       } finally {
           setProcessing(false);
       }
+  };
+
+  const handleUpdateStartTime = async (timeToSet?: string) => {
+    if (!appointment) return;
+    const time = timeToSet || newTime;
+    if (!time) return;
+
+    setProcessing(true);
+    try {
+      await updateAppointment(appointment.id, { time });
+      setAppointment({ ...appointment, time });
+      setShowTimeModal(false);
+      alert('Horário atualizado com sucesso!');
+    } catch (e: any) {
+      alert('Erro ao atualizar horário: ' + e.message);
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleStartNow = async () => {
+    const now = new Date();
+    const currentTime = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
+    
+    triggerConfirm(
+      'Iniciar Atendimento Agora?',
+      `O horário do agendamento será alterado para ${currentTime}.`,
+      () => handleUpdateStartTime(currentTime),
+      'success'
+    );
   };
 
   const handleWhatsAppReminder = () => {
@@ -832,23 +865,38 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                 <h2 className="text-lg font-black text-gray-900 leading-tight">{appointment.clientName}</h2>
                 </div>
                 <div className="flex items-center gap-4 text-gray-400">
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 cursor-pointer hover:text-blue-900 transition-colors" onClick={() => {
+                   setNewTime(appointment.time);
+                   setShowTimeModal(true);
+                }}>
                     <Calendar size={12} />
                     <span className="text-[10px] font-bold uppercase">{formatDateSafe(appointment.date)}</span>
                 </div>
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 cursor-pointer hover:text-blue-900 transition-colors" onClick={() => {
+                   setNewTime(appointment.time);
+                   setShowTimeModal(true);
+                }}>
                     <Clock size={12} className={isOverdue ? 'text-red-500' : ''} />
                     <span className={`text-[10px] font-bold uppercase ${isOverdue ? 'text-red-500' : ''}`}>{appointment.time}</span>
                 </div>
                 </div>
             </div>
-            <div className="text-right">
+            <div className="text-right flex flex-col items-end gap-2">
                 <span className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest ${
                     appointment.status === 'Confirmado' ? 'bg-blue-50 text-blue-900' :
                     appointment.status === 'Atendimento Realizado' ? 'bg-green-50 text-green-900' : 'bg-gray-100 text-gray-400'
                 }`}>
                     {appointment.status}
                 </span>
+                {appointment.status === 'Confirmado' && (
+                  <button 
+                    onClick={handleStartNow}
+                    className="flex items-center gap-1.5 bg-blue-900 text-white px-3 py-1.5 rounded-xl active:scale-95 transition-all shadow-sm"
+                  >
+                    <Plus size={14} />
+                    <span className="text-[9px] font-black uppercase">Iniciar Agora</span>
+                  </button>
+                )}
                 <p className="text-[9px] text-gray-400 font-bold mt-1 uppercase">{appointment.professionalName}</p>
             </div>
           </div>
@@ -1182,6 +1230,43 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
                     className="w-full bg-blue-900 text-white font-black py-4 rounded-2xl shadow-lg active:scale-95 transition-transform uppercase tracking-widest text-xs flex items-center justify-center gap-2"
                 >
                     {processing ? <Loader2 className="animate-spin" size={16} /> : 'Confirmar Transferência'}
+                </button>
+            </div>
+        </div>
+      )}
+
+      {/* MODAL MUDAR HORÁRIO */}
+      {showTimeModal && (
+        <div className="fixed inset-0 bg-black/60 z-[300] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+            <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-6 shadow-2xl space-y-5 animate-in zoom-in-95">
+                <div className="flex justify-between items-center px-1">
+                    <h3 className="text-blue-900 font-black uppercase tracking-widest text-xs">Alterar Horário</h3>
+                    <button onClick={() => setShowTimeModal(false)} className="text-gray-400 p-1"><X size={20} /></button>
+                </div>
+                
+                <div>
+                    <label className="text-sm font-medium text-gray-800 block mb-2 px-1">Novo Horário</label>
+                    <input 
+                      type="time" 
+                      value={newTime}
+                      onChange={(e) => setNewTime(e.target.value)}
+                      className="w-full bg-white border border-gray-200 rounded-xl py-4 px-4 outline-none focus:ring-1 focus:ring-blue-900 text-xl font-black text-blue-900"
+                    />
+                </div>
+
+                <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 flex gap-3">
+                    <Clock className="text-blue-600 shrink-0" size={18} />
+                    <p className="text-xs text-blue-800 leading-relaxed">
+                        A alteração de horário moverá o agendamento na agenda e atualizará as notificações do cliente.
+                    </p>
+                </div>
+
+                <button 
+                    onClick={() => handleUpdateStartTime()}
+                    disabled={!newTime || processing}
+                    className="w-full bg-blue-900 text-white font-black py-4 rounded-2xl shadow-lg active:scale-95 transition-transform uppercase tracking-widest text-xs flex items-center justify-center gap-2"
+                >
+                    {processing ? <Loader2 className="animate-spin" size={16} /> : 'Confirmar Novo Horário'}
                 </button>
             </div>
         </div>
