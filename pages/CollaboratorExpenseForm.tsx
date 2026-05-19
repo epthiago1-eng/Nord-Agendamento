@@ -26,15 +26,19 @@ const CollaboratorExpenseForm: React.FC = () => {
         const { data } = await db.paymentMethods().select('name').order('name');
         if (data) {
             setPaymentMethods(data);
-            if (data.length > 0) setFormData(prev => ({ ...prev, paymentMethod: data[0].name }));
         }
     };
     fetchMethods();
   }, []);
 
   const handleSave = async () => {
-    if (!formData.description || !formData.value || !formData.paymentMethod) {
-      alert('Por favor, preencha todos os campos obrigatórios.');
+    if (!formData.description || !formData.value) {
+      alert('Por favor, preencha a descrição e o valor da despesa.');
+      return;
+    }
+    
+    if (!formData.paymentMethod) {
+      alert('Por favor, selecione a forma de pagamento.');
       return;
     }
 
@@ -152,8 +156,9 @@ const CollaboratorExpenseForm: React.FC = () => {
                 <select 
                   value={formData.paymentMethod}
                   onChange={e => setFormData({...formData, paymentMethod: e.target.value})}
-                  className="w-full bg-gray-50 border border-gray-100 rounded-2xl py-4 px-10 outline-none focus:ring-1 focus:ring-blue-900 font-bold text-gray-700 text-xs appearance-none shadow-sm"
+                  className={`w-full bg-gray-50 border rounded-2xl py-4 px-10 outline-none focus:ring-1 focus:ring-blue-900 font-bold text-xs appearance-none shadow-sm ${!formData.paymentMethod ? 'border-red-200 text-red-500' : 'border-gray-100 text-gray-700'}`}
                 >
+                  <option value="">Selecione...</option>
                   {paymentMethods.map(m => <option key={m.name} value={m.name}>{m.name}</option>)}
                 </select>
                 <CreditCard className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
