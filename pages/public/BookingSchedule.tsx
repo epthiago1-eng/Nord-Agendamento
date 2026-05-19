@@ -51,7 +51,14 @@ const BookingSchedule: React.FC = () => {
     }, 0) || 30;
   }, [selectedServices]);
 
-  const dateStr = useMemo(() => selectedDate.toISOString().split('T')[0], [selectedDate]);
+  const formatDateSafe = (date: Date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const dateStr = useMemo(() => formatDateSafe(selectedDate), [selectedDate]);
 
   // Buscar Slots Disponíveis
   useEffect(() => {

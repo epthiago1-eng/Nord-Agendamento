@@ -39,7 +39,10 @@ const BookingConsult: React.FC = () => {
         const allAppointments = await getAppointmentsByPhone(phone);
         
         const now = new Date();
-        const todayStr = now.toISOString().split('T')[0];
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const todayStr = `${year}-${month}-${day}`;
         
         const future = allAppointments.filter(a => a.date >= todayStr && !['Cancelaram', 'Atendimento Realizado'].includes(a.status));
         const past = allAppointments.filter(a => a.date < todayStr || ['Cancelaram', 'Atendimento Realizado'].includes(a.status));
