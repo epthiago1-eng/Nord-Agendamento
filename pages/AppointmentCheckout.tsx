@@ -7,7 +7,7 @@ import {
   MessageCircle, Coins, Tag, PlusCircle, Percent
 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { getAppointments, updateAppointment, Appointment, deleteAppointment, transferAppointment, getSettings, saveSettings } from '../data/agendaData';
+import { getAppointmentById, updateAppointment, Appointment, deleteAppointment, transferAppointment, getSettings, saveSettings } from '../data/agendaData';
 import { syncAppointmentTransactions } from '../data/transactions'; 
 import { addNotification } from '../data/notifications';
 import { db, supabase } from '../supabase';
@@ -101,10 +101,9 @@ const AppointmentCheckout: React.FC = () => {
             // Removido auto-seleção para forçar escolha manual
             // if (methods.length > 0) setPaymentMethod(methods[0].name);
 
-            // Carregar Agendamento
-            const appointments = await getAppointments();
-            const apt = appointments.find(a => a.id === id);
-            
+            // Carregar Agendamento (busca direta por ID, sem depender de trazer a tabela inteira)
+            const apt = id ? await getAppointmentById(id) : null;
+
             if (apt) {
                 setAppointment(apt);
                 

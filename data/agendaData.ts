@@ -188,6 +188,16 @@ export const getAppointments = async (filters?: { proId?: string, date?: string,
   return data ? data.map(mapAppointmentFromDB) : [];
 };
 
+export const getAppointmentById = async (id: string): Promise<Appointment | null> => {
+  const { data, error } = await supabase.from('appointments').select('*').eq('id', id).maybeSingle();
+
+  if (error) {
+      console.error('Erro ao buscar agendamento por ID:', error);
+      return null;
+  }
+  return data ? mapAppointmentFromDB(data) : null;
+};
+
 export const getAppointmentsByPhone = async (phone: string): Promise<Appointment[]> => {
   const { data, error } = await supabase
     .from('appointments')
