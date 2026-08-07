@@ -6,7 +6,7 @@ import {
   DollarSign, X, Loader2, Edit2, AlertCircle, Save, Banknote, Trash2
 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { getTransactions, Transaction, processCommissionPayment, addTransaction, deleteTransaction } from '../data/transactions';
+import { getTransactions, Transaction, processCommissionPayment, addTransaction, deleteTransaction, calculateCommission } from '../data/transactions';
 import { db } from '../supabase';
 
 const ProfessionalPerformanceDetails: React.FC = () => {
@@ -137,60 +137,11 @@ const ProfessionalPerformanceDetails: React.FC = () => {
     loadData();
   }, [proId, dateRange]);
 
-  const calculateCommission = (transaction: Transaction) => {
-    // 0. Se for VALE, retorna valor negativo (Dedução)
-    if (transaction.type === 'VALE') {
-        return -Math.abs(transaction.val);
-    }
-
-    // 1. Se houver comissão sobrescrita no banco, usa ela (prioridade máxima)
-    if (transaction.commission_value !== undefined && transaction.commission_value !== null) {
-        return transaction.commission_type === 'percent' 
-            ? transaction.val * (transaction.commission_value / 100)
-            : transaction.commission_value;
-    }
-
-    // 2. Se já tiver o valor calculado salvo na transação, usa ele (Novo Padrão)
-    if (transaction.commission_amount !== undefined && transaction.commission_amount !== null) {
-        return transaction.commission_amount;
-    }
-
-    // 3. Se for gorjeta, o colaborador recebe 100% integralmente
-    if (transaction.category === 'Gorjeta' || transaction.type === 'GORJETA') {
-        return transaction.val;
-    }
-
-    // 4. Se for OUTROS, retorna 0 (Pendente) a menos que tenha sido sobrescrito acima
-    // IMPORTANTE: Apenas type === 'OUTROS' deve cair aqui. Serviços normais devem ter fallback.
-    if (transaction.type === 'OUTROS') {
-        return 0;
-    }
-
-    // 5. Busca regra específica do serviço/produto
-    const serviceId = servicesMap[transaction.item];
-    const config = commissionConfigs.find(c => c.service_id === serviceId);
-    let commValue = 0;
-    
-    if (config) {
-        if (config.commission_type === 'percent') {
-            commValue = transaction.val * (config.commission_value / 100);
-        } else {
-            commValue = config.commission_value;
-        }
-    } else {
-        // Fallback Padrão: 40% para Serviços, 10% para Produtos
-        // Se não for OUTROS, aplica regra padrão mesmo sem config específica
-        const rate = (transaction.category === 'Serviço' || transaction.type === 'SERVIÇO') ? 0.4 : 0.1;
-        commValue = transaction.val * rate;
-    }
-    return commValue;
-  };
-
   // Cálculo do Saldo Pendente Global (Independente do filtro de data)
   const totalPendingCommission = useMemo(() => {
     return transactions.reduce((acc, t) => {
       if (!t.commission_paid) {
-        return acc + calculateCommission(t);
+        return acc + calculateCommission(t, commissionConfigs, servicesMap);
       }
       return acc;
     }, 0);
@@ -213,7 +164,7 @@ const ProfessionalPerformanceDetails: React.FC = () => {
     const uniqueClients = new Set();
 
     const detailedLog = filtered.map(t => {
-        const comm = calculateCommission(t);
+        const comm = calculateCommission(t, commissionConfigs, servicesMap);
         
         if (t.type === 'VALE') {
             valesTotal += Math.abs(t.val);
@@ -303,6 +254,13 @@ const ProfessionalPerformanceDetails: React.FC = () => {
         return;
     }
 
+    // Vale selecionado pode zerar ou superar a comissão selecionada. Pagar
+    // nesse caso criaria uma saída de caixa no sentido errado — bloqueia.
+    if (selectionSummary.totalCommission <= 0) {
+        alert('O valor líquido selecionado (após desconto de vale) é zero ou negativo. Ajuste a seleção antes de pagar.');
+        return;
+    }
+
     setProcessing(true);
     try {
         await processCommissionPayment(
@@ -345,7 +303,7 @@ const ProfessionalPerformanceDetails: React.FC = () => {
     }
 
     // Calcula o valor atual para mostrar no input
-    const currentComm = calculateCommission(t);
+    const currentComm = calculateCommission(t, commissionConfigs, servicesMap);
     // Tenta inferir se é porcentagem ou fixo baseado no valor salvo, ou padrão percent
     const initialType = t.commission_type || 'percent';
     const initialValue = t.commission_value !== undefined ? t.commission_value : (initialType === 'percent' ? (currentComm / t.val) * 100 : currentComm);
