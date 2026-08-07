@@ -10,7 +10,7 @@ import { useNavigate } from 'react-router-dom';
 import { getTransactions, deleteTransaction, updateTransaction, Transaction, addTransaction } from '../data/transactions';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LineChart, Line } from 'recharts';
 import { db, supabase } from '../supabase'; // Import db and supabase to fetch data
-import { getSettings, saveSettings } from '../data/agendaData';
+import { getSettings, getCashBalances, saveSettings } from '../data/agendaData';
 import { EstablishmentSettings } from '../types';
 
 const FinancialAdmin: React.FC = () => {
@@ -102,9 +102,10 @@ const FinancialAdmin: React.FC = () => {
       const fiveWeeksStart = new Date(fiveWeeksEnd);
       fiveWeeksStart.setDate(fiveWeeksEnd.getDate() - (5 * 7) + 1);
 
-      const [txData, settingsData, prosRes, servicesRes, configsRes, adminProfilesRes, billsRes, allTxRes, weeklyTxData] = await Promise.all([
+      const [txData, settingsData, cashBalances, prosRes, servicesRes, configsRes, adminProfilesRes, billsRes, allTxRes, weeklyTxData] = await Promise.all([
           getTransactions({ startDate: startStr, endDate: endStr }),
           getSettings(),
+          getCashBalances(),
           db.professionals().select('id, name'),
           db.services().select('id, name'),
           db.professionalServices().select('*'),
@@ -116,17 +117,18 @@ const FinancialAdmin: React.FC = () => {
 
       setAllTransactions(txData);
       setWeeklyTransactions(weeklyTxData);
-      setSettings(settingsData);
-      
-      // Calcular saldos globais (AGORA ESTÁTICOS DAS CONFIGURAÇÕES)
+      // Saldos vêm de uma RPC restrita a admin (ver getCashBalances); mescla no
+      // mesmo objeto settings para não quebrar o resto da tela que lê settings.cash_balance etc.
+      setSettings({ ...settingsData, ...cashBalances });
+
       if (settingsData) {
           setAllTransactionsForBalance(allTxRes.data || []);
-          
+
           const balances = {
-              cash: settingsData.cash_balance || 0,
-              pix: settingsData.pix_balance || 0,
-              card: settingsData.card_balance || 0,
-              bank: settingsData.bank_balance || 0
+              cash: cashBalances.cash_balance || 0,
+              pix: cashBalances.pix_balance || 0,
+              card: cashBalances.card_balance || 0,
+              bank: cashBalances.bank_balance || 0
           };
 
           setGlobalBalances(balances);

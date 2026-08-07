@@ -15,10 +15,13 @@ export interface AgendaBlock {
 
 // --- CONFIGURAÇÕES ---
 
+// Campos públicos/não-sensíveis apenas: saldos ficam de fora (ver getCashBalances).
+// A tabela settings é lida por telas públicas de agendamento sem login, então esta
+// função nunca deve pedir colunas de saldo (o banco também bloqueia isso por permissão de coluna).
 export const getSettings = async (): Promise<EstablishmentSettings & { id?: number }> => {
   const { data, error } = await supabase
     .from('settings')
-    .select('id, primary_color, secondary_color, name, logo_url, slot_interval, cash_balance, bank_balance, pix_balance, card_balance')
+    .select('id, primary_color, secondary_color, name, logo_url, slot_interval')
     .single();
 
   if (error || !data) {
@@ -42,6 +45,27 @@ export const getSettings = async (): Promise<EstablishmentSettings & { id?: numb
       name: data.name || 'Nord Barbershop',
       logoUrl: data.logo_url || '',
       slotInterval: data.slot_interval || 15,
+      cash_balance: 0,
+      bank_balance: 0,
+      pix_balance: 0,
+      card_balance: 0
+  };
+};
+
+// Saldos de caixa/banco/pix/cartão: dado sensível, só admin pode ler.
+// Passa pela RPC get_cash_balances (SECURITY DEFINER + checagem is_admin no banco)
+// em vez de selecionar direto da tabela settings.
+export const getCashBalances = async (): Promise<{ cash_balance: number; bank_balance: number; pix_balance: number; card_balance: number }> => {
+  const { data, error } = await supabase.rpc('get_cash_balances').single<{
+    cash_balance: number; bank_balance: number; pix_balance: number; card_balance: number;
+  }>();
+
+  if (error || !data) {
+    console.error('Erro ao buscar saldos (requer admin):', error);
+    return { cash_balance: 0, bank_balance: 0, pix_balance: 0, card_balance: 0 };
+  }
+
+  return {
       cash_balance: data.cash_balance || 0,
       bank_balance: data.bank_balance || 0,
       pix_balance: data.pix_balance || 0,
