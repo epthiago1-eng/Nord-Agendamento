@@ -7,7 +7,7 @@ import {
 import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../supabase';
 import { getSettings, saveSettings } from '../data/agendaData';
-import { addTransaction, deleteTransaction } from '../data/transactions';
+import { payBill, unpayBill, syncPaidBillTransaction } from '../data/bills';
 
 const BillForm: React.FC = () => {
   const navigate = useNavigate();
@@ -15,7 +15,8 @@ const BillForm: React.FC = () => {
 
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(!!id);
-  
+  const [transactionId, setTransactionId] = useState<string | null>(null);
+
   // Novos estados para financeiro
   const [settings, setSettings] = useState<any>(null);
   const [paymentMethods, setPaymentMethods] = useState<any[]>([]);
@@ -79,6 +80,7 @@ const BillForm: React.FC = () => {
               observation: data.observation || '',
               status: data.status || 'PENDING'
             });
+            setTransactionId(data.transaction_id || null);
           }
         }
       } catch (err) {
@@ -122,6 +124,16 @@ const BillForm: React.FC = () => {
 
       if (id) {
         await supabase.from('bills').update(payload).eq('id', id);
+        // Conta já paga: mantém o lançamento financeiro sincronizado com a
+        // edição, senão ele fica com o valor/descrição antigos e o "desfazer
+        // pagamento" (que agora usa esse vínculo direto) sincroniza errado.
+        if (formData.status === 'PAID' && transactionId) {
+          await syncPaidBillTransaction({
+            description: payload.description,
+            value: payload.value,
+            transaction_id: transactionId
+          });
+        }
       } else {
         await supabase.from('bills').insert(payload);
       }
@@ -150,73 +162,39 @@ const BillForm: React.FC = () => {
         setConfirmConfig(prev => ({...prev, show: false}));
         setLoading(true);
         try {
-          // 0. Verifica se a conta já não foi paga (evita duplicidade)
-          if (id) {
-            const { data: currentBill } = await supabase
-              .from('bills')
-              .select('status')
-              .eq('id', id)
-              .single();
-            
-            if (currentBill?.status === 'PAID') {
-              alert('Esta conta já consta como paga.');
-              navigate('/bills');
-              return;
-            }
+          let targetId = id;
+
+          // Conta nova (ainda não salva): grava como pendente primeiro para
+          // termos um ID, e então pagamos normalmente pelo caminho atômico.
+          if (!targetId) {
+            const { data: newBill, error } = await supabase.from('bills').insert({
+              description: formData.description,
+              value: amount,
+              due_date: formData.dueDate,
+              recurring: formData.recurring,
+              category: formData.category,
+              observation: formData.observation,
+              status: 'PENDING'
+            }).select().single();
+            if (error) throw error;
+            targetId = newBill.id;
           }
 
-          // Atualiza (ou cria) a conta como PAGA
-          const payload = {
+          const result = await payBill({
+            id: targetId!,
             description: formData.description,
             value: amount,
             due_date: formData.dueDate,
             recurring: formData.recurring,
             category: formData.category,
             observation: formData.observation,
-            status: 'PAID'
-          };
+            status: 'PENDING'
+          }, payForm);
 
-          if (id) {
-            await supabase.from('bills').update(payload).eq('id', id);
-          } else {
-            const { data: newBill, error } = await supabase.from('bills').insert(payload).select().single();
-            if (error) throw error;
-            // Se acabou de criar, precisamos do ID para futuras operações nesta mesma tela (embora naveguemos fora)
-          }
-
-          // 1. Lança Transação
-          await addTransaction({
-            type: 'DESPESA',
-            category: formData.category,
-            item: `Pgto: ${formData.description}`,
-            val: -Math.abs(amount),
-            payment_method: payForm.source === 'bank' ? `${payForm.method} (Banco)` : payForm.method,
-            pro: 'Sistema',
-            date: new Date().toISOString().split('T')[0],
-            status: 'Pago'
-          });
-
-          // Lógica de Recorrência (Criar próximo mês se não existir)
-          if (formData.recurring) {
-            const nextDate = new Date(formData.dueDate);
-            nextDate.setMonth(nextDate.getMonth() + 1);
-            const nextDateStr = nextDate.toISOString().split('T')[0];
-
-            // Verifica se já existe uma conta com mesma descrição e data no próximo mês
-            const { data: existingNext } = await supabase
-              .from('bills')
-              .select('id')
-              .eq('description', formData.description)
-              .eq('due_date', nextDateStr)
-              .limit(1);
-
-            if (!existingNext || existingNext.length === 0) {
-              await supabase.from('bills').insert({
-                ...payload,
-                due_date: nextDateStr,
-                status: 'PENDING'
-              });
-            }
+          if (!result.paid) {
+            alert('Esta conta já consta como paga.');
+            navigate('/bills');
+            return;
           }
 
           alert('Pagamento registrado com sucesso!');
@@ -241,50 +219,21 @@ const BillForm: React.FC = () => {
         setConfirmConfig(prev => ({...prev, show: false}));
         setLoading(true);
         try {
-          // 1. Volta status da conta para PENDING
-          const { error } = await supabase
-            .from('bills')
-            .update({ status: 'PENDING' })
-            .eq('id', id);
-
-          if (error) throw error;
-
-          // 2. Localiza e remove a transação financeira correspondente
           const amount = parseFloat(formData.value.replace(',', '.')) || 0;
-          const searchItem = `Pgto: ${formData.description}`;
-          const searchVal = -Math.abs(amount);
-
-          // Busca a transação mais recente que bate com esses dados
-          const { data: matchingTrans } = await supabase
-            .from('transactions')
-            .select('id, payment_method')
-            .eq('item', searchItem)
-            .eq('val', searchVal)
-            .eq('type', 'DESPESA')
-            .order('created_at', { ascending: false })
-            .limit(1);
-
-          if (matchingTrans && matchingTrans.length > 0) {
-             const trans = matchingTrans[0];
-             await deleteTransaction(trans.id);
-          }
-
-          // 3. Se for recorrente, tenta remover a conta do próximo mês que foi gerada automaticamente
-          // (Apenas se ela ainda estiver PENDENTE e tiver a mesma descrição)
-          if (formData.recurring) {
-            const nextDate = new Date(formData.dueDate);
-            nextDate.setMonth(nextDate.getMonth() + 1);
-            const nextDateStr = nextDate.toISOString().split('T')[0];
-
-            await supabase
-              .from('bills')
-              .delete()
-              .eq('description', formData.description)
-              .eq('due_date', nextDateStr)
-              .eq('status', 'PENDING');
-          }
+          await unpayBill({
+            id: id!,
+            description: formData.description,
+            value: amount,
+            due_date: formData.dueDate,
+            recurring: formData.recurring,
+            category: formData.category,
+            observation: formData.observation,
+            status: 'PAID',
+            transaction_id: transactionId
+          });
 
           setFormData(prev => ({ ...prev, status: 'PENDING' }));
+          setTransactionId(null);
           alert('Pagamento desfeito! O valor foi estornado do financeiro.');
         } catch (err: any) {
           alert('Erro ao desfazer: ' + err.message);

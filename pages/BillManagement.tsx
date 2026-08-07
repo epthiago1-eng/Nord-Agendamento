@@ -5,8 +5,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase, db } from '../supabase';
-import { getSettings, saveSettings } from '../data/agendaData';
-import { addTransaction, deleteTransaction } from '../data/transactions';
+import { payBill, unpayBill } from '../data/bills';
 
 // --- COMPONENTE DO CARD DE CONTA ---
 const BillItem = ({ bill, onPay, onUnpay, onDelete, onClick }: any) => {
@@ -113,7 +112,10 @@ const BillManagement: React.FC = () => {
           .gte('due_date', startOfMonth)
           .lte('due_date', endOfMonth)
           .order('due_date', { ascending: true }),
-        supabase.from('settings').select('*').single(),
+        // select('*') inclui as colunas de saldo, que agora exigem a RPC
+        // restrita a admin (ver getCashBalances) — aqui só serve de "carregou
+        // com sucesso", então pedimos só colunas públicas.
+        supabase.from('settings').select('id, name').single(),
         db.paymentMethods().select('*')
       ]);
 
@@ -156,79 +158,27 @@ const BillManagement: React.FC = () => {
 
   const confirmPayment = async () => {
     if (!payModal.bill || !settings) return;
-    
+
     // Evita processamento duplo se já estiver salvando
     if (saving) return;
-    
+
     setSaving(true);
     const bill = payModal.bill;
-    const amount = Number(bill.value);
 
     try {
-      // 0. Verifica se a conta já não foi paga (evita duplicidade por cliques rápidos)
-      const { data: currentBill } = await supabase
-        .from('bills')
-        .select('status')
-        .eq('id', bill.id)
-        .single();
-      
-      if (currentBill?.status === 'PAID') {
+      const result = await payBill(bill, payForm);
+
+      if (!result.paid) {
+        alert('Esta conta já foi paga.');
         setPayModal({ show: false, bill: null });
+        fetchBills();
         return;
       }
 
-      // 1. Atualiza Conta
-      const { error } = await supabase
-        .from('bills')
-        .update({ status: 'PAID' })
-        .eq('id', bill.id);
-      
-      if (error) throw error;
-
-      // 2. Atualiza Saldo
-      // REMOVIDO: Agora tratado por trigger no banco de dados ao adicionar a transação abaixo
-      
-      // 3. Lança no Financeiro
-      await addTransaction({
-        type: 'DESPESA',
-        category: bill.category,
-        item: `Pgto: ${bill.description}`,
-        val: -Math.abs(amount),
-        payment_method: payForm.source === 'bank' ? `${payForm.method} (Banco)` : payForm.method,
-        pro: 'Sistema',
-        date: new Date().toISOString().split('T')[0],
-        status: 'Pago'
-      });
-
-      // 4. Verifica Recorrência (Cria o próximo mês se não existir)
-      if (bill.recurring) {
-        const nextDueDate = new Date(bill.due_date);
-        nextDueDate.setMonth(nextDueDate.getMonth() + 1);
-        const nextDueDateStr = nextDueDate.toISOString().split('T')[0];
-        
-        // Verifica se já existe uma conta com mesma descrição e data no próximo mês
-        const { data: existingNext } = await supabase
-          .from('bills')
-          .select('id')
-          .eq('description', bill.description)
-          .eq('due_date', nextDueDateStr)
-          .limit(1);
-
-        if (!existingNext || existingNext.length === 0) {
-          const { id: _, created_at: __, ...newBillData } = bill;
-          await supabase.from('bills').insert({
-            ...newBillData,
-            due_date: nextDueDateStr,
-            status: 'PENDING'
-          });
-        }
-      }
-
-      // Atualiza lista local
-      setBills(prev => prev.map(b => b.id === bill.id ? { ...b, status: 'PAID' } : b));
       setPayModal({ show: false, bill: null });
       alert('Conta paga com sucesso!');
-      
+      fetchBills(); // Recarrega para refletir status e o vínculo com a transação criada
+
     } catch (err: any) {
       alert('Erro ao processar pagamento: ' + err.message);
     } finally {
@@ -242,48 +192,8 @@ const BillManagement: React.FC = () => {
 
     setSaving(true);
     try {
-      // 1. Volta status para PENDING
-      await supabase.from('bills').update({ status: 'PENDING' }).eq('id', bill.id);
-
-      // 2. Localiza e remove transação
-      const amount = Number(bill.value);
-      const searchItem = `Pgto: ${bill.description}`;
-      const searchVal = -Math.abs(amount);
-
-      const { data: matchingTrans } = await supabase
-        .from('transactions')
-        .select('id, payment_method')
-        .eq('item', searchItem)
-        .eq('val', searchVal)
-        .eq('type', 'DESPESA')
-        .order('created_at', { ascending: false })
-        .limit(1);
-
-      if (matchingTrans && matchingTrans.length > 0) {
-        const trans = matchingTrans[0];
-        
-        // Restaura saldo
-        // REMOVIDO: Agora tratado por trigger no banco de dados ao excluir a transação abaixo
-        
-        const { deleteTransaction } = await import('../data/transactions');
-        await deleteTransaction(trans.id);
-      }
-
-      // 3. Remove próxima recorrência se existir e estiver pendente
-      if (bill.recurring) {
-        const nextDate = new Date(bill.due_date);
-        nextDate.setMonth(nextDate.getMonth() + 1);
-        const nextDateStr = nextDate.toISOString().split('T')[0];
-
-        await supabase
-          .from('bills')
-          .delete()
-          .eq('description', bill.description)
-          .eq('due_date', nextDateStr)
-          .eq('status', 'PENDING');
-      }
-
-      setBills(prev => prev.map(b => b.id === bill.id ? { ...b, status: 'PENDING' } : b));
+      await unpayBill(bill);
+      setBills(prev => prev.map(b => b.id === bill.id ? { ...b, status: 'PENDING', transaction_id: null } : b));
       alert('Pagamento desfeito com sucesso!');
     } catch (err: any) {
       alert('Erro ao desfazer: ' + err.message);
