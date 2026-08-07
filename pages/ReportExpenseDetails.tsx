@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { ChevronLeft, ChevronDown, ChevronUp, TrendingDown, Lightbulb, UserCheck, Settings, FileText, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { db } from '../supabase';
+import { db, fetchAllPages } from '../supabase';
 
 const ReportExpenseDetails: React.FC = () => {
   const navigate = useNavigate();
@@ -19,11 +19,18 @@ const ReportExpenseDetails: React.FC = () => {
         const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
         const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
 
-        const { data: transactions } = await db.transactions()
-          .select('*')
-          .eq('operation', 'DESPESA')
-          .gte('date', startOfMonth)
-          .lte('date', endOfMonth);
+        // Despesas são gravadas com operation: 'COMPRA' (esse campo nunca vale
+        // 'DESPESA' em lugar nenhum do app — o filtro antigo não batia com
+        // nada e a tela ficava sempre vazia). Também pagina: um mês com muitas
+        // despesas pode passar de 1000 linhas e ser cortado silenciosamente.
+        const transactions = await fetchAllPages<any>((from, to) =>
+          db.transactions()
+            .select('*')
+            .eq('operation', 'COMPRA')
+            .gte('date', startOfMonth)
+            .lte('date', endOfMonth)
+            .range(from, to)
+        );
 
         if (!transactions) return;
 

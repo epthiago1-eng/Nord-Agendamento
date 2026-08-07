@@ -9,7 +9,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { getTransactions, deleteTransaction, updateTransaction, Transaction, addTransaction } from '../data/transactions';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LineChart, Line } from 'recharts';
-import { db, supabase } from '../supabase'; // Import db and supabase to fetch data
+import { db, supabase, fetchAllPages } from '../supabase'; // Import db and supabase to fetch data
 import { getSettings, getCashBalances, saveSettings } from '../data/agendaData';
 import { EstablishmentSettings } from '../types';
 
@@ -111,7 +111,13 @@ const FinancialAdmin: React.FC = () => {
           db.professionalServices().select('*'),
           db.profiles().select('professional_id').eq('role', 'ADMIN'),
           supabase.from('bills').select('*').gte('due_date', startStr).lte('due_date', endStr),
-          supabase.from('transactions').select('val, total_value, payment_method, operation_type, operation, date'),
+          // Sem filtro de data (a reconciliação precisa do histórico inteiro para
+          // calcular o saldo inicial) — pagina para não cortar em 1000 linhas.
+          fetchAllPages<any>((from, to) =>
+              supabase.from('transactions')
+                  .select('val, total_value, payment_method, operation_type, operation, date')
+                  .range(from, to)
+          ),
           getTransactions({ startDate: fiveWeeksStart.toISOString().split('T')[0], endDate: fiveWeeksEnd.toISOString().split('T')[0] })
       ]);
 
@@ -122,7 +128,7 @@ const FinancialAdmin: React.FC = () => {
       setSettings({ ...settingsData, ...cashBalances });
 
       if (settingsData) {
-          setAllTransactionsForBalance(allTxRes.data || []);
+          setAllTransactionsForBalance(allTxRes || []);
 
           const balances = {
               cash: cashBalances.cash_balance || 0,

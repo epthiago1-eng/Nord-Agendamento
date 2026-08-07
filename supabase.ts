@@ -17,6 +17,29 @@ export const supabaseAnonKey = getEnv('VITE_SUPABASE_ANON_KEY', 'eyJhbGciOiJIUzI
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
+// O PostgREST (Supabase) limita cada resposta a 1000 linhas por padrão. Uma
+// query sem paginação nessas tabelas trunca silenciosamente — sem erro, sem
+// aviso — assim que o total ultrapassa esse limite. Esse helper pagina com
+// .range() até esgotar os resultados, para qualquer busca que precise trazer
+// o conjunto inteiro (não apenas uma página) de uma tabela que pode crescer
+// além de 1000 linhas (agendamentos e transações já passaram desse ponto).
+export const fetchAllPages = async <T>(
+  buildQuery: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>,
+  pageSize = 1000
+): Promise<T[]> => {
+  const all: T[] = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await buildQuery(from, from + pageSize - 1);
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+    all.push(...data);
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+  return all;
+};
+
 // Helpers para abstração de dados recorrentes
 export const db = {
   professionals: () => supabase.from('professionals'),

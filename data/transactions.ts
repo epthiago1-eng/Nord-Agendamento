@@ -1,5 +1,5 @@
 
-import { supabase } from '../supabase';
+import { supabase, fetchAllPages } from '../supabase';
 import type { Transaction } from '../types';
 
 export type { Transaction };
@@ -63,29 +63,36 @@ export const calculateCommission = (
 };
 
 export const getTransactions = async (filters?: { proId?: string, month?: string, startDate?: string, endDate?: string }): Promise<Transaction[]> => {
-  let query = supabase.from('transactions').select('*').order('date', { ascending: false });
-  
-  if (filters?.proId) query = query.eq('professional_id', filters.proId);
-  
-  if (filters?.startDate && filters?.endDate) {
-      query = query.gte('date', filters.startDate).lte('date', filters.endDate);
-  } else if (filters?.month) {
-      // Fallback para filtro de mês YYYY-MM
-      const [year, month] = filters.month.split('-');
-      const start = `${year}-${month}-01`;
-      const end = new Date(parseInt(year), parseInt(month), 0).toISOString().split('T')[0];
-      query = query.gte('date', start).lte('date', end);
-  }
-  
-  const { data, error } = await query;
-  if (error) throw error;
-  
+  const buildBase = () => {
+    let query = supabase.from('transactions').select('*')
+      .order('date', { ascending: false })
+      .order('id', { ascending: true }); // desempate estável para a paginação abaixo
+
+    if (filters?.proId) query = query.eq('professional_id', filters.proId);
+
+    if (filters?.startDate && filters?.endDate) {
+        query = query.gte('date', filters.startDate).lte('date', filters.endDate);
+    } else if (filters?.month) {
+        // Fallback para filtro de mês YYYY-MM
+        const [year, month] = filters.month.split('-');
+        const start = `${year}-${month}-01`;
+        const end = new Date(parseInt(year), parseInt(month), 0).toISOString().split('T')[0];
+        query = query.gte('date', start).lte('date', end);
+    }
+    return query;
+  };
+
+  // Sem filtro de data, esta busca pode facilmente ultrapassar 1000 linhas
+  // (extrato completo, comissões sem período definido) — pagina para não
+  // cortar histórico silenciosamente.
+  const data = await fetchAllPages<any>((from, to) => buildBase().range(from, to));
+
   // Mapeia para garantir compatibilidade com o frontend
-  return data?.map((t: any) => ({
+  return data.map((t: any) => ({
     ...t,
     val: t.total_value || t.val, // Fallback
     item: t.item || t.description // Fallback para leitura
-  })) || [];
+  }));
 };
 
 export const addTransaction = async (transaction: Partial<Transaction> & { method?: string }) => {

@@ -1,5 +1,5 @@
 import type { Appointment, EstablishmentSettings } from '../types';
-import { supabase, db } from '../supabase';
+import { supabase, db, fetchAllPages } from '../supabase';
 import { addNotification } from './notifications';
 import { addTransaction } from './transactions';
 
@@ -177,24 +177,38 @@ const mapAppointmentFromDB = (data: any): Appointment => {
 };
 
 export const getAppointments = async (filters?: { proId?: string, date?: string, startDate?: string, endDate?: string }): Promise<Appointment[]> => {
-  let query = supabase.from('appointments').select('*');
-  
-  // Tenta filtrar por professionalId (camelCase como no banco, com aspas duplas implícitas pelo client)
-  if (filters?.proId) query = query.eq('professionalId', filters.proId); 
-  
-  if (filters?.date) {
-      query = query.eq('date', filters.date);
-  } else if (filters?.startDate && filters?.endDate) {
-      query = query.gte('date', filters.startDate).lte('date', filters.endDate);
+  const buildQuery = () => {
+    let query = supabase.from('appointments').select('*').order('id', { ascending: true });
+
+    // Tenta filtrar por professionalId (camelCase como no banco, com aspas duplas implícitas pelo client)
+    if (filters?.proId) query = query.eq('professionalId', filters.proId);
+
+    if (filters?.date) {
+        query = query.eq('date', filters.date);
+    } else if (filters?.startDate && filters?.endDate) {
+        query = query.gte('date', filters.startDate).lte('date', filters.endDate);
+    }
+    return query;
+  };
+
+  // Sem filtro (ou com um intervalo de datas amplo), esta busca pode passar
+  // de 1000 linhas — pagina para não cortar agendamentos silenciosamente
+  // (a tabela já passou desse limite em produção).
+  let data: any[] | null = null;
+  let error: any = null;
+  try {
+      data = await fetchAllPages<any>((from, to) => buildQuery().range(from, to));
+  } catch (e) {
+      error = e;
   }
 
-  const { data, error } = await query;
-  
   // Fallback: Se der erro na query especifica (ex: coluna nao existe), tenta buscar tudo e filtrar no JS
   if (error && error.code === 'PGRST204') { // Column not found
       console.warn('Coluna não encontrada, tentando busca genérica...');
-      const { data: allData } = await supabase.from('appointments').select('*');
-      let result = allData ? allData.map(mapAppointmentFromDB) : [];
+      const allData = await fetchAllPages<any>((from, to) =>
+          supabase.from('appointments').select('*').range(from, to)
+      );
+      let result = allData.map(mapAppointmentFromDB);
       
       if (filters?.date) result = result.filter(a => a.date === filters.date);
       if (filters?.startDate && filters?.endDate) {
@@ -223,17 +237,21 @@ export const getAppointmentById = async (id: string): Promise<Appointment | null
 };
 
 export const getAppointmentsByPhone = async (phone: string): Promise<Appointment[]> => {
-  const { data, error } = await supabase
-    .from('appointments')
-    .select('*')
-    //.eq('clientPhone', phone) // Tentativa direta
-    // .gte('date', new Date().toISOString().split('T')[0]) // REMOVIDO: Queremos todo o histórico
-    .order('date', { ascending: false }); // Ordena do mais recente para o mais antigo
+  // Sem filtro de data (tela pública "Consultar Meus Horários" precisa do
+  // histórico inteiro do cliente) — pagina para não cortar em 1000 linhas.
+  // A tabela appointments já passou desse limite em produção.
+  const data = await fetchAllPages<any>((from, to) =>
+    supabase
+      .from('appointments')
+      .select('*')
+      //.eq('clientPhone', phone) // Tentativa direta
+      .order('date', { ascending: false }) // Ordena do mais recente para o mais antigo
+      .order('id', { ascending: true }) // desempate estável para a paginação
+      .range(from, to)
+  );
 
-  if (error) throw error;
-  
   // Filtragem no cliente para garantir match independente do nome da coluna
-  const mapped = data ? data.map(mapAppointmentFromDB) : [];
+  const mapped = data.map(mapAppointmentFromDB);
   return mapped.filter(a => a.clientPhone === phone);
 };
 

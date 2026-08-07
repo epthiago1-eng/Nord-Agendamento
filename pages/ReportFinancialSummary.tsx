@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ChevronLeft, TrendingUp, TrendingDown, CreditCard, DollarSign, Wallet, ArrowUpRight, ArrowDownRight, Smartphone, ClipboardList, ShoppingBag, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { db } from '../supabase';
+import { db, fetchAllPages } from '../supabase';
 
 const ReportFinancialSummary: React.FC = () => {
   const navigate = useNavigate();
@@ -24,10 +24,15 @@ const ReportFinancialSummary: React.FC = () => {
         const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
         const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
 
-        const { data: transactions } = await db.transactions()
-          .select('*')
-          .gte('date', startOfMonth)
-          .lte('date', endOfMonth);
+        // Pagina em vez de um único select('*'): um mês com muitos atendimentos
+        // pode passar de 1000 linhas de transação e ser cortado silenciosamente.
+        const transactions = await fetchAllPages<any>((from, to) =>
+          db.transactions()
+            .select('*')
+            .gte('date', startOfMonth)
+            .lte('date', endOfMonth)
+            .range(from, to)
+        );
 
         if (!transactions) return;
 
@@ -52,7 +57,10 @@ const ReportFinancialSummary: React.FC = () => {
             if (!paymentMap[method]) paymentMap[method] = { total: 0, count: 0 };
             paymentMap[method].total += val;
             paymentMap[method].count += 1;
-          } else if (t.operation === 'DESPESA') {
+          } else if (t.operation === 'COMPRA') {
+            // Despesas são gravadas com operation: 'COMPRA' (o campo 'operation'
+            // nunca vale 'DESPESA' em lugar nenhum do app — isso ficava sempre
+            // zerado antes, escondendo todo o lado de despesas do resumo).
             expenses += Math.abs(t.val);
           }
         });
