@@ -5,7 +5,7 @@ import {
   Calendar, Loader2, User, Wallet, Filter, Search, Scissors, Box
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { getTransactions, Transaction } from '../data/transactions';
+import { getTransactions, calculateCommission, Transaction } from '../data/transactions';
 import { db } from '../supabase';
 
 const CollaboratorCommissions: React.FC = () => {
@@ -53,54 +53,10 @@ const CollaboratorCommissions: React.FC = () => {
     fetchData();
   }, [proName, proId]);
 
-  // Cálculo de Comissão Idêntico ao do ADM
-  const calculateCommission = (t: Transaction) => {
-    // 0. Se for VALE, retorna valor negativo (Dedução)
-    if (t.type === 'VALE') {
-        return -Math.abs(t.val);
-    }
-
-    // 1. Se houver comissão sobrescrita no banco, usa ela (prioridade máxima)
-    if (t.commission_value !== undefined && t.commission_value !== null) {
-        return t.commission_type === 'percent' 
-            ? t.val * (t.commission_value / 100)
-            : t.commission_value;
-    }
-
-    // 2. Se já tiver o valor calculado salvo na transação, usa ele (Novo Padrão)
-    if (t.commission_amount !== undefined && t.commission_amount !== null) {
-        return t.commission_amount;
-    }
-
-    // 3. Se for gorjeta, o colaborador recebe 100% integralmente
-    if (t.category === 'Gorjeta' || t.type === 'GORJETA') {
-        return t.val;
-    }
-
-    // 4. Se for OUTROS, retorna 0 (Pendente) a menos que tenha sido sobrescrito acima
-    if (t.type === 'OUTROS') {
-        return 0;
-    }
-
-    // 5. Busca regra específica do serviço/produto
-    const serviceId = servicesMap[t.item];
-    const config = commissionConfigs.find(c => c.service_id === serviceId);
-    
-    if (config) {
-        return config.commission_type === 'percent' 
-            ? t.val * (config.commission_value / 100)
-            : config.commission_value;
-    }
-    
-    // 6. Fallback padrão
-    const rate = (t.type === 'SERVIÇO' || t.category === 'Serviço') ? 0.4 : 0.1;
-    return t.val * rate;
-  };
-
   const processedData = useMemo(() => {
     return transactions.map(t => ({
       ...t,
-      commissionValue: calculateCommission(t)
+      commissionValue: calculateCommission(t, commissionConfigs, servicesMap)
     }));
   }, [transactions, commissionConfigs, servicesMap]);
 

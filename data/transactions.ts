@@ -4,6 +4,64 @@ import type { Transaction } from '../types';
 
 export type { Transaction };
 
+export interface CommissionConfig {
+  professional_id?: string;
+  service_id: string;
+  commission_type: 'percent' | 'fixed';
+  commission_value: number;
+}
+
+// Fonte única de verdade para o cálculo de comissão. Usada tanto pelas telas
+// do colaborador (extrato, painel) quanto pela auditoria/pagamento do admin —
+// antes cada tela reimplementava essa lógica de um jeito ligeiramente
+// diferente, e a tela que efetivamente paga (CommissionAudit) usava uma
+// fórmula fixa que ignorava overrides e o valor já congelado no checkout.
+export const calculateCommission = (
+  t: Pick<Transaction, 'type' | 'category' | 'val' | 'item' | 'commission_value' | 'commission_type' | 'commission_amount'>,
+  commissionConfigs: CommissionConfig[],
+  servicesMap: Record<string, string>
+): number => {
+  // 0. VALE (adiantamento): dedução do que o profissional já recebeu.
+  if (t.type === 'VALE') {
+    return -Math.abs(t.val);
+  }
+
+  // 1. Override manual na própria transação (prioridade máxima).
+  if (t.commission_value !== undefined && t.commission_value !== null) {
+    return t.commission_type === 'percent'
+      ? t.val * (t.commission_value / 100)
+      : t.commission_value;
+  }
+
+  // 2. Valor já congelado no checkout (padrão atual).
+  if (t.commission_amount !== undefined && t.commission_amount !== null) {
+    return t.commission_amount;
+  }
+
+  // 3. Gorjeta: 100% para o profissional.
+  if (t.category === 'Gorjeta' || t.type === 'GORJETA') {
+    return t.val;
+  }
+
+  // 4. Itens "Outros" sem valor definido: pendente de configuração, não é 0 automático oculto.
+  if (t.type === 'OUTROS') {
+    return 0;
+  }
+
+  // 5. Regra específica configurada para o serviço/profissional.
+  const serviceId = servicesMap[t.item];
+  const config = commissionConfigs.find(c => c.service_id === serviceId);
+  if (config) {
+    return config.commission_type === 'percent'
+      ? t.val * (config.commission_value / 100)
+      : config.commission_value;
+  }
+
+  // 6. Fallback padrão da casa.
+  const rate = (t.type === 'SERVIÇO' || t.category === 'Serviço') ? 0.4 : 0.1;
+  return t.val * rate;
+};
+
 export const getTransactions = async (filters?: { proId?: string, month?: string, startDate?: string, endDate?: string }): Promise<Transaction[]> => {
   let query = supabase.from('transactions').select('*').order('date', { ascending: false });
   

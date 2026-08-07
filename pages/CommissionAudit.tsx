@@ -4,7 +4,7 @@ import {
   AlertCircle, Loader2, CheckSquare, Square, Search
 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { getTransactions, payCommissions } from '../data/transactions';
+import { getTransactions, payCommissions, calculateCommission, CommissionConfig } from '../data/transactions';
 import { db } from '../supabase';
 
 const CommissionAudit: React.FC = () => {
@@ -22,6 +22,8 @@ const CommissionAudit: React.FC = () => {
   // Dados
   const [transactions, setTransactions] = useState<any[]>([]);
   const [proDetails, setProDetails] = useState<any>(null);
+  const [commissionConfigs, setCommissionConfigs] = useState<CommissionConfig[]>([]);
+  const [servicesMap, setServicesMap] = useState<Record<string, string>>({});
   
   // Seleção para Pagamento
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -67,14 +69,29 @@ const CommissionAudit: React.FC = () => {
         const currentPro = pros?.[0];
         if (currentPro) setProDetails(currentPro);
 
-        // Busca transações
+        // Busca regras de comissão por serviço e o mapeamento nome->id (necessários
+        // para calculateCommission respeitar taxas negociadas por serviço).
+        if (currentPro) {
+            const [configsRes, servicesRes] = await Promise.all([
+                db.professionalServices().select('*').eq('professional_id', currentPro.id),
+                db.services().select('id, name')
+            ]);
+            if (configsRes.data) setCommissionConfigs(configsRes.data);
+            if (servicesRes.data) {
+                const map: Record<string, string> = {};
+                servicesRes.data.forEach((s: any) => map[s.name] = s.id);
+                setServicesMap(map);
+            }
+        }
+
+        // Busca transações (inclui VALE: adiantamentos precisam ser descontados na baixa)
         const allTrans = await getTransactions();
-        
+
         // Filtra localmente
-        const filtered = allTrans.filter(t => 
-            (t.pro === decodedName || (currentPro && t.professional_id === currentPro.id)) && 
-            t.operation === 'VENDA' && 
-            t.date >= dateRange.start && 
+        const filtered = allTrans.filter(t =>
+            (t.pro === decodedName || (currentPro && t.professional_id === currentPro.id)) &&
+            (t.operation === 'VENDA' || t.type === 'VALE') &&
+            t.date >= dateRange.start &&
             t.date <= dateRange.end
         );
 
@@ -96,20 +113,24 @@ const CommissionAudit: React.FC = () => {
   // Cálculos
   const displayedTransactions = useMemo(() => {
     return transactions.filter(t => {
-        if (typeFilter !== 'all' && t.category !== typeFilter) return false;
+        // Vale sempre aparece (independente do filtro Serviço/Produto) para não
+        // ficar escondido do que precisa ser descontado na baixa.
+        if (typeFilter !== 'all' && t.type !== 'VALE' && t.category !== typeFilter) return false;
         if (statusFilter === 'pending' && t.commission_paid) return false;
         if (statusFilter === 'paid' && !t.commission_paid) return false;
         return true;
     }).map(t => {
-        const rate = t.category === 'Serviço' ? 0.4 : 0.1;
-        const commValue = t.val * rate;
-        return { ...t, commissionValue: commValue, rateLabel: `${rate * 100}%` };
+        const commValue = calculateCommission(t, commissionConfigs, servicesMap);
+        const rateLabel = t.type === 'VALE'
+            ? 'Adiantamento'
+            : (t.val ? `${((commValue / t.val) * 100).toFixed(0)}%` : '—');
+        return { ...t, commissionValue: commValue, rateLabel };
     });
-  }, [transactions, typeFilter, statusFilter]);
+  }, [transactions, typeFilter, statusFilter, commissionConfigs, servicesMap]);
 
   const totals = useMemo(() => {
     return displayedTransactions.reduce((acc, t) => ({
-        produced: acc.produced + t.val,
+        produced: acc.produced + (t.type === 'VALE' ? 0 : t.val),
         commission: acc.commission + t.commissionValue
     }), { produced: 0, commission: 0 });
   }, [displayedTransactions]);
@@ -132,9 +153,16 @@ const CommissionAudit: React.FC = () => {
 
   const handlePayCommissions = async () => {
     if (selectedIds.length === 0) return;
-    
+
     let targetProId = proDetails?.id;
     const decodedName = decodeURIComponent(proName || 'Profissional');
+
+    // Vale selecionado pode zerar ou superar a comissão selecionada. Pagar
+    // nesse caso criaria uma saída de caixa no sentido errado — bloqueia.
+    if (selectedTotal <= 0) {
+        alert('O valor líquido selecionado (após desconto de vale) é zero ou negativo. Ajuste a seleção antes de dar baixa.');
+        return;
+    }
 
     if (!window.confirm(`Confirmar o pagamento de R$ ${selectedTotal.toFixed(2)} para ${decodedName}?`)) {
         return;
@@ -239,8 +267,8 @@ const CommissionAudit: React.FC = () => {
                                     </div>
                                 </div>
                                 <div className="text-right">
-                                    <p className={`text-sm font-black ${t.commission_paid ? 'text-green-600' : 'text-gray-900'}`}>
-                                        R$ {t.commissionValue.toFixed(2).replace('.', ',')}
+                                    <p className={`text-sm font-black ${t.type === 'VALE' ? 'text-red-500' : t.commission_paid ? 'text-green-600' : 'text-gray-900'}`}>
+                                        {t.commissionValue < 0 ? '-' : ''} R$ {Math.abs(t.commissionValue).toFixed(2).replace('.', ',')}
                                     </p>
                                     {t.commission_paid && <span className="text-[8px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-bold">PAGO</span>}
                                 </div>

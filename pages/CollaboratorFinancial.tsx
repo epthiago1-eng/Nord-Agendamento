@@ -6,7 +6,7 @@ import {
   History, Loader2, BarChart3, Clock, ChevronRight
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { getTransactions, Transaction } from '../data/transactions';
+import { getTransactions, calculateCommission, Transaction } from '../data/transactions';
 import { getAppointments, Appointment } from '../data/agendaData';
 import { db } from '../supabase';
 import { BarChart, Bar, XAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
@@ -174,44 +174,6 @@ const CollaboratorFinancial: React.FC = () => {
         (proId && t.professional_id === proId) || (!proId && t.pro === proName)
     ).filter(t => t.operation === 'VENDA' || t.type === 'VALE');
 
-    // Helper de Cálculo (Mesma lógica das outras telas)
-    const calculateCommission = (t: Transaction) => {
-        // 0. Se for VALE, retorna valor negativo (Dedução)
-        if (t.type === 'VALE') {
-            return -Math.abs(t.val);
-        }
-        // 1. Override
-        if (t.commission_value !== undefined && t.commission_value !== null) {
-            return t.commission_type === 'percent' 
-                ? t.val * (t.commission_value / 100)
-                : t.commission_value;
-        }
-        // 2. Frozen
-        if (t.commission_amount !== undefined && t.commission_amount !== null) {
-            return t.commission_amount;
-        }
-        // 3. Tip
-        if (t.category === 'Gorjeta' || t.type === 'GORJETA') {
-            return t.val;
-        }
-        // 4. Outros -> 0
-        if (t.type === 'OUTROS') {
-            return 0;
-        }
-        // 5. Config/Fallback
-        const serviceId = servicesMap[t.item];
-        const config = commConfigs.find(c => c.service_id === serviceId);
-        
-        if (config) {
-            return config.commission_type === 'percent' 
-                ? t.val * (config.commission_value / 100)
-                : config.commission_value;
-        } else {
-            const rate = (t.category === 'Serviço' || t.type === 'SERVIÇO') ? 0.4 : 0.1;
-            return t.val * rate;
-        }
-    };
-
     myTrans.forEach(t => {
         const d = new Date(t.date + 'T12:00:00');
         const inRefMonth = d.getMonth() === refMonth && d.getFullYear() === refYear;
@@ -221,7 +183,7 @@ const CollaboratorFinancial: React.FC = () => {
           dailyCount++;
         }
 
-        const commValue = calculateCommission(t);
+        const commValue = calculateCommission(t, commConfigs, servicesMap);
 
         if (inRefMonth) {
             if (t.category === 'Gorjeta' || t.type === 'GORJETA') monthTips += t.val;
