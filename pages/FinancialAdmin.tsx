@@ -12,6 +12,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { db, supabase, fetchAllPages } from '../supabase'; // Import db and supabase to fetch data
 import { getSettings, getCashBalances, saveSettings } from '../data/agendaData';
 import { EstablishmentSettings } from '../types';
+import { parseCurrencyBR } from '../format';
 
 const FinancialAdmin: React.FC = () => {
   const navigate = useNavigate();
@@ -555,10 +556,10 @@ const FinancialAdmin: React.FC = () => {
     };
 
     const actual = {
-      cash: parseFloat(actualBalances.cash.replace(',', '.')) || 0,
-      pix: parseFloat(actualBalances.pix.replace(',', '.')) || 0,
-      card: parseFloat(actualBalances.card.replace(',', '.')) || 0,
-      bank: parseFloat(actualBalances.bank.replace(',', '.')) || 0
+      cash: parseCurrencyBR(actualBalances.cash),
+      pix: parseCurrencyBR(actualBalances.pix),
+      card: parseCurrencyBR(actualBalances.card),
+      bank: parseCurrencyBR(actualBalances.bank)
     };
 
     const diff = {
@@ -656,7 +657,7 @@ const FinancialAdmin: React.FC = () => {
     if (!editingTx) return;
     setSaving(true);
     try {
-        const newVal = parseFloat(editForm.val.replace(',', '.')) || 0;
+        const newVal = parseCurrencyBR(editForm.val);
         // Mantém o sinal original (negativo para despesa, positivo para venda)
         const finalVal = editingTx.val < 0 ? -Math.abs(newVal) : Math.abs(newVal);
 
@@ -694,7 +695,7 @@ const FinancialAdmin: React.FC = () => {
     if (!settings) return;
     setSaving(true);
     try {
-        const amount = parseFloat(managerForm.amount.replace(',', '.')) || 0;
+        const amount = parseCurrencyBR(managerForm.amount);
         let txItem = '';
         let txVal = 0;
         let operation: 'VENDA' | 'COMPRA' = 'COMPRA';

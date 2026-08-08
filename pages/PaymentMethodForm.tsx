@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { ChevronLeft, Loader2, Save } from 'lucide-react';
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import { db } from '../supabase';
+import { parseCurrencyBR } from '../format';
 
 const PaymentMethodForm: React.FC = () => {
   const navigate = useNavigate();
@@ -39,7 +40,7 @@ const PaymentMethodForm: React.FC = () => {
     const payload = {
         name: formData.name,
         enable_tax: formData.enableTax,
-        tax_rate: formData.enableTax ? (parseFloat(formData.taxValue.replace(',', '.')) || 0) : 0
+        tax_rate: formData.enableTax ? parseCurrencyBR(formData.taxValue) : 0
     };
 
     try {

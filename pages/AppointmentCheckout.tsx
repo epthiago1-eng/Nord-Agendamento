@@ -11,6 +11,7 @@ import { getAppointmentById, updateAppointment, Appointment, deleteAppointment, 
 import { syncAppointmentTransactions } from '../data/transactions'; 
 import { addNotification } from '../data/notifications';
 import { db, supabase } from '../supabase';
+import { parseCurrencyBR } from '../format';
 
 const AppointmentCheckout: React.FC = () => {
   const navigate = useNavigate();
@@ -170,19 +171,19 @@ const AppointmentCheckout: React.FC = () => {
   const totals = useMemo(() => {
     const sTotal = selectedServices.reduce((sum, s) => sum + s.price, 0);
     const pTotal = selectedProducts.reduce((sum, p) => sum + (p.price * p.quantity), 0);
-    const oTotal = parseFloat(othersValue.replace(',', '.')) || 0;
-    
+    const oTotal = parseCurrencyBR(othersValue);
+
     const subtotal = sTotal + pTotal + oTotal;
-    
-    const dVal = parseFloat(discountValue.replace(',', '.')) || 0;
+
+    const dVal = parseCurrencyBR(discountValue);
     let discountAmount = 0;
     if (discountType === 'fixed') {
         discountAmount = dVal;
     } else {
         discountAmount = subtotal * (dVal / 100);
     }
-    
-    const tip = parseFloat(tipValue.replace(',', '.')) || 0;
+
+    const tip = parseCurrencyBR(tipValue);
     
     return { 
         services: sTotal, 
@@ -384,10 +385,9 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
         return;
     }
 
-    // Corrige o parsing do preço: substitui vírgula por ponto
-    const price = parseFloat(customItemPrice.replace(',', '.'));
-    
-    if (isNaN(price) || price < 0) {
+    const price = parseCurrencyBR(customItemPrice);
+
+    if (price <= 0) {
         alert('Valor inválido.');
         return;
     }
@@ -442,7 +442,7 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
         async () => {
             setProcessing(true);
             try {
-                const finalValue = parseFloat(paymentValue.replace(',', '.'));
+                const finalValue = parseCurrencyBR(paymentValue);
                 
                 const finalPayments = showMultiPayment ? payments : [{ method: paymentMethod, value: totals.total }];
                 const totalPaid = finalPayments.reduce((acc, p) => acc + p.value, 0);

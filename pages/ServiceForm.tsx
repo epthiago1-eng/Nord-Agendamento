@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { ChevronLeft, Camera, X, ChevronRight, Eye, EyeOff } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { db } from '../supabase';
+import { parseCurrencyBR } from '../format';
 
 const ServiceForm: React.FC = () => {
   const navigate = useNavigate();
@@ -56,7 +57,7 @@ const ServiceForm: React.FC = () => {
     const payload = {
         name: formData.name,
         duration: parseInt(formData.duration) || 30,
-        price: parseFloat(formData.value.replace('R$ ', '').replace(',', '.')) || 0,
+        price: parseCurrencyBR(formData.value.replace('R$ ', '')),
         show_in_public: formData.showInPublic, // snake_case
         image_url: imagePreview, // snake_case
         group_name: formData.group, // snake_case

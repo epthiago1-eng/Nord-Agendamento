@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { ChevronLeft, ChevronDown, DollarSign, Percent, Save, Loader2 } from 'lucide-react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { db } from '../supabase';
+import { parseCurrencyBR } from '../format';
 
 const ProfessionalCommissionForm: React.FC = () => {
   const navigate = useNavigate();
@@ -50,7 +51,7 @@ const ProfessionalCommissionForm: React.FC = () => {
             professional_id: proId,
             service_id: serviceId,
             commission_type: formData.type,
-            commission_value: parseFloat(formData.commissionValue.replace(',', '.')) || 0
+            commission_value: parseCurrencyBR(formData.commissionValue)
         }, { onConflict: 'professional_id, service_id' }); // Chave única composta
 
         if (error) throw error;

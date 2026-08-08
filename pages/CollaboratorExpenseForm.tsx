@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { addTransaction } from '../data/transactions';
 import { addNotification } from '../data/notifications';
 import { db } from '../supabase';
+import { parseCurrencyBR } from '../format';
 
 const CollaboratorExpenseForm: React.FC = () => {
   const navigate = useNavigate();
@@ -44,7 +45,7 @@ const CollaboratorExpenseForm: React.FC = () => {
 
     setLoading(true);
     try {
-      const valNumber = parseFloat(formData.value.replace(',', '.')) || 0;
+      const valNumber = parseCurrencyBR(formData.value);
 
       // 1. Salvar Transação na tabela 'transactions'
       // TYPE e CATEGORY são fixos como "DESPESA" conforme solicitado

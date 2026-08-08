@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { ChevronLeft, Package, AlertTriangle, Info, Camera, X, ChevronRight, Loader2 } from 'lucide-react';
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import { db } from '../supabase';
+import { parseCurrencyBR } from '../format';
 
 const ProductForm: React.FC = () => {
   const navigate = useNavigate();
@@ -62,8 +63,8 @@ const ProductForm: React.FC = () => {
             name: formData.name,
             brand: formData.brand,
             reference: formData.reference,
-            cost_price: parseFloat(formData.cost_price.replace(',', '.')) || 0,
-            sale_price: parseFloat(formData.sale_price.replace(',', '.')) || 0,
+            cost_price: parseCurrencyBR(formData.cost_price),
+            sale_price: parseCurrencyBR(formData.sale_price),
             current_stock: formData.current_stock,
             min_stock: formData.min_stock,
             image_url: imagePreview

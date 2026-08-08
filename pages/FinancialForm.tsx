@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { addTransaction } from '../data/transactions';
 import { db } from '../supabase';
 import { getSettings, saveSettings } from '../data/agendaData';
+import { parseCurrencyBR } from '../format';
 
 const FinancialForm: React.FC = () => {
   const navigate = useNavigate();
@@ -62,14 +63,14 @@ const FinancialForm: React.FC = () => {
 
   // Cálculo de Totais
   const totalOperation = useMemo(() => {
-    const fees = parseFloat(formData.otherFees.replace(',', '.')) || 0;
+    const fees = parseCurrencyBR(formData.otherFees);
     
     if (operation === 'COMPRA' && expenseCategory === 'PRODUTO') {
         const qty = parseInt(productForm.quantity) || 1;
-        const cost = parseFloat(productForm.unitCost.replace(',', '.')) || 0;
+        const cost = parseCurrencyBR(productForm.unitCost);
         return (qty * cost) + fees;
     } else {
-        const val = parseFloat(genericValue.replace(',', '.')) || 0;
+        const val = parseCurrencyBR(genericValue);
         return val + fees;
     }
   }, [formData.otherFees, productForm, genericValue, operation, expenseCategory]);
@@ -86,7 +87,7 @@ const FinancialForm: React.FC = () => {
             if (!productForm.productId) throw new Error("Selecione um produto.");
             
             const qty = parseInt(productForm.quantity) || 1;
-            const cost = parseFloat(productForm.unitCost.replace(',', '.')) || 0;
+            const cost = parseCurrencyBR(productForm.unitCost);
 
             if (productForm.productId === 'NEW') {
                 if (!productForm.newProductName) throw new Error("Informe o nome do novo produto.");
@@ -132,7 +133,7 @@ const FinancialForm: React.FC = () => {
             code: finalCode, // Código do produto se houver
             
             quantity: operation === 'COMPRA' && expenseCategory === 'PRODUTO' ? parseInt(productForm.quantity) : 1,
-            unit_price: operation === 'COMPRA' && expenseCategory === 'PRODUTO' ? parseFloat(productForm.unitCost.replace(',', '.')) : totalOperation,
+            unit_price: operation === 'COMPRA' && expenseCategory === 'PRODUTO' ? parseCurrencyBR(productForm.unitCost) : totalOperation,
             
             // Valor Final (Negativo para Compra/Despesa, Positivo para Venda/Entrada)
             val: operation === 'COMPRA' ? -Math.abs(totalOperation) : Math.abs(totalOperation),

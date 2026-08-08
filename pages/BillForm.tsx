@@ -8,6 +8,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../supabase';
 import { getSettings, saveSettings } from '../data/agendaData';
 import { payBill, unpayBill, syncPaidBillTransaction } from '../data/bills';
+import { parseCurrencyBR } from '../format';
 
 const BillForm: React.FC = () => {
   const navigate = useNavigate();
@@ -114,7 +115,7 @@ const BillForm: React.FC = () => {
     try {
       const payload = {
         description: formData.description,
-        value: parseFloat(formData.value.replace(',', '.')) || 0,
+        value: parseCurrencyBR(formData.value),
         due_date: formData.dueDate,
         recurring: formData.recurring,
         category: formData.category,
@@ -149,7 +150,7 @@ const BillForm: React.FC = () => {
 
   // 2. Realizar Pagamento (Salva, muda status, lança transação)
   const handlePay = () => {
-    const amount = parseFloat(formData.value.replace(',', '.')) || 0;
+    const amount = parseCurrencyBR(formData.value);
     if (amount <= 0) {
       alert('Valor inválido para pagamento.');
       return;
@@ -219,7 +220,7 @@ const BillForm: React.FC = () => {
         setConfirmConfig(prev => ({...prev, show: false}));
         setLoading(true);
         try {
-          const amount = parseFloat(formData.value.replace(',', '.')) || 0;
+          const amount = parseCurrencyBR(formData.value);
           await unpayBill({
             id: id!,
             description: formData.description,
