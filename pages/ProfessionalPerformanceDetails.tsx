@@ -449,10 +449,15 @@ const ProfessionalPerformanceDetails: React.FC = () => {
             return;
         }
 
+        const calculatedAmount = editCommissionModal.type === 'percent'
+            ? Math.abs(editCommissionModal.transaction.val) * (val / 100)
+            : val;
+
         const { error } = await db.transactions()
             .update({
                 commission_value: val,
-                commission_type: editCommissionModal.type
+                commission_type: editCommissionModal.type,
+                commission_amount: calculatedAmount
             })
             .eq('id', editCommissionModal.transaction.id);
 
@@ -471,8 +476,21 @@ const ProfessionalPerformanceDetails: React.FC = () => {
             });
         }
 
+        const updatedTx = {
+            ...editCommissionModal.transaction,
+            commission_value: val,
+            commission_type: editCommissionModal.type,
+            commission_amount: calculatedAmount
+        };
+
+        // Atualiza estado local imediatamente sem travar a interface
+        setAllPendingTransactions(prev => prev.map(t => t.id === updatedTx.id ? updatedTx : t));
+        setTransactions(prev => prev.map(t => t.id === updatedTx.id ? updatedTx : t));
+
+        // Auto-seleciona item editado para o acerto
+        setSelectedIds(prev => prev.includes(updatedTx.id) ? prev : [...prev, updatedTx.id]);
+
         setEditCommissionModal({ show: false, transaction: null, value: '', type: 'percent' });
-        loadData(); // Recarrega para atualizar a UI
         alert('Comissão salva com sucesso!');
     } catch (err: any) {
         alert('Erro ao salvar comissão: ' + err.message);
@@ -1037,6 +1055,27 @@ const ProfessionalPerformanceDetails: React.FC = () => {
                         </button>
                     </div>
 
+                    {/* Atalhos Rápidos de Porcentagem */}
+                    {editCommissionModal.type === 'percent' && (
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[9px] font-bold text-gray-400 uppercase">Atalhos:</span>
+                            {[10, 20, 25, 30, 40, 50].map((pct) => (
+                                <button
+                                    key={pct}
+                                    type="button"
+                                    onClick={() => setEditCommissionModal({...editCommissionModal, value: pct.toString()})}
+                                    className={`px-2 py-1 rounded-lg text-xs font-black transition-all ${
+                                        editCommissionModal.value === pct.toString()
+                                            ? 'bg-blue-900 text-white shadow-sm'
+                                            : 'bg-gray-100 text-blue-900 hover:bg-blue-50 border border-gray-200'
+                                    }`}
+                                >
+                                    {pct}%
+                                </button>
+                            ))}
+                        </div>
+                    )}
+
                     <div>
                         <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2 px-1">
                             {editCommissionModal.type === 'percent' ? 'Porcentagem da Comissão' : 'Valor da Comissão'}
@@ -1055,6 +1094,21 @@ const ProfessionalPerformanceDetails: React.FC = () => {
                             </span>
                         </div>
                     </div>
+
+                    {/* Preview da Comissão Resultante */}
+                    {editCommissionModal.transaction && (
+                        <div className="bg-blue-50/70 p-3 rounded-xl border border-blue-100 flex items-center justify-between">
+                            <span className="text-xs text-blue-800 font-bold">Comissão Resultante:</span>
+                            <span className="text-sm font-black text-blue-900">
+                                R$ {(() => {
+                                    const num = parseFloat(editCommissionModal.value.replace(',', '.')) || 0;
+                                    const val = Math.abs(editCommissionModal.transaction.val || 0);
+                                    const res = editCommissionModal.type === 'percent' ? val * (num / 100) : num;
+                                    return res.toFixed(2).replace('.', ',');
+                                })()}
+                            </span>
+                        </div>
+                    )}
 
                     <div className="bg-yellow-50 p-3 rounded-xl border border-yellow-100 flex gap-2 items-start">
                         <AlertCircle size={14} className="text-yellow-600 mt-0.5 shrink-0" />

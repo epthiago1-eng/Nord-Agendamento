@@ -5,7 +5,7 @@ import {
   TrendingUp, TrendingDown, DollarSign, Users, 
   ShoppingBag, Trash2, Edit2, AlertCircle, BarChart3, Eye, X, Save, Loader2,
   FileSpreadsheet, ArrowLeftRight, MinusCircle, Wallet2, Banknote, Landmark, Clock, CheckCircle2, ClipboardList,
-  CheckSquare, Square, Search, Wallet
+  CheckSquare, Square, Search, Wallet, Percent, Check, AlertTriangle
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getTransactions, deleteTransaction, updateTransaction, Transaction, addTransaction } from '../data/transactions';
@@ -61,10 +61,16 @@ const FinancialAdmin: React.FC = () => {
   const [allPendingTransactions, setAllPendingTransactions] = useState<Transaction[]>([]);
   const [showSettlementModal, setShowSettlementModal] = useState(false);
   const [settlementSelectedPro, setSettlementSelectedPro] = useState<string>('all');
-  const [settlementFilterScope, setSettlementFilterScope] = useState<'all' | 'period' | 'prior'>('all');
+  const [settlementFilterScope, setSettlementFilterScope] = useState<'all' | 'uncommissioned' | 'prior' | 'period'>('all');
   const [settlementSearchTerm, setSettlementSearchTerm] = useState('');
   const [selectedSettlementIds, setSelectedSettlementIds] = useState<string[]>([]);
   const [settlementPaymentAccount, setSettlementPaymentAccount] = useState<'cash' | 'bank' | 'pix'>('cash');
+
+  // Edição Direta / No Local de Comissão no Acerto de Contas
+  const [editingCommissionId, setEditingCommissionId] = useState<string | null>(null);
+  const [inlineCommissionValue, setInlineCommissionValue] = useState<string>('');
+  const [inlineCommissionType, setInlineCommissionType] = useState<'percent' | 'fixed'>('percent');
+  const [isSavingCommission, setIsSavingCommission] = useState(false);
 
   // Estados do Modal
   const [editingTx, setEditingTx] = useState<Transaction | null>(null);
@@ -292,19 +298,19 @@ const FinancialAdmin: React.FC = () => {
     if (transaction.type === 'VALE') return -Math.abs(transaction.val);
     if (transaction.commission_value !== undefined && transaction.commission_value !== null) {
         return transaction.commission_type === 'percent' 
-            ? transaction.val * (transaction.commission_value / 100)
-            : transaction.commission_value;
+            ? Math.abs(transaction.val) * (transaction.commission_value / 100)
+            : Math.abs(transaction.commission_value);
     }
-    if (transaction.commission_amount !== undefined && transaction.commission_amount !== null) return transaction.commission_amount;
-    if (transaction.category === 'Gorjeta' || transaction.type === 'GORJETA') return transaction.val;
+    if (transaction.commission_amount !== undefined && transaction.commission_amount !== null) return Math.abs(transaction.commission_amount);
+    if (transaction.category === 'Gorjeta' || transaction.type === 'GORJETA') return Math.abs(transaction.val);
     if (transaction.type === 'OUTROS') return 0;
     const serviceId = servicesMap[transaction.item];
     const config = commissionConfigs.find(c => c.service_id === serviceId && c.professional_id === (transaction.professional_id || professionalsMap[transaction.pro || '']));
     if (config) {
-        return config.commission_type === 'percent' ? transaction.val * (config.commission_value / 100) : config.commission_value;
+        return config.commission_type === 'percent' ? Math.abs(transaction.val) * (config.commission_value / 100) : Math.abs(config.commission_value);
     }
     const rate = (transaction.category === 'Serviço' || transaction.type === 'SERVIÇO') ? 0.4 : 0.1;
-    return transaction.val * rate;
+    return Math.abs(transaction.val) * rate;
   };
 
   // --- CÁLCULO GERAL DE COMISSÕES PENDENTES (INDEPENDENTE DO FILTRO DE DATA) ---
@@ -574,6 +580,15 @@ const FinancialAdmin: React.FC = () => {
     };
   }, [filteredData, commissionConfigs, servicesMap, professionalsMap, adminPros, pendingCommissionsSummary]);
 
+  // Quantidade de vendas sem comissão calculada (0 e não é vale)
+  const uncommissionedCount = useMemo(() => {
+    let list = pendingCommissionsSummary.allPendingItems;
+    if (settlementSelectedPro !== 'all') {
+      list = list.filter(t => (t.pro === settlementSelectedPro) || (t.professional_id && professionalsMap[settlementSelectedPro] === t.professional_id));
+    }
+    return list.filter(t => t.commissionValue === 0 && t.type !== 'VALE').length;
+  }, [pendingCommissionsSummary.allPendingItems, settlementSelectedPro, professionalsMap]);
+
   // Itens filtrados para o Modal de Acerto de Contas
   const filteredPendingForModal = useMemo(() => {
     let list = pendingCommissionsSummary.allPendingItems;
@@ -583,8 +598,10 @@ const FinancialAdmin: React.FC = () => {
       list = list.filter(t => (t.pro === settlementSelectedPro) || (t.professional_id && professionalsMap[settlementSelectedPro] === t.professional_id));
     }
 
-    // Filtra por escopo (todas, anterior, período)
-    if (settlementFilterScope === 'prior') {
+    // Filtra por escopo (todas, sem comissão, anterior, período)
+    if (settlementFilterScope === 'uncommissioned') {
+      list = list.filter(t => t.commissionValue === 0 && t.type !== 'VALE');
+    } else if (settlementFilterScope === 'prior') {
       list = list.filter(t => t.isPrior);
     } else if (settlementFilterScope === 'period') {
       list = list.filter(t => t.isInPeriod);
@@ -602,6 +619,91 @@ const FinancialAdmin: React.FC = () => {
 
     return list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [pendingCommissionsSummary.allPendingItems, settlementSelectedPro, settlementFilterScope, settlementSearchTerm, professionalsMap]);
+
+  const handleOpenInlineEditCommission = (t: Transaction, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const currentComm = calculateCommission(t);
+    const initialType = t.commission_type || 'percent';
+    let initialValue = '';
+    if (t.commission_value !== undefined && t.commission_value !== null && t.commission_value > 0) {
+      initialValue = t.commission_value.toString();
+    } else if (initialType === 'percent' && t.val > 0 && currentComm > 0) {
+      const pct = (currentComm / Math.abs(t.val)) * 100;
+      initialValue = pct > 0 ? pct.toFixed(0) : '';
+    } else if (currentComm > 0) {
+      initialValue = currentComm.toFixed(2);
+    }
+    setEditingCommissionId(t.id);
+    setInlineCommissionValue(initialValue);
+    setInlineCommissionType(initialType);
+  };
+
+  const calculateInlinePreview = (t: Transaction, valStr: string, type: 'percent' | 'fixed') => {
+    const num = parseFloat(valStr.replace(',', '.'));
+    if (isNaN(num) || num < 0) return 0;
+    if (type === 'percent') {
+      return Math.abs(t.val) * (num / 100);
+    }
+    return num;
+  };
+
+  const handleSaveInlineCommission = async (t: Transaction) => {
+    const val = parseFloat(inlineCommissionValue.replace(',', '.'));
+    if (isNaN(val) || val < 0) {
+      alert('Informe um valor de comissão válido.');
+      return;
+    }
+
+    setIsSavingCommission(true);
+    try {
+      const calculatedAmount = inlineCommissionType === 'percent'
+        ? Math.abs(t.val) * (val / 100)
+        : val;
+
+      const { error } = await supabase
+        .from('transactions')
+        .update({
+          commission_value: val,
+          commission_type: inlineCommissionType,
+          commission_amount: calculatedAmount
+        })
+        .eq('id', t.id);
+
+      if (error) throw error;
+
+      const updatedTx: Transaction = {
+        ...t,
+        commission_value: val,
+        commission_type: inlineCommissionType,
+        commission_amount: calculatedAmount
+      };
+
+      setAllPendingTransactions(prev => prev.map(item => item.id === t.id ? updatedTx : item));
+      setAllTransactions(prev => prev.map(item => item.id === t.id ? updatedTx : item));
+
+      // Auto-seleciona para facilitar o acerto
+      setSelectedSettlementIds(prev => prev.includes(t.id) ? prev : [...prev, t.id]);
+
+      if (t.professional_id) {
+        await db.notifications().insert({
+          type: 'FINANCEIRO',
+          title: 'Comissão Definida',
+          message: `A comissão da venda "${t.item}" foi definida para ${inlineCommissionType === 'percent' ? val + '%' : 'R$ ' + val.toFixed(2)} pelo administrador.`,
+          recipient_pro_id: t.professional_id,
+          link: '/collaborator/financial',
+          read: false,
+          created_at: new Date().toISOString()
+        });
+      }
+
+      setEditingCommissionId(null);
+    } catch (err: any) {
+      console.error('Erro ao salvar comissão:', err);
+      alert('Erro ao salvar comissão: ' + (err.message || 'Falha ao salvar'));
+    } finally {
+      setIsSavingCommission(false);
+    }
+  };
 
   const isAllSettlementSelected = filteredPendingForModal.length > 0 &&
     filteredPendingForModal.every(t => selectedSettlementIds.includes(t.id));
@@ -623,6 +725,15 @@ const FinancialAdmin: React.FC = () => {
     if (selectedSettlementIds.length === 0) {
       alert('Selecione ao menos um item de comissão para pagar.');
       return;
+    }
+
+    const itemsToPay = pendingCommissionsSummary.allPendingItems.filter(t => selectedSettlementIds.includes(t.id));
+    const uncommissionedSelected = itemsToPay.filter(t => t.commissionValue === 0 && t.type !== 'VALE');
+    if (uncommissionedSelected.length > 0) {
+      const confirmZero = window.confirm(
+        `Atenção: Existem ${uncommissionedSelected.length} venda(s) selecionada(s) com comissão zerada (R$ 0,00).\n\nDeseja realizar o acerto mesmo assim? (Dica: Você pode cancelar e definir a comissão no botão "Colocar Comissão" de cada item).`
+      );
+      if (!confirmZero) return;
     }
 
     setSaving(true);
@@ -2398,33 +2509,68 @@ const FinancialAdmin: React.FC = () => {
                     })}
                 </div>
 
-                {/* Filtro de Escopo: Todas vs Anteriores vs Período */}
-                <div className="flex bg-gray-100 p-1 rounded-2xl shrink-0">
+                {/* Filtro de Escopo: Todas vs Sem Comissão vs Anteriores vs Período */}
+                <div className="flex bg-gray-100 p-1 rounded-2xl shrink-0 overflow-x-auto gap-1">
                     <button
                         onClick={() => { setSettlementFilterScope('all'); setSelectedSettlementIds([]); }}
-                        className={`flex-1 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all ${
+                        className={`flex-1 py-1.5 px-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap ${
                             settlementFilterScope === 'all' ? 'bg-white text-blue-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'
                         }`}
                     >
-                        Todas as Pendentes ({pendingCommissionsSummary.allPendingItems.length})
+                        Todas ({pendingCommissionsSummary.allPendingItems.length})
                     </button>
+                    {uncommissionedCount > 0 && (
+                        <button
+                            onClick={() => { setSettlementFilterScope('uncommissioned'); setSelectedSettlementIds([]); }}
+                            className={`flex-1 py-1.5 px-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap flex items-center justify-center gap-1 ${
+                                settlementFilterScope === 'uncommissioned' ? 'bg-amber-500 text-white shadow-sm' : 'text-amber-700 bg-amber-100 hover:bg-amber-200'
+                            }`}
+                        >
+                            <AlertTriangle size={12} />
+                            <span>Sem Comissão ({uncommissionedCount})</span>
+                        </button>
+                    )}
                     <button
                         onClick={() => { setSettlementFilterScope('prior'); setSelectedSettlementIds([]); }}
-                        className={`flex-1 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all ${
+                        className={`flex-1 py-1.5 px-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap ${
                             settlementFilterScope === 'prior' ? 'bg-amber-100 text-amber-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'
                         }`}
                     >
-                        Períodos Anteriores ({pendingCommissionsSummary.totalPendingPrior > 0 ? `⚠️ R$ ${pendingCommissionsSummary.totalPendingPrior.toFixed(0)}` : '0'})
+                        Anteriores ({pendingCommissionsSummary.totalPendingPrior > 0 ? `⚠️ R$ ${pendingCommissionsSummary.totalPendingPrior.toFixed(0)}` : '0'})
                     </button>
                     <button
                         onClick={() => { setSettlementFilterScope('period'); setSelectedSettlementIds([]); }}
-                        className={`flex-1 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all ${
+                        className={`flex-1 py-1.5 px-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap ${
                             settlementFilterScope === 'period' ? 'bg-white text-blue-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'
                         }`}
                     >
                         Período Atual ({pendingCommissionsSummary.totalPendingInPeriod > 0 ? `R$ ${pendingCommissionsSummary.totalPendingInPeriod.toFixed(0)}` : '0'})
                     </button>
                 </div>
+
+                {/* Alerta de Vendas Sem Comissão se houver */}
+                {uncommissionedCount > 0 && settlementFilterScope !== 'uncommissioned' && (
+                    <div className="bg-amber-50 border border-amber-200 p-3 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-amber-900 shrink-0 text-xs">
+                        <div className="flex items-start gap-2.5">
+                            <AlertTriangle className="text-amber-600 shrink-0 mt-0.5" size={16} />
+                            <div className="space-y-0.5">
+                                <p className="font-black uppercase tracking-wider text-[10px] text-amber-800">
+                                    {uncommissionedCount} Venda(s) Sem Comissão Atribuída
+                                </p>
+                                <p className="text-amber-700 text-[11px] leading-relaxed">
+                                    Há vendas feitas pelo colaborador sem comissão configurada (R$ 0,00). Você pode definir a comissão de cada uma diretamente no botão &quot;Colocar Comissão&quot; abaixo.
+                                </p>
+                            </div>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => { setSettlementFilterScope('uncommissioned'); setSelectedSettlementIds([]); }}
+                            className="shrink-0 text-[10px] font-black uppercase bg-amber-600 text-white px-3 py-1.5 rounded-xl hover:bg-amber-700 transition-all shadow-sm active:scale-95 whitespace-nowrap text-center"
+                        >
+                            Ver Sem Comissão
+                        </button>
+                    </div>
+                )}
 
                 {/* Alerta de períodos anteriores se houver */}
                 {pendingCommissionsSummary.totalPendingPrior > 0 && settlementFilterScope !== 'period' && (
@@ -2493,7 +2639,7 @@ const FinancialAdmin: React.FC = () => {
                 </div>
 
                 {/* Lista de Itens com Scroll */}
-                <div className="flex-1 overflow-y-auto space-y-2 pr-1 min-h-[140px] max-h-[35vh]">
+                <div className="flex-1 overflow-y-auto space-y-2 pr-1 min-h-[140px] max-h-[46vh]">
                     {filteredPendingForModal.length === 0 ? (
                         <div className="text-center py-10 text-gray-300 space-y-2">
                             <CheckCircle2 size={36} className="mx-auto opacity-30 text-green-600" />
@@ -2504,10 +2650,14 @@ const FinancialAdmin: React.FC = () => {
                     ) : (
                         filteredPendingForModal.map((t) => {
                             const isSelected = selectedSettlementIds.includes(t.id);
+                            const isEditing = editingCommissionId === t.id;
+                            const isZeroCommission = t.commissionValue === 0 && t.type !== 'VALE';
+
                             return (
                                 <div 
                                     key={t.id} 
                                     onClick={() => {
+                                        if (isEditing) return;
                                         setSelectedSettlementIds(prev => 
                                             prev.includes(t.id) ? prev.filter(x => x !== t.id) : [...prev, t.id]
                                         );
@@ -2515,22 +2665,29 @@ const FinancialAdmin: React.FC = () => {
                                     className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${
                                         isSelected 
                                             ? 'border-blue-500 ring-2 ring-blue-500/20 bg-blue-50/40 shadow-sm' 
-                                            : t.isPrior
-                                                ? 'border-amber-200 bg-amber-50/30 hover:border-amber-300'
-                                                : 'border-gray-100 bg-white hover:border-gray-200'
+                                            : isZeroCommission
+                                                ? 'border-amber-300 bg-amber-50/40 hover:border-amber-400'
+                                                : t.isPrior
+                                                    ? 'border-amber-200 bg-amber-50/30 hover:border-amber-300'
+                                                    : 'border-gray-100 bg-white hover:border-gray-200'
                                     }`}
                                 >
-                                    <div className="flex justify-between items-start">
-                                        <div className="flex items-center gap-3">
-                                            <div className="shrink-0 text-blue-900">
+                                    <div className="flex justify-between items-start gap-2">
+                                        <div className="flex items-start gap-3">
+                                            <div className="shrink-0 text-blue-900 mt-0.5">
                                                 {isSelected ? <CheckSquare size={18} /> : <Square size={18} className="text-gray-300" />}
                                             </div>
                                             <div>
-                                                <div className="flex items-center gap-2 flex-wrap">
+                                                <div className="flex items-center gap-1.5 flex-wrap">
                                                     <span className="text-xs font-black text-gray-900">{t.item}</span>
                                                     <span className="text-[9px] bg-blue-100 text-blue-800 font-bold px-1.5 py-0.5 rounded uppercase">
                                                         {t.pro}
                                                     </span>
+                                                    {isZeroCommission && (
+                                                        <span className="text-[8px] bg-amber-500 text-white font-black px-1.5 py-0.5 rounded uppercase flex items-center gap-1 shadow-sm">
+                                                            <AlertTriangle size={9} /> Sem Comissão
+                                                        </span>
+                                                    )}
                                                     {t.isPrior && (
                                                         <span className="text-[8px] bg-amber-100 text-amber-800 font-black px-1.5 py-0.5 rounded border border-amber-200 uppercase">
                                                             Período Anterior ({new Date(t.date + 'T12:00:00').toLocaleDateString('pt-BR')})
@@ -2551,13 +2708,147 @@ const FinancialAdmin: React.FC = () => {
                                             </div>
                                         </div>
 
-                                        <div className="text-right shrink-0 pl-2">
-                                            <p className={`text-sm font-black ${t.type === 'VALE' ? 'text-red-500' : 'text-blue-900'}`}>
-                                                {t.type === 'VALE' ? '-' : ''} R$ {Math.abs(t.commissionValue).toFixed(2).replace('.', ',')}
-                                            </p>
-                                            <span className="text-[9px] text-gray-400 block">Venda: R$ {Math.abs(t.val).toFixed(2)}</span>
+                                        <div className="text-right shrink-0 pl-2 space-y-1">
+                                            <div className="flex items-center justify-end gap-1.5">
+                                                <p className={`text-sm font-black ${t.type === 'VALE' ? 'text-red-500' : isZeroCommission ? 'text-amber-700' : 'text-blue-900'}`}>
+                                                    {t.type === 'VALE' ? '-' : ''} R$ {Math.abs(t.commissionValue).toFixed(2).replace('.', ',')}
+                                                </p>
+                                                {!isEditing && t.type !== 'VALE' && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={(e) => handleOpenInlineEditCommission(t, e)}
+                                                        className={`p-1 rounded-lg transition-colors ${
+                                                            isZeroCommission 
+                                                                ? 'text-amber-800 bg-amber-100 hover:bg-amber-200' 
+                                                                : 'text-gray-400 hover:text-blue-900 hover:bg-blue-50'
+                                                        }`}
+                                                        title="Editar comissão no local"
+                                                    >
+                                                        <Edit2 size={12} />
+                                                    </button>
+                                                )}
+                                            </div>
+                                            <span className="text-[9px] text-gray-400 block font-medium">
+                                                Venda: R$ {Math.abs(t.val).toFixed(2).replace('.', ',')}
+                                            </span>
+
+                                            {/* Botão de destaque para preencher comissão zerada */}
+                                            {!isEditing && isZeroCommission && (
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => handleOpenInlineEditCommission(t, e)}
+                                                    className="text-[9px] font-black uppercase px-2 py-0.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white transition-all flex items-center gap-1 ml-auto shadow-sm active:scale-95"
+                                                >
+                                                    <Edit2 size={9} />
+                                                    <span>Colocar Comissão</span>
+                                                </button>
+                                            )}
                                         </div>
                                     </div>
+
+                                    {/* PAINEL DE EDIÇÃO NO LOCAL DA COMISSÃO */}
+                                    {isEditing && (
+                                        <div 
+                                            onClick={(e) => e.stopPropagation()} 
+                                            className="mt-3 pt-3 border-t border-blue-200 bg-blue-50/60 -mx-3.5 -mb-3.5 p-3.5 rounded-b-2xl space-y-3 animate-in fade-in cursor-default"
+                                        >
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-[10px] font-black uppercase tracking-wider text-blue-900 flex items-center gap-1">
+                                                    <Percent size={12} className="text-blue-600" /> 
+                                                    Definir Comissão (Venda: R$ {Math.abs(t.val).toFixed(2).replace('.', ',')})
+                                                </span>
+                                                <div className="flex bg-white rounded-lg p-0.5 border border-blue-200 shadow-sm">
+                                                    <button 
+                                                        type="button"
+                                                        onClick={() => setInlineCommissionType('percent')}
+                                                        className={`px-2 py-0.5 rounded text-[10px] font-black uppercase transition-all ${
+                                                            inlineCommissionType === 'percent' 
+                                                                ? 'bg-blue-900 text-white' 
+                                                                : 'text-gray-500 hover:text-blue-900'
+                                                        }`}
+                                                    >
+                                                        % Porcento
+                                                    </button>
+                                                    <button 
+                                                        type="button"
+                                                        onClick={() => setInlineCommissionType('fixed')}
+                                                        className={`px-2 py-0.5 rounded text-[10px] font-black uppercase transition-all ${
+                                                            inlineCommissionType === 'fixed' 
+                                                                ? 'bg-blue-900 text-white' 
+                                                                : 'text-gray-500 hover:text-blue-900'
+                                                        }`}
+                                                    >
+                                                        R$ Fixo
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            {/* Atalhos Rápidos de Porcentagem */}
+                                            {inlineCommissionType === 'percent' && (
+                                                <div className="flex items-center gap-1.5 flex-wrap">
+                                                    <span className="text-[9px] font-bold text-gray-400 uppercase">Atalhos:</span>
+                                                    {[10, 20, 25, 30, 40, 50].map((pct) => (
+                                                        <button
+                                                            key={pct}
+                                                            type="button"
+                                                            onClick={() => setInlineCommissionValue(pct.toString())}
+                                                            className={`px-2 py-0.5 rounded-md text-[10px] font-black transition-all ${
+                                                                inlineCommissionValue === pct.toString()
+                                                                    ? 'bg-blue-900 text-white'
+                                                                    : 'bg-white text-blue-900 border border-blue-200 hover:bg-blue-100'
+                                                            }`}
+                                                        >
+                                                            {pct}%
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            )}
+
+                                            {/* Input de Valor + Preview ao Vivo */}
+                                            <div className="flex items-center gap-2">
+                                                <div className="relative flex-1">
+                                                    <input 
+                                                        type="text" 
+                                                        value={inlineCommissionValue}
+                                                        onChange={(e) => setInlineCommissionValue(e.target.value)}
+                                                        placeholder={inlineCommissionType === 'percent' ? 'Ex: 30' : 'Ex: 15,00'}
+                                                        className="w-full bg-white border border-blue-300 rounded-xl py-1.5 px-3 text-xs font-black text-gray-900 outline-none focus:ring-2 focus:ring-blue-900"
+                                                        autoFocus
+                                                    />
+                                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-gray-400">
+                                                        {inlineCommissionType === 'percent' ? '%' : 'R$'}
+                                                    </span>
+                                                </div>
+
+                                                <div className="bg-white px-3 py-1 rounded-xl border border-blue-200 text-right shrink-0">
+                                                    <span className="text-[8px] font-bold text-gray-400 uppercase block leading-none">Comissão</span>
+                                                    <span className="text-xs font-black text-blue-900">
+                                                        R$ {calculateInlinePreview(t, inlineCommissionValue, inlineCommissionType).toFixed(2).replace('.', ',')}
+                                                    </span>
+                                                </div>
+                                            </div>
+
+                                            {/* Botões Salvar e Cancelar */}
+                                            <div className="flex items-center justify-end gap-2 pt-0.5">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setEditingCommissionId(null)}
+                                                    className="px-3 py-1 rounded-xl text-[10px] font-black uppercase text-gray-500 hover:bg-gray-200 transition-colors"
+                                                >
+                                                    Cancelar
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleSaveInlineCommission(t)}
+                                                    disabled={isSavingCommission}
+                                                    className="bg-blue-900 text-white px-3.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider active:scale-95 transition-transform flex items-center gap-1 shadow-sm disabled:opacity-50"
+                                                >
+                                                    {isSavingCommission ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
+                                                    Salvar Comissão
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             );
                         })
