@@ -3,10 +3,11 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { 
   ChevronLeft, ChevronRight, Users, ShoppingBag, ClipboardList, Wallet, 
   Calendar, CheckCircle2, TrendingUp, User, CheckSquare, Square, 
-  DollarSign, X, Loader2, Edit2, AlertCircle, Save, Banknote, Trash2
+  DollarSign, X, Loader2, Edit2, AlertCircle, Save, Banknote, Trash2,
+  Clock, Search, Filter
 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { getTransactions, Transaction, processCommissionPayment, addTransaction, deleteTransaction, calculateCommission } from '../data/transactions';
+import { getTransactions, Transaction, processCommissionPayment, addTransaction, deleteTransaction } from '../data/transactions';
 import { db } from '../supabase';
 
 const ProfessionalPerformanceDetails: React.FC = () => {
@@ -16,8 +17,11 @@ const ProfessionalPerformanceDetails: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [allPendingTransactions, setAllPendingTransactions] = useState<Transaction[]>([]);
+  const [historyTab, setHistoryTab] = useState<'pending' | 'period' | 'paid'>('pending');
+  const [pendingSearch, setPendingSearch] = useState('');
   const [proDetails, setProDetails] = useState<any>(null);
-  const [auditConfirmed, setAuditConfirmed] = useState(false);
+  const [auditConfirmed, setAuditConfirmed] = useState(true);
   const [commissionConfigs, setCommissionConfigs] = useState<any[]>([]);
   const [servicesMap, setServicesMap] = useState<Record<string, string>>({}); 
 
@@ -84,15 +88,6 @@ const ProfessionalPerformanceDetails: React.FC = () => {
   // Carrega Dados
   const loadData = async (force = false) => {
     if (!proId) return;
-    if (!force && !auditConfirmed) {
-        // Only load basic pro info if not confirmed
-        try {
-            const { data: pro } = await db.professionals().select('*').eq('id', proId).single();
-            if (pro) setProDetails(pro);
-        } catch (err) {}
-        setLoading(false);
-        return;
-    }
 
     setLoading(true);
     try {
@@ -115,6 +110,7 @@ const ProfessionalPerformanceDetails: React.FC = () => {
           if (methods.length > 0) setPaymentMethod(methods[0].name);
       }
 
+      // 1. Busca transações do período
       const all = await getTransactions({
           startDate: dateRange.start,
           endDate: dateRange.end,
@@ -123,6 +119,14 @@ const ProfessionalPerformanceDetails: React.FC = () => {
       // Filtra para mostrar apenas Vendas e Vales na performance (exclui pagamentos de comissão que são 'COMPRA')
       const filtered = all.filter(t => t.operation === 'VENDA' || t.type === 'VALE');
       setTransactions(filtered);
+
+      // 2. Busca TODAS as transações do profissional para garantir que comissões de períodos anteriores não fiquem esquecidas
+      const allPro = await getTransactions({ proId: proId });
+      const pendingList = allPro.filter(t => 
+        (t.operation === 'VENDA' || t.type === 'VALE') && !t.commission_paid
+      );
+      setAllPendingTransactions(pendingList);
+
       setSelectedIds([]); // Limpa seleção ao recarregar
       setAuditConfirmed(true);
 
@@ -134,18 +138,77 @@ const ProfessionalPerformanceDetails: React.FC = () => {
   };
 
   useEffect(() => {
-    loadData();
+    if (dateRange.start && dateRange.end) {
+      loadData(true);
+    }
   }, [proId, dateRange]);
+
+  const calculateCommission = (transaction: Transaction) => {
+    // 0. Se for VALE, retorna valor negativo (Dedução)
+    if (transaction.type === 'VALE') {
+        return -Math.abs(transaction.val);
+    }
+
+    // 1. Se houver comissão sobrescrita no banco, usa ela (prioridade máxima)
+    if (transaction.commission_value !== undefined && transaction.commission_value !== null) {
+        return transaction.commission_type === 'percent' 
+            ? transaction.val * (transaction.commission_value / 100)
+            : transaction.commission_value;
+    }
+
+    // 2. Se já tiver o valor calculado salvo na transação, usa ele (Novo Padrão)
+    if (transaction.commission_amount !== undefined && transaction.commission_amount !== null) {
+        return transaction.commission_amount;
+    }
+
+    // 3. Se for gorjeta, o colaborador recebe 100% integralmente
+    if (transaction.category === 'Gorjeta' || transaction.type === 'GORJETA') {
+        return transaction.val;
+    }
+
+    // 4. Se for OUTROS, retorna 0 (Pendente) a menos que tenha sido sobrescrito acima
+    // IMPORTANTE: Apenas type === 'OUTROS' deve cair aqui. Serviços normais devem ter fallback.
+    if (transaction.type === 'OUTROS') {
+        return 0;
+    }
+
+    // 5. Busca regra específica do serviço/produto
+    const serviceId = servicesMap[transaction.item];
+    const config = commissionConfigs.find(c => c.service_id === serviceId);
+    let commValue = 0;
+    
+    if (config) {
+        if (config.commission_type === 'percent') {
+            commValue = transaction.val * (config.commission_value / 100);
+        } else {
+            commValue = config.commission_value;
+        }
+    } else {
+        // Fallback Padrão: 40% para Serviços, 10% para Produtos
+        // Se não for OUTROS, aplica regra padrão mesmo sem config específica
+        const rate = (transaction.category === 'Serviço' || transaction.type === 'SERVIÇO') ? 0.4 : 0.1;
+        commValue = transaction.val * rate;
+    }
+    return commValue;
+  };
 
   // Cálculo do Saldo Pendente Global (Independente do filtro de data)
   const totalPendingCommission = useMemo(() => {
-    return transactions.reduce((acc, t) => {
-      if (!t.commission_paid) {
-        return acc + calculateCommission(t, commissionConfigs, servicesMap);
-      }
-      return acc;
+    return allPendingTransactions.reduce((acc, t) => {
+      return acc + calculateCommission(t);
     }, 0);
-  }, [transactions, commissionConfigs, servicesMap]);
+  }, [allPendingTransactions, commissionConfigs, servicesMap]);
+
+  // Quantidade e valor de pendências de períodos anteriores (antes de dateRange.start)
+  const priorPendingStats = useMemo(() => {
+    const priorItems = allPendingTransactions.filter(t => t.date < dateRange.start);
+    const priorTotal = priorItems.reduce((acc, t) => acc + calculateCommission(t), 0);
+    return {
+      count: priorItems.length,
+      total: priorTotal,
+      items: priorItems
+    };
+  }, [allPendingTransactions, dateRange.start, commissionConfigs, servicesMap]);
 
   const stats = useMemo(() => {
     const filtered = transactions.filter(t => t.date >= dateRange.start && t.date <= dateRange.end);
@@ -164,7 +227,7 @@ const ProfessionalPerformanceDetails: React.FC = () => {
     const uniqueClients = new Set();
 
     const detailedLog = filtered.map(t => {
-        const comm = calculateCommission(t, commissionConfigs, servicesMap);
+        const comm = calculateCommission(t);
         
         if (t.type === 'VALE') {
             valesTotal += Math.abs(t.val);
@@ -185,7 +248,7 @@ const ProfessionalPerformanceDetails: React.FC = () => {
         }
         commTotal += comm;
 
-        return { ...t, commissionValue: comm, netValue: t.val - comm };
+        return { ...t, commissionValue: comm, netValue: t.val - comm, isPrior: t.date < dateRange.start };
     });
 
     const topService = Object.entries(servicesCounter).sort((a, b) => b[1] - a[1])[0] || ['Nenhum', 0];
@@ -208,20 +271,86 @@ const ProfessionalPerformanceDetails: React.FC = () => {
     };
   }, [transactions, dateRange, commissionConfigs, servicesMap]);
 
+  // Lista de itens a serem exibidos de acordo com a aba selecionada
+  const displayedLog = useMemo(() => {
+    let source: Transaction[] = [];
+
+    if (historyTab === 'pending') {
+      // TODAS as comissões pendentes (incluindo anteriores)
+      source = allPendingTransactions;
+    } else if (historyTab === 'paid') {
+      // Transações pagas do período
+      source = transactions.filter(t => t.commission_paid);
+    } else {
+      // Transações do período (ambas)
+      source = transactions.filter(t => t.date >= dateRange.start && t.date <= dateRange.end);
+    }
+
+    const processed = source.map(t => {
+      const comm = calculateCommission(t);
+      const isPrior = t.date < dateRange.start;
+      return {
+        ...t,
+        commissionValue: comm,
+        netValue: t.val - comm,
+        isPrior
+      };
+    });
+
+    if (pendingSearch) {
+      const term = pendingSearch.toLowerCase();
+      return processed.filter(t => 
+        (t.client_supplier && t.client_supplier.toLowerCase().includes(term)) ||
+        (t.item && t.item.toLowerCase().includes(term))
+      );
+    }
+
+    return processed.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [historyTab, allPendingTransactions, transactions, dateRange.start, dateRange.end, pendingSearch, commissionConfigs, servicesMap]);
+
+  // Itens pendentes disponíveis para seleção na visualização atual
+  const selectablePendingItems = useMemo(() => {
+    return displayedLog.filter(t => !t.commission_paid);
+  }, [displayedLog]);
+
+  const isAllPendingSelected = selectablePendingItems.length > 0 && 
+    selectablePendingItems.every(t => selectedIds.includes(t.id));
+
+  const handleToggleSelectAll = () => {
+    if (isAllPendingSelected) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(selectablePendingItems.map(t => t.id));
+    }
+  };
+
   // Resumo da Seleção para o Modal
   const selectionSummary = useMemo(() => {
-    const items = stats.log.filter(t => selectedIds.includes(t.id));
+    // Busca os itens selecionados em displayedLog e em allPendingTransactions
+    const poolMap = new Map<string, any>();
+    displayedLog.forEach(t => poolMap.set(t.id, t));
+    allPendingTransactions.forEach(t => {
+      if (!poolMap.has(t.id)) {
+        poolMap.set(t.id, {
+          ...t,
+          commissionValue: calculateCommission(t),
+          isPrior: t.date < dateRange.start
+        });
+      }
+    });
+
+    const items = selectedIds.map(id => poolMap.get(id)).filter(Boolean);
     if (items.length === 0) return null;
 
-    const totalCommission = items.reduce((sum, t) => sum + t.commissionValue, 0);
+    const totalCommission = items.reduce((sum, t) => sum + (t.commissionValue || 0), 0);
     const totalServices = items.filter(t => t.category === 'Serviço' || t.type === 'SERVIÇO').length;
     const totalProducts = items.filter(t => t.category === 'Produto' || t.type === 'PRODUTO').length;
     const totalVales = items.filter(t => t.type === 'VALE').length;
     
     // Ordena por data para pegar primeira e última
     const sortedDates = items.map(t => t.date).sort();
-    const firstDate = sortedDates[0];
-    const lastDate = sortedDates[sortedDates.length - 1];
+    const firstDate = sortedDates[0] || new Date().toISOString().split('T')[0];
+    const lastDate = sortedDates[sortedDates.length - 1] || new Date().toISOString().split('T')[0];
 
     return {
         totalCommission,
@@ -232,7 +361,7 @@ const ProfessionalPerformanceDetails: React.FC = () => {
         firstDate,
         lastDate
     };
-  }, [selectedIds, stats.log]);
+  }, [selectedIds, displayedLog, allPendingTransactions, dateRange.start, commissionConfigs, servicesMap]);
 
 
 
@@ -248,16 +377,9 @@ const ProfessionalPerformanceDetails: React.FC = () => {
     }
 
     // Verifica se há itens com comissão pendente (valor 0 e não pago)
-    const pendingItems = stats.log.filter(t => selectedIds.includes(t.id) && t.commissionValue === 0 && !t.commission_paid);
+    const pendingItems = displayedLog.filter(t => selectedIds.includes(t.id) && t.commissionValue === 0 && !t.commission_paid);
     if (pendingItems.length > 0) {
         alert(`Atenção: Existem ${pendingItems.length} itens selecionados com comissão pendente (R$ 0,00). Defina a comissão antes de realizar o pagamento.`);
-        return;
-    }
-
-    // Vale selecionado pode zerar ou superar a comissão selecionada. Pagar
-    // nesse caso criaria uma saída de caixa no sentido errado — bloqueia.
-    if (selectionSummary.totalCommission <= 0) {
-        alert('O valor líquido selecionado (após desconto de vale) é zero ou negativo. Ajuste a seleção antes de pagar.');
         return;
     }
 
@@ -303,7 +425,7 @@ const ProfessionalPerformanceDetails: React.FC = () => {
     }
 
     // Calcula o valor atual para mostrar no input
-    const currentComm = calculateCommission(t, commissionConfigs, servicesMap);
+    const currentComm = calculateCommission(t);
     // Tenta inferir se é porcentagem ou fixo baseado no valor salvo, ou padrão percent
     const initialType = t.commission_type || 'percent';
     const initialValue = t.commission_value !== undefined ? t.commission_value : (initialType === 'percent' ? (currentComm / t.val) * 100 : currentComm);
@@ -576,25 +698,116 @@ const ProfessionalPerformanceDetails: React.FC = () => {
                     </div>
                 </div>
 
-                {/* Histórico com Checkbox */}
-                <div>
-                    <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3 pl-2">Histórico para Baixa</h3>
-                    <div className="space-y-2">
-                        {stats.log.length === 0 ? (
-                            <p className="text-center text-xs text-gray-400 italic py-8">Nenhum registro neste período.</p>
+                {/* Alerta de Comissões Pendentes de Períodos Anteriores */}
+                {priorPendingStats.count > 0 && (
+                    <div className="bg-amber-50 border border-amber-200 p-4 rounded-2xl flex items-start gap-3 text-amber-900 animate-in fade-in slide-in-from-top-1">
+                        <AlertCircle className="text-amber-600 shrink-0 mt-0.5" size={18} />
+                        <div className="text-xs space-y-1">
+                            <p className="font-black uppercase tracking-wider text-[11px] text-amber-800">
+                                Atenção: {priorPendingStats.count} {priorPendingStats.count === 1 ? 'comissão pendente' : 'comissões pendentes'} de períodos anteriores
+                            </p>
+                            <p className="text-amber-700 font-medium leading-relaxed">
+                                Valor acumulado anterior: <strong className="font-bold">R$ {priorPendingStats.total.toFixed(2).replace('.', ',')}</strong>. Elas estão listadas abaixo com destaque para não ficarem esquecidas e facilitar a quitação!
+                            </p>
+                        </div>
+                    </div>
+                )}
+
+                {/* Histórico com Checkbox e Acerto */}
+                <div className="bg-white p-4 rounded-3xl border border-gray-100 shadow-sm space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-100 pb-3">
+                        <div>
+                            <h3 className="text-xs font-black text-gray-900 uppercase tracking-widest flex items-center gap-2">
+                                <ClipboardList size={16} className="text-blue-900" /> Acerto de Contas & Comissões
+                            </h3>
+                            <p className="text-[10px] text-gray-400 font-bold uppercase mt-0.5">
+                                Selecione os itens para realizar o pagamento
+                            </p>
+                        </div>
+
+                        {/* Abas de Visualização (Pendentes vs Período vs Pagas) */}
+                        <div className="flex bg-gray-100 p-1 rounded-2xl">
+                            <button 
+                                onClick={() => { setHistoryTab('pending'); setSelectedIds([]); }}
+                                className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${historyTab === 'pending' ? 'bg-blue-900 text-white shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+                            >
+                                <Clock size={12} />
+                                Pendentes ({allPendingTransactions.length})
+                            </button>
+                            <button 
+                                onClick={() => { setHistoryTab('period'); setSelectedIds([]); }}
+                                className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${historyTab === 'period' ? 'bg-blue-900 text-white shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+                            >
+                                <Calendar size={12} />
+                                Período ({stats.log.length})
+                            </button>
+                            <button 
+                                onClick={() => { setHistoryTab('paid'); setSelectedIds([]); }}
+                                className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${historyTab === 'paid' ? 'bg-green-600 text-white shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+                            >
+                                <CheckCircle2 size={12} />
+                                Pagas
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Barra de Ações: Busca e Botão MARCAR TODAS */}
+                    <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
+                        <div className="relative flex-1">
+                            <input 
+                                type="text" 
+                                value={pendingSearch} 
+                                onChange={e => setPendingSearch(e.target.value)}
+                                placeholder="Buscar por cliente ou serviço..."
+                                className="w-full bg-gray-50 border border-gray-100 rounded-xl py-2 pl-9 pr-3 text-xs font-bold text-gray-700 outline-none focus:ring-1 focus:ring-blue-900"
+                            />
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-300" size={14} />
+                        </div>
+
+                        {selectablePendingItems.length > 0 && (
+                            <button
+                                type="button"
+                                onClick={handleToggleSelectAll}
+                                className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all active:scale-95 shadow-sm ${
+                                    isAllPendingSelected
+                                        ? 'bg-blue-900 text-white'
+                                        : 'bg-blue-50 text-blue-900 hover:bg-blue-100 border border-blue-200'
+                                }`}
+                            >
+                                {isAllPendingSelected ? <CheckSquare size={16} /> : <Square size={16} />}
+                                <span>{isAllPendingSelected ? 'Desmarcar Todas' : 'Marcar Todas as Pendentes'}</span>
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${isAllPendingSelected ? 'bg-blue-800 text-white' : 'bg-blue-200 text-blue-900'}`}>
+                                    {selectablePendingItems.length}
+                                </span>
+                            </button>
+                        )}
+                    </div>
+
+                    <div className="space-y-2 pt-1">
+                        {displayedLog.length === 0 ? (
+                            <div className="text-center py-12 text-gray-400 space-y-2">
+                                <Wallet size={36} className="mx-auto opacity-30 text-blue-900" />
+                                <p className="text-xs font-bold uppercase tracking-wider">
+                                    {historyTab === 'pending' ? 'Nenhuma comissão pendente encontrada.' : 'Nenhum registro para exibir.'}
+                                </p>
+                            </div>
                         ) : (
-                            stats.log.map((t) => {
+                            displayedLog.map((t) => {
                                 const isSelected = selectedIds.includes(t.id);
                                 return (
                                     <div 
                                         key={t.id} 
                                         onClick={() => !t.commission_paid && toggleSelect(t.id)}
-                                        className={`bg-white p-4 rounded-2xl border shadow-sm flex flex-col gap-2 transition-all active:scale-[0.99] ${
+                                        className={`p-4 rounded-2xl border shadow-sm flex flex-col gap-2 transition-all ${
+                                            !t.commission_paid ? 'cursor-pointer active:scale-[0.99]' : ''
+                                        } ${
                                             t.commission_paid 
                                             ? 'border-green-100 bg-green-50/20 opacity-80' 
                                             : isSelected 
-                                                ? 'border-blue-300 ring-1 ring-blue-300 bg-blue-50/30' 
-                                                : 'border-gray-100'
+                                                ? 'border-blue-500 ring-2 ring-blue-500/20 bg-blue-50/40' 
+                                                : t.isPrior
+                                                    ? 'border-amber-200 bg-amber-50/30'
+                                                    : 'border-gray-100 bg-white hover:border-gray-200'
                                         }`}
                                     >
                                         <div className="flex justify-between items-start">
@@ -618,20 +831,25 @@ const ProfessionalPerformanceDetails: React.FC = () => {
                                                             {t.item}
                                                             {t.commission_paid && <span className="ml-2 text-[8px] bg-green-200 text-green-800 px-1.5 py-0.5 rounded uppercase">Pago</span>}
                                                         </p>
+                                                        {t.isPrior && !t.commission_paid && (
+                                                            <span className="text-[8px] bg-amber-100 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-md font-black uppercase tracking-wider flex items-center gap-1">
+                                                                <Clock size={10} /> Período Anterior ({new Date(t.date + 'T12:00:00').toLocaleDateString('pt-BR')})
+                                                            </span>
+                                                        )}
                                                         {t.appointment_id && (
                                                             <span className="text-[8px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-bold uppercase tracking-tighter">
                                                                 ID: {t.appointment_id.slice(0, 8)}...
                                                             </span>
                                                         )}
                                                     </div>
-                                                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-gray-400 font-bold uppercase">
-                                                        <span>{new Date(t.date).toLocaleDateString('pt-BR')}</span>
+                                                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-gray-400 font-bold uppercase mt-0.5">
+                                                        <span>{new Date(t.date + 'T12:00:00').toLocaleDateString('pt-BR')}</span>
                                                         <span>•</span>
                                                         <span>{t.category}</span>
                                                         {t.client_supplier && (
                                                             <>
                                                                 <span>•</span>
-                                                                <span className="text-blue-500">{t.client_supplier}</span>
+                                                                <span className="text-blue-600 font-black">{t.client_supplier}</span>
                                                             </>
                                                         )}
                                                     </div>

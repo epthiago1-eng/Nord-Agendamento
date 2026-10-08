@@ -4,15 +4,15 @@ import {
   ChevronLeft, ChevronRight, Calendar, Filter, 
   TrendingUp, TrendingDown, DollarSign, Users, 
   ShoppingBag, Trash2, Edit2, AlertCircle, BarChart3, Eye, X, Save, Loader2,
-  FileSpreadsheet, ArrowLeftRight, MinusCircle, Wallet2, Banknote, Landmark, Clock, CheckCircle2, ClipboardList
+  FileSpreadsheet, ArrowLeftRight, MinusCircle, Wallet2, Banknote, Landmark, Clock, CheckCircle2, ClipboardList,
+  CheckSquare, Square, Search, Wallet
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getTransactions, deleteTransaction, updateTransaction, Transaction, addTransaction } from '../data/transactions';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LineChart, Line } from 'recharts';
-import { db, supabase, fetchAllPages } from '../supabase'; // Import db and supabase to fetch data
-import { getSettings, getCashBalances, saveSettings } from '../data/agendaData';
+import { db, supabase } from '../supabase'; // Import db and supabase to fetch data
+import { getSettings, saveSettings } from '../data/agendaData';
 import { EstablishmentSettings } from '../types';
-import { parseCurrencyBR } from '../format';
 
 const FinancialAdmin: React.FC = () => {
   const navigate = useNavigate();
@@ -47,7 +47,6 @@ const FinancialAdmin: React.FC = () => {
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [showSangriaModal, setShowSangriaModal] = useState(false);
   const [showAdjustModal, setShowAdjustModal] = useState<{show: boolean, type: 'cash' | 'bank' | 'pix' | 'card' | null}>({ show: false, type: null });
-  const [showPayModal, setShowPayModal] = useState<{show: boolean, proName: string | null, amount: number}>({ show: false, proName: null, amount: 0 });
   const [showFutureModal, setShowFutureModal] = useState(false);
   const [showPaidDetailsModal, setShowPaidDetailsModal] = useState(false);
   const [expandedAccount, setExpandedAccount] = useState<'CASH' | 'PIX' | 'CARD' | 'BANK' | null>(null);
@@ -57,6 +56,15 @@ const FinancialAdmin: React.FC = () => {
       target: string, 
       operationType: 'deposit' | 'withdraw' | 'transfer'
   }>({ amount: '', description: '', target: 'bank', operationType: 'deposit' });
+
+  // Estados de Acerto de Contas & Comissões Pendentes
+  const [allPendingTransactions, setAllPendingTransactions] = useState<Transaction[]>([]);
+  const [showSettlementModal, setShowSettlementModal] = useState(false);
+  const [settlementSelectedPro, setSettlementSelectedPro] = useState<string>('all');
+  const [settlementFilterScope, setSettlementFilterScope] = useState<'all' | 'period' | 'prior'>('all');
+  const [settlementSearchTerm, setSettlementSearchTerm] = useState('');
+  const [selectedSettlementIds, setSelectedSettlementIds] = useState<string[]>([]);
+  const [settlementPaymentAccount, setSettlementPaymentAccount] = useState<'cash' | 'bank' | 'pix'>('cash');
 
   // Estados do Modal
   const [editingTx, setEditingTx] = useState<Transaction | null>(null);
@@ -103,39 +111,40 @@ const FinancialAdmin: React.FC = () => {
       const fiveWeeksStart = new Date(fiveWeeksEnd);
       fiveWeeksStart.setDate(fiveWeeksEnd.getDate() - (5 * 7) + 1);
 
-      const [txData, settingsData, cashBalances, prosRes, servicesRes, configsRes, adminProfilesRes, billsRes, allTxRes, weeklyTxData] = await Promise.all([
+      const [txData, settingsData, prosRes, servicesRes, configsRes, adminProfilesRes, billsRes, allTxRes, weeklyTxData, allPendingTxRes] = await Promise.all([
           getTransactions({ startDate: startStr, endDate: endStr }),
           getSettings(),
-          getCashBalances(),
           db.professionals().select('id, name'),
           db.services().select('id, name'),
           db.professionalServices().select('*'),
           db.profiles().select('professional_id').eq('role', 'ADMIN'),
           supabase.from('bills').select('*').gte('due_date', startStr).lte('due_date', endStr),
-          // Sem filtro de data (a reconciliação precisa do histórico inteiro para
-          // calcular o saldo inicial) — pagina para não cortar em 1000 linhas.
-          fetchAllPages<any>((from, to) =>
-              supabase.from('transactions')
-                  .select('val, total_value, payment_method, operation_type, operation, date')
-                  .range(from, to)
-          ),
-          getTransactions({ startDate: fiveWeeksStart.toISOString().split('T')[0], endDate: fiveWeeksEnd.toISOString().split('T')[0] })
+          supabase.from('transactions').select('val, total_value, payment_method, operation_type, operation, date'),
+          getTransactions({ startDate: fiveWeeksStart.toISOString().split('T')[0], endDate: fiveWeeksEnd.toISOString().split('T')[0] }),
+          supabase.from('transactions').select('*').or('operation.eq.VENDA,type.eq.VALE').eq('commission_paid', false).order('date', { ascending: false })
       ]);
 
       setAllTransactions(txData);
       setWeeklyTransactions(weeklyTxData);
-      // Saldos vêm de uma RPC restrita a admin (ver getCashBalances); mescla no
-      // mesmo objeto settings para não quebrar o resto da tela que lê settings.cash_balance etc.
-      setSettings({ ...settingsData, ...cashBalances });
+      setSettings(settingsData);
 
+      if (allPendingTxRes.data) {
+        setAllPendingTransactions(allPendingTxRes.data.map((t: any) => ({
+          ...t,
+          val: t.total_value || t.val,
+          item: t.item || t.description
+        })));
+      }
+      
+      // Calcular saldos globais (AGORA ESTÁTICOS DAS CONFIGURAÇÕES)
       if (settingsData) {
-          setAllTransactionsForBalance(allTxRes || []);
-
+          setAllTransactionsForBalance(allTxRes.data || []);
+          
           const balances = {
-              cash: cashBalances.cash_balance || 0,
-              pix: cashBalances.pix_balance || 0,
-              card: cashBalances.card_balance || 0,
-              bank: cashBalances.bank_balance || 0
+              cash: settingsData.cash_balance || 0,
+              pix: settingsData.pix_balance || 0,
+              card: settingsData.card_balance || 0,
+              bank: settingsData.bank_balance || 0
           };
 
           setGlobalBalances(balances);
@@ -298,6 +307,58 @@ const FinancialAdmin: React.FC = () => {
     return transaction.val * rate;
   };
 
+  // --- CÁLCULO GERAL DE COMISSÕES PENDENTES (INDEPENDENTE DO FILTRO DE DATA) ---
+  const pendingCommissionsSummary = useMemo(() => {
+    const startStr = dateRange.start.toISOString().split('T')[0];
+    const endStr = dateRange.end.toISOString().split('T')[0];
+
+    const processed = allPendingTransactions.map(t => {
+      const comm = calculateCommission(t);
+      const isPrior = t.date < startStr;
+      const isInPeriod = t.date >= startStr && t.date <= endStr;
+      return {
+        ...t,
+        commissionValue: comm,
+        isPrior,
+        isInPeriod
+      };
+    });
+
+    let totalPendingAllTime = 0;
+    let totalPendingPrior = 0;
+    let totalPendingInPeriod = 0;
+
+    const byPro: Record<string, { totalPending: number, priorPending: number, periodPending: number, items: any[] }> = {};
+
+    processed.forEach(item => {
+      const proName = item.pro || 'Outros';
+      if (!byPro[proName]) {
+        byPro[proName] = { totalPending: 0, priorPending: 0, periodPending: 0, items: [] };
+      }
+
+      byPro[proName].totalPending += item.commissionValue;
+      byPro[proName].items.push(item);
+
+      totalPendingAllTime += item.commissionValue;
+
+      if (item.isPrior) {
+        byPro[proName].priorPending += item.commissionValue;
+        totalPendingPrior += item.commissionValue;
+      } else if (item.isInPeriod) {
+        byPro[proName].periodPending += item.commissionValue;
+        totalPendingInPeriod += item.commissionValue;
+      }
+    });
+
+    return {
+      allPendingItems: processed,
+      totalPendingAllTime,
+      totalPendingPrior,
+      totalPendingInPeriod,
+      byPro
+    };
+  }, [allPendingTransactions, dateRange.start, dateRange.end, commissionConfigs, servicesMap, professionalsMap]);
+
   // --- CÁLCULOS ESTATÍSTICOS ---
   const stats = useMemo(() => {
     let income = 0;
@@ -431,8 +492,27 @@ const FinancialAdmin: React.FC = () => {
         return new Date(2024, parseInt(mA)-1, parseInt(dA)).getTime() - new Date(2024, parseInt(mB)-1, parseInt(dB)).getTime();
     });
 
+    // Garante que profissionais com saldo pendente apareçam na lista da equipe mesmo se não tiveram produção no período atual
+    Object.keys(pendingCommissionsSummary.byPro).forEach(name => {
+      if (!proMap[name] && name !== 'Outros' && !['admin', 'sistema', 'socios', 'sócio', 'sócios'].includes(name.toLowerCase())) {
+        proMap[name] = { gross: 0, commission: 0, pending: 0 };
+      }
+    });
+
     const prosData = Object.entries(proMap)
-      .map(([name, data]) => ({ name, value: data.gross, commission: data.commission, pending: data.pending }))
+      .map(([name, data]) => {
+        const proSummary = pendingCommissionsSummary.byPro[name];
+        const pendingAllTime = proSummary ? proSummary.totalPending : data.pending;
+        const pendingPrior = proSummary ? proSummary.priorPending : 0;
+        return { 
+          name, 
+          value: data.gross, 
+          commission: data.commission, 
+          pending: data.pending, 
+          pendingAllTime, 
+          pendingPrior 
+        };
+      })
       .sort((a, b) => b.value - a.value);
 
     const topProducts = Object.entries(productsMap)
@@ -479,6 +559,8 @@ const FinancialAdmin: React.FC = () => {
         expense, 
         totalCommissions,
         pendingCommissions,
+        pendingCommissionsAllTime: pendingCommissionsSummary.totalPendingAllTime,
+        pendingCommissionsPrior: pendingCommissionsSummary.totalPendingPrior,
         futureReceivables,
         futureTransactions,
         net: income - totalCommissions, // Resultado Líquido (Faturamento - Comissões)
@@ -490,7 +572,107 @@ const FinancialAdmin: React.FC = () => {
         auditByMethod,
         expenseDistribution
     };
-  }, [filteredData, commissionConfigs, servicesMap, professionalsMap, adminPros]);
+  }, [filteredData, commissionConfigs, servicesMap, professionalsMap, adminPros, pendingCommissionsSummary]);
+
+  // Itens filtrados para o Modal de Acerto de Contas
+  const filteredPendingForModal = useMemo(() => {
+    let list = pendingCommissionsSummary.allPendingItems;
+
+    // Filtra por profissional
+    if (settlementSelectedPro !== 'all') {
+      list = list.filter(t => (t.pro === settlementSelectedPro) || (t.professional_id && professionalsMap[settlementSelectedPro] === t.professional_id));
+    }
+
+    // Filtra por escopo (todas, anterior, período)
+    if (settlementFilterScope === 'prior') {
+      list = list.filter(t => t.isPrior);
+    } else if (settlementFilterScope === 'period') {
+      list = list.filter(t => t.isInPeriod);
+    }
+
+    // Filtra por termo de busca
+    if (settlementSearchTerm) {
+      const term = settlementSearchTerm.toLowerCase();
+      list = list.filter(t => 
+        (t.client_supplier && t.client_supplier.toLowerCase().includes(term)) ||
+        (t.item && t.item.toLowerCase().includes(term)) ||
+        (t.pro && t.pro.toLowerCase().includes(term))
+      );
+    }
+
+    return list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [pendingCommissionsSummary.allPendingItems, settlementSelectedPro, settlementFilterScope, settlementSearchTerm, professionalsMap]);
+
+  const isAllSettlementSelected = filteredPendingForModal.length > 0 &&
+    filteredPendingForModal.every(t => selectedSettlementIds.includes(t.id));
+
+  const handleToggleSelectAllSettlement = () => {
+    if (isAllSettlementSelected) {
+      setSelectedSettlementIds([]);
+    } else {
+      setSelectedSettlementIds(filteredPendingForModal.map(t => t.id));
+    }
+  };
+
+  const settlementSelectedTotal = useMemo(() => {
+    const selectedItems = pendingCommissionsSummary.allPendingItems.filter(t => selectedSettlementIds.includes(t.id));
+    return selectedItems.reduce((acc, t) => acc + t.commissionValue, 0);
+  }, [selectedSettlementIds, pendingCommissionsSummary.allPendingItems]);
+
+  const handleExecuteSettlementPayment = async () => {
+    if (selectedSettlementIds.length === 0) {
+      alert('Selecione ao menos um item de comissão para pagar.');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      // 1. Atualiza transações no Supabase
+      const { error: updateError } = await supabase
+        .from('transactions')
+        .update({ commission_paid: true })
+        .in('id', selectedSettlementIds);
+
+      if (updateError) throw updateError;
+
+      // 2. Calcula total
+      const itemsToPay = pendingCommissionsSummary.allPendingItems.filter(t => selectedSettlementIds.includes(t.id));
+      const totalAmount = itemsToPay.reduce((acc, t) => acc + t.commissionValue, 0);
+
+      const proLabel = settlementSelectedPro === 'all' 
+        ? 'Equipe (Geral)' 
+        : settlementSelectedPro;
+
+      const methodLabel = settlementPaymentAccount === 'bank' 
+        ? 'Transferência (Banco)' 
+        : settlementPaymentAccount === 'pix' 
+          ? 'Pix' 
+          : 'Dinheiro';
+
+      // 3. Registra saída financeira
+      await addTransaction({
+        operation: 'COMPRA',
+        type: 'DESPESA',
+        category: 'Comissão',
+        item: `Acerto de Contas: ${proLabel} (${selectedSettlementIds.length} itens)`,
+        val: -Math.abs(totalAmount),
+        date: new Date().toISOString().split('T')[0],
+        payment_method: methodLabel,
+        status: 'Pago',
+        pro: 'Admin'
+      });
+
+      setShowSettlementModal(false);
+      setSelectedSettlementIds([]);
+      await loadData();
+      alert(`✅ Acerto de contas de R$ ${Math.abs(totalAmount).toFixed(2).replace('.', ',')} realizado com sucesso para ${selectedSettlementIds.length} itens!`);
+    } catch (err: any) {
+      console.error(err);
+      alert('Erro ao pagar comissões: ' + err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleSaveBalances = async () => {
     if (!settings) return;
@@ -556,10 +738,10 @@ const FinancialAdmin: React.FC = () => {
     };
 
     const actual = {
-      cash: parseCurrencyBR(actualBalances.cash),
-      pix: parseCurrencyBR(actualBalances.pix),
-      card: parseCurrencyBR(actualBalances.card),
-      bank: parseCurrencyBR(actualBalances.bank)
+      cash: parseFloat(actualBalances.cash.replace(',', '.')) || 0,
+      pix: parseFloat(actualBalances.pix.replace(',', '.')) || 0,
+      card: parseFloat(actualBalances.card.replace(',', '.')) || 0,
+      bank: parseFloat(actualBalances.bank.replace(',', '.')) || 0
     };
 
     const diff = {
@@ -657,7 +839,7 @@ const FinancialAdmin: React.FC = () => {
     if (!editingTx) return;
     setSaving(true);
     try {
-        const newVal = parseCurrencyBR(editForm.val);
+        const newVal = parseFloat(editForm.val.replace(',', '.')) || 0;
         // Mantém o sinal original (negativo para despesa, positivo para venda)
         const finalVal = editingTx.val < 0 ? -Math.abs(newVal) : Math.abs(newVal);
 
@@ -695,7 +877,7 @@ const FinancialAdmin: React.FC = () => {
     if (!settings) return;
     setSaving(true);
     try {
-        const amount = parseCurrencyBR(managerForm.amount);
+        const amount = parseFloat(managerForm.amount.replace(',', '.')) || 0;
         let txItem = '';
         let txVal = 0;
         let operation: 'VENDA' | 'COMPRA' = 'COMPRA';
@@ -879,43 +1061,6 @@ const FinancialAdmin: React.FC = () => {
     } catch (err: any) {
         console.error(err);
         alert('Erro ao realizar operação: ' + err.message);
-    } finally {
-        setSaving(false);
-    }
-  };
-
-  const handlePayCommissions = async () => {
-    if (!showPayModal.proName || !settings) return;
-    setSaving(true);
-    try {
-        const proName = showPayModal.proName;
-        const amount = showPayModal.amount;
-
-        // 1. Atualiza transações do profissional no período para 'Pago'
-        const toUpdate = filteredData.filter(t => t.pro === proName && !t.commission_paid && t.operation === 'VENDA');
-        
-        await Promise.all(toUpdate.map(t => 
-            updateTransaction(t.id, { commission_paid: true })
-        ));
-
-        // 2. Registra log de saída
-        await addTransaction({
-            operation: 'COMPRA',
-            type: 'DESPESA',
-            category: 'Comissão',
-            item: `Pagamento de Comissão: ${proName} (Período)`,
-            val: -amount,
-            date: new Date().toISOString().split('T')[0],
-            payment_method: managerForm.target === 'bank' ? 'Transferência (Banco)' : 'Dinheiro',
-            status: 'Pago',
-            pro: 'Admin'
-        });
-
-        setShowPayModal({ show: false, proName: null, amount: 0 });
-        loadData();
-        alert(`Comissões de ${proName} pagas com sucesso!`);
-    } catch (err: any) {
-        alert('Erro ao pagar comissões: ' + err.message);
     } finally {
         setSaving(false);
     }
@@ -1440,17 +1585,30 @@ const FinancialAdmin: React.FC = () => {
                             <Users size={18} />
                         </div>
                         <div>
-                            <p className="text-xs font-bold text-red-900">Comissões a Pagar</p>
-                            <p className="text-[10px] text-red-400">Comprometido com equipe</p>
+                            <p className="text-xs font-bold text-red-900">Comissões a Pagar (Acerto de Contas)</p>
+                            <p className="text-[10px] text-red-400">Comprometido com a equipe</p>
                         </div>
                     </div>
                     <div className="flex items-center gap-3">
-                        <span className="text-sm font-black text-red-900">R$ {stats.pendingCommissions.toFixed(2)}</span>
+                        <div className="text-right">
+                            <span className="text-sm font-black text-red-900 block">
+                                R$ {pendingCommissionsSummary.totalPendingAllTime.toFixed(2)}
+                            </span>
+                            {pendingCommissionsSummary.totalPendingPrior > 0 && (
+                                <span className="text-[9px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full inline-block">
+                                    ⚠️ R$ {pendingCommissionsSummary.totalPendingPrior.toFixed(2)} anterior
+                                </span>
+                            )}
+                        </div>
                         <button 
-                            onClick={() => document.getElementById('equipe-producao')?.scrollIntoView({ behavior: 'smooth' })}
-                            className="text-[10px] font-black text-red-600 uppercase tracking-widest bg-red-100/50 px-3 py-1.5 rounded-lg active:scale-95 transition-all"
+                            onClick={() => {
+                                setSettlementSelectedPro('all');
+                                setSelectedSettlementIds([]);
+                                setShowSettlementModal(true);
+                            }}
+                            className="text-[10px] font-black text-white bg-red-600 hover:bg-red-700 px-3.5 py-2 rounded-xl active:scale-95 transition-all shadow-sm uppercase tracking-wider"
                         >
-                            Pagar
+                            Fazer Acerto
                         </button>
                     </div>
                 </div>
@@ -1642,17 +1800,27 @@ const FinancialAdmin: React.FC = () => {
                                         {((pro.commission / (pro.value || 1)) * 100).toFixed(0)}%
                                     </td>
                                     <td className="px-4 py-4 text-right">
-                                        <span className={`text-xs font-black ${pro.pending > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                                            R$ {pro.pending.toFixed(2)}
+                                        <span className={`text-xs font-black ${(pro.pendingAllTime || pro.pending) > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                            R$ {(pro.pendingAllTime !== undefined ? pro.pendingAllTime : pro.pending).toFixed(2)}
                                         </span>
+                                        {pro.pendingPrior > 0 && (
+                                            <span className="text-[9px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full block mt-0.5 w-fit ml-auto">
+                                                ⚠️ +R$ {pro.pendingPrior.toFixed(2)} ant.
+                                            </span>
+                                        )}
                                     </td>
                                     <td className="px-4 py-4 text-right rounded-r-2xl">
                                         <div className="flex items-center justify-end gap-1">
-                                            {pro.pending > 0 && (
+                                            {(pro.pendingAllTime || pro.pending) > 0 && (
                                                 <button 
-                                                    onClick={(e) => { e.stopPropagation(); setShowPayModal({ show: true, proName: pro.name, amount: pro.pending }); }}
+                                                    onClick={(e) => { 
+                                                        e.stopPropagation(); 
+                                                        setSettlementSelectedPro(pro.name);
+                                                        setSelectedSettlementIds([]);
+                                                        setShowSettlementModal(true);
+                                                    }}
                                                     className="p-2 text-green-600 hover:bg-white rounded-xl transition-colors"
-                                                    title="Pagar Comissões"
+                                                    title="Acerto de Contas / Pagar"
                                                 >
                                                     <CheckCircle2 size={16} />
                                                 </button>
@@ -1674,7 +1842,16 @@ const FinancialAdmin: React.FC = () => {
                                 <td className="px-4 py-4">TOTAIS</td>
                                 <td className="px-4 py-4 text-right">R$ {stats.income.toFixed(2)}</td>
                                 <td className="px-4 py-4 text-right"></td>
-                                <td className="px-4 py-4 text-right text-red-600">R$ {stats.pendingCommissions.toFixed(2)}</td>
+                                <td className="px-4 py-4 text-right">
+                                    <span className="text-red-600 block">
+                                        R$ {pendingCommissionsSummary.totalPendingAllTime.toFixed(2)}
+                                    </span>
+                                    {pendingCommissionsSummary.totalPendingPrior > 0 && (
+                                        <span className="text-[9px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full inline-block mt-0.5">
+                                            ⚠️ R$ {pendingCommissionsSummary.totalPendingPrior.toFixed(2)} anterior
+                                        </span>
+                                    )}
+                                </td>
                                 <td></td>
                             </tr>
                         </tfoot>
@@ -2158,54 +2335,288 @@ const FinancialAdmin: React.FC = () => {
         </div>
       )}
 
-      {/* MODAL DE PAGAMENTO DE COMISSÃO */}
-      {showPayModal.show && (
-        <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
-            <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-6 shadow-2xl space-y-5 animate-in zoom-in-95">
-                <div className="flex justify-between items-center px-1">
-                    <h3 className="text-green-600 font-black uppercase tracking-widest text-xs flex items-center gap-2">
-                        <CheckCircle2 size={16} /> Pagar Comissões
-                    </h3>
-                    <button onClick={() => setShowPayModal({ show: false, proName: null, amount: 0 })} className="text-gray-400 p-1"><X size={20} /></button>
+      {/* MODAL DE ACERTO DE CONTAS & QUITAÇÃO DE COMISSÕES */}
+      {showSettlementModal && (
+        <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-3 sm:p-4 backdrop-blur-sm animate-in fade-in overflow-y-auto">
+            <div className="bg-white w-full max-w-2xl rounded-[2.5rem] p-5 sm:p-6 shadow-2xl space-y-4 animate-in zoom-in-95 my-auto max-h-[92vh] flex flex-col">
+                {/* Header */}
+                <div className="flex justify-between items-center px-1 shrink-0">
+                    <div className="flex items-center gap-3">
+                        <div className="p-2.5 bg-blue-50 text-blue-900 rounded-2xl">
+                            <Users size={22} />
+                        </div>
+                        <div>
+                            <h3 className="text-blue-900 font-black uppercase tracking-widest text-sm flex items-center gap-2">
+                                Acerto de Contas & Quitação
+                            </h3>
+                            <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">
+                                Quitação de comissões pendentes da equipe
+                            </p>
+                        </div>
+                    </div>
+                    <button 
+                        onClick={() => { setShowSettlementModal(false); setSelectedSettlementIds([]); }} 
+                        className="text-gray-400 hover:text-gray-600 p-1.5 rounded-xl hover:bg-gray-100 transition-colors"
+                    >
+                        <X size={20} />
+                    </button>
                 </div>
 
-                <div className="space-y-4">
-                    <div className="bg-green-50 p-4 rounded-2xl border border-green-100 text-center">
-                        <p className="text-[10px] text-green-800 font-black uppercase tracking-widest mb-1">Valor a Pagar para {showPayModal.proName}</p>
-                        <h4 className="text-2xl font-black text-green-700">R$ {showPayModal.amount.toFixed(2)}</h4>
+                {/* Seletor de Colaborador */}
+                <div className="shrink-0 flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
+                    <button
+                        onClick={() => { setSettlementSelectedPro('all'); setSelectedSettlementIds([]); }}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider whitespace-nowrap transition-all ${
+                            settlementSelectedPro === 'all'
+                                ? 'bg-blue-900 text-white shadow-md'
+                                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                        }`}
+                    >
+                        Todos ({pendingCommissionsSummary.allPendingItems.length})
+                    </button>
+                    {uniquePros.map(p => {
+                        const count = (pendingCommissionsSummary.byPro[p]?.items || []).length;
+                        const isSelected = settlementSelectedPro === p;
+                        return (
+                            <button
+                                key={p}
+                                onClick={() => { setSettlementSelectedPro(p); setSelectedSettlementIds([]); }}
+                                className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider whitespace-nowrap transition-all flex items-center gap-1.5 ${
+                                    isSelected
+                                        ? 'bg-blue-900 text-white shadow-md'
+                                        : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                                }`}
+                            >
+                                <span>{p}</span>
+                                {count > 0 && (
+                                    <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold ${isSelected ? 'bg-blue-800 text-white' : 'bg-gray-300 text-gray-700'}`}>
+                                        {count}
+                                    </span>
+                                )}
+                            </button>
+                        );
+                    })}
+                </div>
+
+                {/* Filtro de Escopo: Todas vs Anteriores vs Período */}
+                <div className="flex bg-gray-100 p-1 rounded-2xl shrink-0">
+                    <button
+                        onClick={() => { setSettlementFilterScope('all'); setSelectedSettlementIds([]); }}
+                        className={`flex-1 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all ${
+                            settlementFilterScope === 'all' ? 'bg-white text-blue-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                        }`}
+                    >
+                        Todas as Pendentes ({pendingCommissionsSummary.allPendingItems.length})
+                    </button>
+                    <button
+                        onClick={() => { setSettlementFilterScope('prior'); setSelectedSettlementIds([]); }}
+                        className={`flex-1 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all ${
+                            settlementFilterScope === 'prior' ? 'bg-amber-100 text-amber-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                        }`}
+                    >
+                        Períodos Anteriores ({pendingCommissionsSummary.totalPendingPrior > 0 ? `⚠️ R$ ${pendingCommissionsSummary.totalPendingPrior.toFixed(0)}` : '0'})
+                    </button>
+                    <button
+                        onClick={() => { setSettlementFilterScope('period'); setSelectedSettlementIds([]); }}
+                        className={`flex-1 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all ${
+                            settlementFilterScope === 'period' ? 'bg-white text-blue-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                        }`}
+                    >
+                        Período Atual ({pendingCommissionsSummary.totalPendingInPeriod > 0 ? `R$ ${pendingCommissionsSummary.totalPendingInPeriod.toFixed(0)}` : '0'})
+                    </button>
+                </div>
+
+                {/* Alerta de períodos anteriores se houver */}
+                {pendingCommissionsSummary.totalPendingPrior > 0 && settlementFilterScope !== 'period' && (
+                    <div className="bg-amber-50 border border-amber-200 p-3 rounded-2xl flex items-start gap-2.5 text-amber-900 shrink-0 text-xs">
+                        <AlertCircle className="text-amber-600 shrink-0 mt-0.5" size={16} />
+                        <div className="space-y-0.5">
+                            <p className="font-black uppercase tracking-wider text-[10px] text-amber-800">
+                                Comissões de Períodos Anteriores Detectadas
+                            </p>
+                            <p className="text-amber-700 text-[11px] leading-relaxed">
+                                Há itens pendentes de datas anteriores ao filtro atual. Eles estão destacados abaixo com a tag &quot;Período Anterior&quot; para não ficarem esquecidos.
+                            </p>
+                        </div>
+                    </div>
+                )}
+
+                {/* Cards de Resumo */}
+                <div className="grid grid-cols-2 gap-3 shrink-0">
+                    <div className="bg-blue-50/70 p-3.5 rounded-2xl border border-blue-100">
+                        <span className="text-[9px] font-black uppercase tracking-widest text-blue-400 block mb-0.5">Total Pendente</span>
+                        <span className="text-lg font-black text-blue-900">
+                            R$ {filteredPendingForModal.reduce((acc, t) => acc + t.commissionValue, 0).toFixed(2).replace('.', ',')}
+                        </span>
+                        <span className="text-[10px] text-gray-400 block font-bold">{filteredPendingForModal.length} itens aguardando acerto</span>
                     </div>
 
-                    <div className="space-y-2">
-                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block px-1">Origem do Pagamento</label>
-                        <div className="flex bg-gray-50 p-1 rounded-2xl border border-gray-100">
-                            <button 
-                                onClick={() => setManagerForm({...managerForm, target: 'cash'})}
-                                className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase transition-all ${managerForm.target === 'cash' ? 'bg-white text-blue-900 shadow-sm' : 'text-gray-400'}`}
-                            >
-                                Caixa Físico
-                            </button>
-                            <button 
-                                onClick={() => setManagerForm({...managerForm, target: 'bank'})}
-                                className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase transition-all ${managerForm.target === 'bank' ? 'bg-white text-blue-900 shadow-sm' : 'text-gray-400'}`}
-                            >
-                                Conta Corrente
-                            </button>
+                    <div className="bg-green-50 p-3.5 rounded-2xl border border-green-100">
+                        <span className="text-[9px] font-black uppercase tracking-widest text-green-600 block mb-0.5">Selecionado para Pagar</span>
+                        <span className="text-lg font-black text-green-700">
+                            R$ {settlementSelectedTotal.toFixed(2).replace('.', ',')}
+                        </span>
+                        <span className="text-[10px] text-green-600 block font-bold">{selectedSettlementIds.length} itens marcados</span>
+                    </div>
+                </div>
+
+                {/* Barra com Botão MARCAR TODAS e Campo de Busca */}
+                <div className="flex flex-col sm:flex-row gap-2.5 items-stretch sm:items-center justify-between shrink-0">
+                    <div className="relative flex-1">
+                        <input 
+                            type="text" 
+                            value={settlementSearchTerm} 
+                            onChange={e => setSettlementSearchTerm(e.target.value)}
+                            placeholder="Buscar por cliente, serviço ou barbeiro..."
+                            className="w-full bg-gray-50 border border-gray-100 rounded-xl py-2 pl-9 pr-3 text-xs font-bold text-gray-700 outline-none focus:ring-1 focus:ring-blue-900 shadow-sm"
+                        />
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-300" size={14} />
+                    </div>
+
+                    {filteredPendingForModal.length > 0 && (
+                        <button
+                            type="button"
+                            onClick={handleToggleSelectAllSettlement}
+                            className={`flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all active:scale-95 shadow-sm ${
+                                isAllSettlementSelected
+                                    ? 'bg-blue-900 text-white'
+                                    : 'bg-blue-50 text-blue-900 hover:bg-blue-100 border border-blue-200'
+                            }`}
+                        >
+                            {isAllSettlementSelected ? <CheckSquare size={16} /> : <Square size={16} />}
+                            <span>{isAllSettlementSelected ? 'Desmarcar Todas' : 'Marcar Todas'}</span>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${isAllSettlementSelected ? 'bg-blue-800 text-white' : 'bg-blue-200 text-blue-900'}`}>
+                                {filteredPendingForModal.length}
+                            </span>
+                        </button>
+                    )}
+                </div>
+
+                {/* Lista de Itens com Scroll */}
+                <div className="flex-1 overflow-y-auto space-y-2 pr-1 min-h-[140px] max-h-[35vh]">
+                    {filteredPendingForModal.length === 0 ? (
+                        <div className="text-center py-10 text-gray-300 space-y-2">
+                            <CheckCircle2 size={36} className="mx-auto opacity-30 text-green-600" />
+                            <p className="text-xs font-bold uppercase tracking-wider text-gray-400">
+                                Nenhuma comissão pendente encontrada neste filtro.
+                            </p>
+                        </div>
+                    ) : (
+                        filteredPendingForModal.map((t) => {
+                            const isSelected = selectedSettlementIds.includes(t.id);
+                            return (
+                                <div 
+                                    key={t.id} 
+                                    onClick={() => {
+                                        setSelectedSettlementIds(prev => 
+                                            prev.includes(t.id) ? prev.filter(x => x !== t.id) : [...prev, t.id]
+                                        );
+                                    }}
+                                    className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${
+                                        isSelected 
+                                            ? 'border-blue-500 ring-2 ring-blue-500/20 bg-blue-50/40 shadow-sm' 
+                                            : t.isPrior
+                                                ? 'border-amber-200 bg-amber-50/30 hover:border-amber-300'
+                                                : 'border-gray-100 bg-white hover:border-gray-200'
+                                    }`}
+                                >
+                                    <div className="flex justify-between items-start">
+                                        <div className="flex items-center gap-3">
+                                            <div className="shrink-0 text-blue-900">
+                                                {isSelected ? <CheckSquare size={18} /> : <Square size={18} className="text-gray-300" />}
+                                            </div>
+                                            <div>
+                                                <div className="flex items-center gap-2 flex-wrap">
+                                                    <span className="text-xs font-black text-gray-900">{t.item}</span>
+                                                    <span className="text-[9px] bg-blue-100 text-blue-800 font-bold px-1.5 py-0.5 rounded uppercase">
+                                                        {t.pro}
+                                                    </span>
+                                                    {t.isPrior && (
+                                                        <span className="text-[8px] bg-amber-100 text-amber-800 font-black px-1.5 py-0.5 rounded border border-amber-200 uppercase">
+                                                            Período Anterior ({new Date(t.date + 'T12:00:00').toLocaleDateString('pt-BR')})
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div className="flex items-center gap-2 text-[10px] text-gray-400 font-bold uppercase mt-0.5">
+                                                    <span>{new Date(t.date + 'T12:00:00').toLocaleDateString('pt-BR')}</span>
+                                                    <span>•</span>
+                                                    <span>{t.category || t.type}</span>
+                                                    {t.client_supplier && (
+                                                        <>
+                                                            <span>•</span>
+                                                            <span className="text-blue-600 font-black">{t.client_supplier}</span>
+                                                        </>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="text-right shrink-0 pl-2">
+                                            <p className={`text-sm font-black ${t.type === 'VALE' ? 'text-red-500' : 'text-blue-900'}`}>
+                                                {t.type === 'VALE' ? '-' : ''} R$ {Math.abs(t.commissionValue).toFixed(2).replace('.', ',')}
+                                            </p>
+                                            <span className="text-[9px] text-gray-400 block">Venda: R$ {Math.abs(t.val).toFixed(2)}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })
+                    )}
+                </div>
+
+                {/* Footer de Pagamento */}
+                <div className="pt-3 border-t border-gray-100 space-y-3 shrink-0">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div>
+                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1">
+                                Origem do Pagamento
+                            </label>
+                            <div className="flex bg-gray-100 p-1 rounded-xl">
+                                <button
+                                    type="button"
+                                    onClick={() => setSettlementPaymentAccount('cash')}
+                                    className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${
+                                        settlementPaymentAccount === 'cash' ? 'bg-white text-blue-900 shadow-sm' : 'text-gray-400'
+                                    }`}
+                                >
+                                    Caixa Físico
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setSettlementPaymentAccount('bank')}
+                                    className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${
+                                        settlementPaymentAccount === 'bank' ? 'bg-white text-blue-900 shadow-sm' : 'text-gray-400'
+                                    }`}
+                                >
+                                    Conta Bancária
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setSettlementPaymentAccount('pix')}
+                                    className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${
+                                        settlementPaymentAccount === 'pix' ? 'bg-white text-blue-900 shadow-sm' : 'text-gray-400'
+                                    }`}
+                                >
+                                    Pix
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="text-right sm:text-right">
+                            <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider block">Total Selecionado</span>
+                            <span className="text-xl font-black text-green-600 block">
+                                R$ {settlementSelectedTotal.toFixed(2).replace('.', ',')}
+                            </span>
                         </div>
                     </div>
 
-                    <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100 flex gap-3 items-start">
-                        <AlertCircle size={20} className="text-blue-600 shrink-0 mt-0.5" />
-                        <p className="text-[10px] text-blue-800 font-medium leading-relaxed">
-                            Ao confirmar, o sistema registrará a saída do valor da conta selecionada e marcará as comissões do período como pagas.
-                        </p>
-                    </div>
-
-                    <button 
-                        onClick={handlePayCommissions}
-                        disabled={saving}
-                        className="w-full bg-green-600 text-white font-black py-4 rounded-2xl uppercase tracking-widest text-xs shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
+                    <button
+                        onClick={handleExecuteSettlementPayment}
+                        disabled={saving || selectedSettlementIds.length === 0}
+                        className="w-full bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white font-black py-3.5 rounded-2xl uppercase tracking-widest text-xs shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
                     >
-                        {saving ? <Loader2 className="animate-spin" size={16} /> : 'Confirmar Pagamento'}
+                        {saving ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
+                        Confirmar Quitação ({selectedSettlementIds.length} {selectedSettlementIds.length === 1 ? 'item' : 'itens'})
                     </button>
                 </div>
             </div>

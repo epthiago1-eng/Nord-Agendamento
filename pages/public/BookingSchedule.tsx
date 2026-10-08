@@ -1,8 +1,8 @@
 
-import React, { useState, useMemo, useEffect } from 'react';
-import { ChevronLeft, Calendar as CalendarIcon, ChevronRight, X, Clock, Loader2, Edit2 } from 'lucide-react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { ChevronLeft, Calendar as CalendarIcon, ChevronRight, X, Clock, Loader2, Edit2, RotateCw, AlertCircle } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { getAvailableSlotsForPro, getSettings } from '../../data/agendaData';
+import { getAvailableSlotsForPro, getSettings, checkAvailability } from '../../data/agendaData';
 import { EstablishmentSettings } from '../../types';
 import { db } from '../../supabase';
 
@@ -20,6 +20,9 @@ const BookingSchedule: React.FC = () => {
   
   const [professionals, setProfessionals] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [validatingSlot, setValidatingSlot] = useState<string | null>(null);
+  const [conflictNotice, setConflictNotice] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Carregar Dados Iniciais
   useEffect(() => {
@@ -60,32 +63,66 @@ const BookingSchedule: React.FC = () => {
 
   const dateStr = useMemo(() => formatDateSafe(selectedDate), [selectedDate]);
 
-  // Buscar Slots Disponíveis
-  useEffect(() => {
-    const fetchSlots = async () => {
+  // Buscar Slots Disponíveis de forma reutilizável
+  const fetchSlots = useCallback(async () => {
+    if (professionals.length === 0) return;
+    setIsRefreshing(true);
+    try {
       const slotsMap: Record<string, string[]> = {};
       for (const pro of professionals) {
         // Passa o ID do agendamento sendo editado para a função excluir ele da verificação de conflito
         slotsMap[pro.id] = await getAvailableSlotsForPro(pro.id, dateStr, totalDuration, editingAppointment?.id);
       }
       setProSlots(slotsMap);
-    };
-    if (professionals.length > 0) {
-      fetchSlots();
+    } catch (err) {
+      console.error('Erro ao buscar horários:', err);
+    } finally {
+      setIsRefreshing(false);
     }
   }, [professionals, dateStr, totalDuration, editingAppointment]);
 
-  const handleSelectSlot = (pro: any, time: string) => {
-    navigate('/booking/form', { 
-        state: { 
-            selectedServices, 
-            professional: pro, 
-            time, 
-            date: selectedDate.toLocaleDateString('pt-BR'),
-            dateIso: dateStr,
-            editingAppointment // Repassa o objeto de edição
-        } 
-    });
+  useEffect(() => {
+    fetchSlots();
+  }, [fetchSlots]);
+
+  // Atualização automática quando o usuário volta para a aba
+  useEffect(() => {
+    const handleFocus = () => {
+      fetchSlots();
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [fetchSlots]);
+
+  const handleSelectSlot = async (pro: any, time: string) => {
+    setValidatingSlot(`${pro.id}-${time}`);
+    setConflictNotice(null);
+
+    try {
+      // Leitura prévia em tempo real antes de navegar para o formulário
+      const check = await checkAvailability(pro.id, dateStr, time, totalDuration, editingAppointment?.id);
+      if (!check.available) {
+        setConflictNotice(check.reason || 'Este horário acabou de ser reservado ou bloqueado. Atualizando a agenda...');
+        await fetchSlots();
+        return;
+      }
+
+      navigate('/booking/form', { 
+          state: { 
+              selectedServices, 
+              professional: pro, 
+              time, 
+              date: selectedDate.toLocaleDateString('pt-BR'),
+              dateIso: dateStr,
+              editingAppointment // Repassa o objeto de edição
+          } 
+      });
+    } catch (err: any) {
+      setConflictNotice(err.message || 'Erro ao validar horário disponível.');
+      await fetchSlots();
+    } finally {
+      setValidatingSlot(null);
+    }
   };
 
   const changeDay = (offset: number) => {
@@ -181,6 +218,19 @@ const BookingSchedule: React.FC = () => {
             </div>
         )}
 
+        {conflictNotice && (
+            <div className="bg-amber-50 border border-amber-200 p-4 rounded-2xl flex items-start gap-3 text-amber-900 shadow-sm animate-in fade-in slide-in-from-top-2">
+                <AlertCircle className="text-amber-600 shrink-0 mt-0.5" size={20} />
+                <div className="flex-1 text-xs">
+                    <span className="font-black block text-sm mb-0.5 text-amber-950">Horário Atualizado</span>
+                    <span className="text-amber-800 font-medium">{conflictNotice}</span>
+                </div>
+                <button onClick={() => setConflictNotice(null)} className="text-amber-400 hover:text-amber-700 p-1">
+                    <X size={16} />
+                </button>
+            </div>
+        )}
+
         <div className="bg-gray-50 border border-gray-100 rounded-3xl p-2 shadow-sm flex items-center justify-between sticky top-4 z-20 backdrop-blur-sm bg-white/80">
             <button 
                 onClick={() => changeDay(-1)} 
@@ -205,12 +255,21 @@ const BookingSchedule: React.FC = () => {
                 </div>
             </button>
 
-            <button 
-                onClick={() => changeDay(1)}
-                className="p-3 text-black active:scale-90"
-            >
-                <ChevronRight size={24} />
-            </button>
+            <div className="flex items-center gap-1">
+                <button 
+                    onClick={() => fetchSlots()}
+                    title="Atualizar horários disponíveis"
+                    className="p-3 text-gray-400 hover:text-gray-700 active:scale-90"
+                >
+                    <RotateCw size={18} className={isRefreshing ? 'animate-spin text-blue-900' : ''} />
+                </button>
+                <button 
+                    onClick={() => changeDay(1)}
+                    className="p-3 text-black active:scale-90"
+                >
+                    <ChevronRight size={24} />
+                </button>
+            </div>
         </div>
 
         <div className="space-y-6">
@@ -218,8 +277,6 @@ const BookingSchedule: React.FC = () => {
                 <p className="text-center text-gray-400 text-sm italic py-10">Nenhum profissional disponível.</p>
             ) : professionals.map(pro => {
                 const availableSlots = proSlots[pro.id] || [];
-                // Se estiver editando, só mostra o profissional original ou todos? 
-                // Geralmente reagendar pode ser com qualquer um, mas vamos deixar livre.
                 return (
                     <div key={pro.id} className="bg-white rounded-[2.5rem] border border-gray-100 shadow-sm overflow-hidden flex flex-col items-center">
                         <div className="pt-8 pb-4 flex flex-col items-center gap-3">
@@ -239,20 +296,28 @@ const BookingSchedule: React.FC = () => {
                             {availableSlots.length === 0 ? (
                                 <div className="flex flex-col items-center justify-center py-4 text-red-400 gap-2">
                                     <X size={24} className="opacity-50" />
-                                    <p className="font-bold text-center italic text-[10px] uppercase tracking-widest">Sem horários hoje</p>
+                                    <p className="font-bold text-center italic text-[10px] uppercase tracking-widest">Sem horários livres hoje</p>
                                 </div>
                             ) : (
                                 <div className="grid grid-cols-4 gap-2">
-                                    {availableSlots.map(time => (
-                                        <button 
-                                            key={time}
-                                            onClick={() => handleSelectSlot(pro, time)}
-                                            className="text-white font-black py-3 rounded-xl text-[10px] tracking-tight active:scale-95 transition-all shadow-md hover:opacity-90"
-                                            style={{ backgroundColor: settings.primaryColor }}
-                                        >
-                                            {time}
-                                        </button>
-                                    ))}
+                                    {availableSlots.map(time => {
+                                        const isValidatingThis = validatingSlot === `${pro.id}-${time}`;
+                                        return (
+                                            <button 
+                                                key={time}
+                                                disabled={!!validatingSlot}
+                                                onClick={() => handleSelectSlot(pro, time)}
+                                                className="text-white font-black py-3 rounded-xl text-[10px] tracking-tight active:scale-95 transition-all shadow-md hover:opacity-90 disabled:opacity-60 flex items-center justify-center"
+                                                style={{ backgroundColor: settings.primaryColor }}
+                                            >
+                                                {isValidatingThis ? (
+                                                    <Loader2 size={13} className="animate-spin text-white" />
+                                                ) : (
+                                                    time
+                                                )}
+                                            </button>
+                                        );
+                                    })}
                                 </div>
                             )}
                         </div>

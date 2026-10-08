@@ -1,8 +1,8 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { ChevronLeft, CheckCircle2, User, Phone, Clipboard, AlertCircle, Loader2 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { saveAppointment, updateAppointment, checkClientSpam, getSettings } from '../../data/agendaData';
+import { saveAppointment, updateAppointment, checkClientSpam, getSettings, checkAvailability } from '../../data/agendaData';
 import { addNotification } from '../../data/notifications';
 import { db } from '../../supabase';
 
@@ -22,6 +22,30 @@ const BookingForm: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [logoUrl, setLogoUrl] = useState("https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png");
   const [spamError, setSpamError] = useState<string | null>(null);
+  const [slotConflict, setSlotConflict] = useState<{ isOpen: boolean; reason: string } | null>(null);
+
+  const totalDuration = useMemo(() => {
+    return selectedServices?.reduce((acc: number, s: any) => {
+      const mins = parseInt(String(s.duration || '30').split(' ')[0]);
+      return acc + mins;
+    }, 0) || 30;
+  }, [selectedServices]);
+
+  // Verificar na entrada se o horário ainda continua livre
+  useEffect(() => {
+    if (professional?.id && dateIso && time) {
+      checkAvailability(professional.id, dateIso, time, totalDuration, editingAppointment?.id)
+        .then(result => {
+          if (!result.available) {
+            setSlotConflict({
+              isOpen: true,
+              reason: result.reason || 'Este horário não está mais disponível.'
+            });
+          }
+        })
+        .catch(console.error);
+    }
+  }, [professional?.id, dateIso, time, totalDuration, editingAppointment?.id]);
   
   // Client Search States
   const [isSearchingClient, setIsSearchingClient] = useState(false);
@@ -104,10 +128,23 @@ const BookingForm: React.FC = () => {
             }
         }
 
-        const totalDuration = selectedServices?.reduce((acc: number, s: any) => {
-            const mins = parseInt(String(s.duration || '30').split(' ')[0]);
-            return acc + mins;
-        }, 0) || 30;
+        // Validação em tempo real: Evita reservas concorrentes ou bloqueio de agenda de última hora
+        const availabilityCheck = await checkAvailability(
+            professional?.id, 
+            dateIso, 
+            time, 
+            totalDuration, 
+            editingAppointment?.id
+        );
+
+        if (!availabilityCheck.available) {
+            setSlotConflict({
+                isOpen: true,
+                reason: availabilityCheck.reason || 'Este horário acabou de ser reservado ou bloqueado pelo profissional.'
+            });
+            setIsSubmitting(false);
+            return;
+        }
 
         let finalAppointment;
 
@@ -144,13 +181,6 @@ const BookingForm: React.FC = () => {
 
         } else {
             // FLUXO DE NOVO AGENDAMENTO
-            // Check if client exists to reuse ID or create new?
-            // saveAppointment usually creates a new client if ID is 'public-...'? 
-            // Actually saveAppointment in agendaData just inserts into appointments.
-            // If we want to link to an existing client, we should probably use their ID if found.
-            // But the current implementation of saveAppointment takes clientId as a string.
-            // If we found a client, we should probably use their real ID.
-            
             let clientId = 'public-' + Date.now();
             
             // Try to get real client ID if we found them
@@ -158,12 +188,6 @@ const BookingForm: React.FC = () => {
                  const { data } = await db.clients().select('id').eq('phone', formData.phone).single();
                  if (data) clientId = data.id;
             } else {
-                // If not found, maybe we should create the client record properly?
-                // For now, let's stick to the existing behavior but try to reuse if possible.
-                // Or just let the backend/trigger handle it if there is one.
-                // The current saveAppointment just inserts into appointments.
-                
-                // Let's try to insert/upsert the client to ensure they exist in clients table
                 try {
                     let referredById = null;
                     if (formData.referredByPhone) {
@@ -217,7 +241,15 @@ const BookingForm: React.FC = () => {
         });
     } catch (e: any) {
         console.error(e);
-        setSpamError('Erro ao agendar: ' + e.message);
+        const msg = e.message || '';
+        if (msg.includes('bloqueado') || msg.includes('ocupado') || msg.includes('passados') || msg.includes('indisponível')) {
+            setSlotConflict({
+                isOpen: true,
+                reason: msg
+            });
+        } else {
+            setSpamError('Erro ao agendar: ' + msg);
+        }
     } finally {
         setIsSubmitting(false);
     }
@@ -401,6 +433,50 @@ const BookingForm: React.FC = () => {
                 className="w-full bg-gray-900 text-white font-bold py-4 rounded-2xl mt-2 active:scale-95 transition-transform"
               >
                 Entendi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Real-Time Conflict / Blocked Slot Modal */}
+      {slotConflict?.isOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in">
+          <div className="bg-white rounded-[2.5rem] p-6 w-full max-w-sm shadow-2xl animate-in zoom-in-95">
+            <div className="flex flex-col items-center text-center gap-4">
+              <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center text-amber-600 mb-1">
+                <AlertCircle size={36} />
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-gray-900">Horário Indisponível</h3>
+                <p className="text-gray-500 text-xs mt-1 leading-relaxed">
+                  Enquanto você concluía os dados, este horário foi reservado por outro cliente ou a agenda foi fechada pelo profissional.
+                </p>
+              </div>
+
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 w-full text-xs font-bold text-amber-900">
+                {slotConflict.reason}
+              </div>
+
+              <div className="text-xs text-gray-500 bg-gray-50 rounded-2xl p-3 w-full text-left space-y-1">
+                <span className="font-bold text-gray-700 block">Horário que tentou reservar:</span>
+                <span className="block text-gray-800 font-medium">Dia {date} às {time}</span>
+                <span className="block text-gray-800 font-medium">Profissional: {professional?.name}</span>
+              </div>
+
+              <button 
+                onClick={() => {
+                  setSlotConflict(null);
+                  navigate('/booking/schedule', { 
+                    state: { 
+                      selectedServices, 
+                      editingAppointment 
+                    } 
+                  });
+                }}
+                className="w-full bg-black text-white font-black py-4 rounded-2xl active:scale-95 transition-all uppercase tracking-widest text-xs shadow-lg hover:bg-gray-800"
+              >
+                Escolher Outro Horário
               </button>
             </div>
           </div>

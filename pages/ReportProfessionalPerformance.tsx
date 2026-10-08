@@ -5,7 +5,16 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../supabase';
-import { calculateCommission } from '../data/transactions';
+
+// Mapeamento dos IDs Mockados para o exemplo visual funcionar
+// Em produção, isso viria da relação do banco
+const SERVICE_IDS_MAPPING: Record<string, string> = {
+    'Corte + Barba': '6', 
+    'Corte Máquina': '4',
+    'Corte Tesoura': '3',
+    'Barba': '2',
+    'Sobrancelha': '1'
+};
 
 const ReportProfessionalPerformance: React.FC = () => {
   const navigate = useNavigate();
@@ -14,23 +23,14 @@ const ReportProfessionalPerformance: React.FC = () => {
   const [dateRange, setDateRange] = useState({ start: '2026-02-01', end: '2026-02-28' });
   
   const [configs, setConfigs] = useState<any[]>([]);
-  const [servicesMap, setServicesMap] = useState<Record<string, string>>({});
   const [calculatedData, setCalculatedData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // 1. Carrega configs e o mapeamento nome->id de serviços ao montar
+  // 1. Carrega configs do banco ao montar
   useEffect(() => {
     const fetchConfigs = async () => {
-        const [configsRes, servicesRes] = await Promise.all([
-            db.professionalServices().select('*'),
-            db.services().select('id, name')
-        ]);
-        if (configsRes.data) setConfigs(configsRes.data);
-        if (servicesRes.data) {
-            const map: Record<string, string> = {};
-            servicesRes.data.forEach((s: any) => map[s.name] = s.id);
-            setServicesMap(map);
-        }
+        const { data } = await db.professionalServices().select('*');
+        if (data) setConfigs(data);
     };
     fetchConfigs();
   }, []);
@@ -76,12 +76,10 @@ const ReportProfessionalPerformance: React.FC = () => {
                 let commProduct = 0;
                 let totalAppointments = 0;
 
-                const proConfigs = configs.filter(c => c.professional_id === pro.id);
-
                 const sales = proTransactions.map(t => {
                     const isProduct = t.category === 'Produto' || t.type === 'PRODUTO';
                     const val = Math.abs(t.val);
-                    const comm = calculateCommission(t, proConfigs, servicesMap);
+                    const comm = t.commission_amount || 0;
 
                     if (isProduct) {
                         grossProducts += val;

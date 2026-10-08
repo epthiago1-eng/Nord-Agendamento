@@ -1,98 +1,33 @@
 
-import { supabase, fetchAllPages } from '../supabase';
+import { supabase } from '../supabase';
 import type { Transaction } from '../types';
 
 export type { Transaction };
 
-export interface CommissionConfig {
-  professional_id?: string;
-  service_id: string;
-  commission_type: 'percent' | 'fixed';
-  commission_value: number;
-}
-
-// Fonte única de verdade para o cálculo de comissão. Usada tanto pelas telas
-// do colaborador (extrato, painel) quanto pela auditoria/pagamento do admin —
-// antes cada tela reimplementava essa lógica de um jeito ligeiramente
-// diferente, e a tela que efetivamente paga (CommissionAudit) usava uma
-// fórmula fixa que ignorava overrides e o valor já congelado no checkout.
-export const calculateCommission = (
-  t: Pick<Transaction, 'type' | 'category' | 'val' | 'item' | 'commission_value' | 'commission_type' | 'commission_amount'>,
-  commissionConfigs: CommissionConfig[],
-  servicesMap: Record<string, string>
-): number => {
-  // 0. VALE (adiantamento): dedução do que o profissional já recebeu.
-  if (t.type === 'VALE') {
-    return -Math.abs(t.val);
-  }
-
-  // 1. Override manual na própria transação (prioridade máxima).
-  if (t.commission_value !== undefined && t.commission_value !== null) {
-    return t.commission_type === 'percent'
-      ? t.val * (t.commission_value / 100)
-      : t.commission_value;
-  }
-
-  // 2. Valor já congelado no checkout (padrão atual).
-  if (t.commission_amount !== undefined && t.commission_amount !== null) {
-    return t.commission_amount;
-  }
-
-  // 3. Gorjeta: 100% para o profissional.
-  if (t.category === 'Gorjeta' || t.type === 'GORJETA') {
-    return t.val;
-  }
-
-  // 4. Itens "Outros" sem valor definido: pendente de configuração, não é 0 automático oculto.
-  if (t.type === 'OUTROS') {
-    return 0;
-  }
-
-  // 5. Regra específica configurada para o serviço/profissional.
-  const serviceId = servicesMap[t.item];
-  const config = commissionConfigs.find(c => c.service_id === serviceId);
-  if (config) {
-    return config.commission_type === 'percent'
-      ? t.val * (config.commission_value / 100)
-      : config.commission_value;
-  }
-
-  // 6. Fallback padrão da casa.
-  const rate = (t.type === 'SERVIÇO' || t.category === 'Serviço') ? 0.4 : 0.1;
-  return t.val * rate;
-};
-
 export const getTransactions = async (filters?: { proId?: string, month?: string, startDate?: string, endDate?: string }): Promise<Transaction[]> => {
-  const buildBase = () => {
-    let query = supabase.from('transactions').select('*')
-      .order('date', { ascending: false })
-      .order('id', { ascending: true }); // desempate estável para a paginação abaixo
-
-    if (filters?.proId) query = query.eq('professional_id', filters.proId);
-
-    if (filters?.startDate && filters?.endDate) {
-        query = query.gte('date', filters.startDate).lte('date', filters.endDate);
-    } else if (filters?.month) {
-        // Fallback para filtro de mês YYYY-MM
-        const [year, month] = filters.month.split('-');
-        const start = `${year}-${month}-01`;
-        const end = new Date(parseInt(year), parseInt(month), 0).toISOString().split('T')[0];
-        query = query.gte('date', start).lte('date', end);
-    }
-    return query;
-  };
-
-  // Sem filtro de data, esta busca pode facilmente ultrapassar 1000 linhas
-  // (extrato completo, comissões sem período definido) — pagina para não
-  // cortar histórico silenciosamente.
-  const data = await fetchAllPages<any>((from, to) => buildBase().range(from, to));
-
+  let query = supabase.from('transactions').select('*').order('date', { ascending: false });
+  
+  if (filters?.proId) query = query.eq('professional_id', filters.proId);
+  
+  if (filters?.startDate && filters?.endDate) {
+      query = query.gte('date', filters.startDate).lte('date', filters.endDate);
+  } else if (filters?.month) {
+      // Fallback para filtro de mês YYYY-MM
+      const [year, month] = filters.month.split('-');
+      const start = `${year}-${month}-01`;
+      const end = new Date(parseInt(year), parseInt(month), 0).toISOString().split('T')[0];
+      query = query.gte('date', start).lte('date', end);
+  }
+  
+  const { data, error } = await query;
+  if (error) throw error;
+  
   // Mapeia para garantir compatibilidade com o frontend
-  return data.map((t: any) => ({
+  return data?.map((t: any) => ({
     ...t,
     val: t.total_value || t.val, // Fallback
     item: t.item || t.description // Fallback para leitura
-  }));
+  })) || [];
 };
 
 export const addTransaction = async (transaction: Partial<Transaction> & { method?: string }) => {

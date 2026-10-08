@@ -1,5 +1,5 @@
 import type { Appointment, EstablishmentSettings } from '../types';
-import { supabase, db, fetchAllPages } from '../supabase';
+import { supabase, db } from '../supabase';
 import { addNotification } from './notifications';
 import { addTransaction } from './transactions';
 
@@ -15,13 +15,10 @@ export interface AgendaBlock {
 
 // --- CONFIGURAÇÕES ---
 
-// Campos públicos/não-sensíveis apenas: saldos ficam de fora (ver getCashBalances).
-// A tabela settings é lida por telas públicas de agendamento sem login, então esta
-// função nunca deve pedir colunas de saldo (o banco também bloqueia isso por permissão de coluna).
 export const getSettings = async (): Promise<EstablishmentSettings & { id?: number }> => {
   const { data, error } = await supabase
     .from('settings')
-    .select('id, primary_color, secondary_color, name, logo_url, slot_interval')
+    .select('id, primary_color, secondary_color, name, logo_url, slot_interval, cash_balance, bank_balance, pix_balance, card_balance')
     .single();
 
   if (error || !data) {
@@ -45,27 +42,6 @@ export const getSettings = async (): Promise<EstablishmentSettings & { id?: numb
       name: data.name || 'Nord Barbershop',
       logoUrl: data.logo_url || '',
       slotInterval: data.slot_interval || 15,
-      cash_balance: 0,
-      bank_balance: 0,
-      pix_balance: 0,
-      card_balance: 0
-  };
-};
-
-// Saldos de caixa/banco/pix/cartão: dado sensível, só admin pode ler.
-// Passa pela RPC get_cash_balances (SECURITY DEFINER + checagem is_admin no banco)
-// em vez de selecionar direto da tabela settings.
-export const getCashBalances = async (): Promise<{ cash_balance: number; bank_balance: number; pix_balance: number; card_balance: number }> => {
-  const { data, error } = await supabase.rpc('get_cash_balances').single<{
-    cash_balance: number; bank_balance: number; pix_balance: number; card_balance: number;
-  }>();
-
-  if (error || !data) {
-    console.error('Erro ao buscar saldos (requer admin):', error);
-    return { cash_balance: 0, bank_balance: 0, pix_balance: 0, card_balance: 0 };
-  }
-
-  return {
       cash_balance: data.cash_balance || 0,
       bank_balance: data.bank_balance || 0,
       pix_balance: data.pix_balance || 0,
@@ -177,38 +153,24 @@ const mapAppointmentFromDB = (data: any): Appointment => {
 };
 
 export const getAppointments = async (filters?: { proId?: string, date?: string, startDate?: string, endDate?: string }): Promise<Appointment[]> => {
-  const buildQuery = () => {
-    let query = supabase.from('appointments').select('*').order('id', { ascending: true });
-
-    // Tenta filtrar por professionalId (camelCase como no banco, com aspas duplas implícitas pelo client)
-    if (filters?.proId) query = query.eq('professionalId', filters.proId);
-
-    if (filters?.date) {
-        query = query.eq('date', filters.date);
-    } else if (filters?.startDate && filters?.endDate) {
-        query = query.gte('date', filters.startDate).lte('date', filters.endDate);
-    }
-    return query;
-  };
-
-  // Sem filtro (ou com um intervalo de datas amplo), esta busca pode passar
-  // de 1000 linhas — pagina para não cortar agendamentos silenciosamente
-  // (a tabela já passou desse limite em produção).
-  let data: any[] | null = null;
-  let error: any = null;
-  try {
-      data = await fetchAllPages<any>((from, to) => buildQuery().range(from, to));
-  } catch (e) {
-      error = e;
+  let query = supabase.from('appointments').select('*');
+  
+  // Tenta filtrar por professionalId (camelCase como no banco, com aspas duplas implícitas pelo client)
+  if (filters?.proId) query = query.eq('professionalId', filters.proId); 
+  
+  if (filters?.date) {
+      query = query.eq('date', filters.date);
+  } else if (filters?.startDate && filters?.endDate) {
+      query = query.gte('date', filters.startDate).lte('date', filters.endDate);
   }
 
+  const { data, error } = await query;
+  
   // Fallback: Se der erro na query especifica (ex: coluna nao existe), tenta buscar tudo e filtrar no JS
   if (error && error.code === 'PGRST204') { // Column not found
       console.warn('Coluna não encontrada, tentando busca genérica...');
-      const allData = await fetchAllPages<any>((from, to) =>
-          supabase.from('appointments').select('*').range(from, to)
-      );
-      let result = allData.map(mapAppointmentFromDB);
+      const { data: allData } = await supabase.from('appointments').select('*');
+      let result = allData ? allData.map(mapAppointmentFromDB) : [];
       
       if (filters?.date) result = result.filter(a => a.date === filters.date);
       if (filters?.startDate && filters?.endDate) {
@@ -226,32 +188,18 @@ export const getAppointments = async (filters?: { proId?: string, date?: string,
   return data ? data.map(mapAppointmentFromDB) : [];
 };
 
-export const getAppointmentById = async (id: string): Promise<Appointment | null> => {
-  const { data, error } = await supabase.from('appointments').select('*').eq('id', id).maybeSingle();
-
-  if (error) {
-      console.error('Erro ao buscar agendamento por ID:', error);
-      return null;
-  }
-  return data ? mapAppointmentFromDB(data) : null;
-};
-
 export const getAppointmentsByPhone = async (phone: string): Promise<Appointment[]> => {
-  // Sem filtro de data (tela pública "Consultar Meus Horários" precisa do
-  // histórico inteiro do cliente) — pagina para não cortar em 1000 linhas.
-  // A tabela appointments já passou desse limite em produção.
-  const data = await fetchAllPages<any>((from, to) =>
-    supabase
-      .from('appointments')
-      .select('*')
-      //.eq('clientPhone', phone) // Tentativa direta
-      .order('date', { ascending: false }) // Ordena do mais recente para o mais antigo
-      .order('id', { ascending: true }) // desempate estável para a paginação
-      .range(from, to)
-  );
+  const { data, error } = await supabase
+    .from('appointments')
+    .select('*')
+    //.eq('clientPhone', phone) // Tentativa direta
+    // .gte('date', new Date().toISOString().split('T')[0]) // REMOVIDO: Queremos todo o histórico
+    .order('date', { ascending: false }); // Ordena do mais recente para o mais antigo
 
+  if (error) throw error;
+  
   // Filtragem no cliente para garantir match independente do nome da coluna
-  const mapped = data.map(mapAppointmentFromDB);
+  const mapped = data ? data.map(mapAppointmentFromDB) : [];
   return mapped.filter(a => a.clientPhone === phone);
 };
 
@@ -349,6 +297,15 @@ export const saveAppointment = async (apt: Omit<Appointment, 'id'>) => {
 };
 
 export const updateAppointment = async (id: string, data: Partial<Appointment>) => {
+  // Validação de disponibilidade antes de qualquer alteração de data/hora/profissional
+  if (data.date && data.time && data.professionalId) {
+      const duration = data.duration || 30;
+      const availability = await checkAvailability(data.professionalId, data.date, data.time, duration, id);
+      if (!availability.available) {
+          throw new Error(availability.reason || 'Horário indisponível para agendamento.');
+      }
+  }
+
   // Se o usuário não estiver logado, tenta usar a função RPC pública (se tiver telefone)
   const { data: session } = await supabase.auth.getSession();
   const isAnon = !session?.session?.user;
@@ -494,6 +451,19 @@ export const deleteAppointment = async (id: string, reason: string = 'Exclusão 
   }
 };
 
+// Helper para converter strings de data/hora mantendo a hora literal e evitando distorção de fuso horário (UTC vs Local)
+export const parseVisualDateTime = (val: string): Date => {
+  if (!val) return new Date();
+  const clean = val.replace('Z', '');
+  const parts = clean.split(/[-T:\s+]/);
+  const year = Number(parts[0]);
+  const month = Number(parts[1]) - 1;
+  const day = Number(parts[2]);
+  const hour = Number(parts[3] || 0);
+  const minute = Number(parts[4] || 0);
+  return new Date(year, month, day, hour, minute, 0, 0);
+};
+
 export const checkAvailability = async (
     proId: string, 
     date: string, 
@@ -503,42 +473,31 @@ export const checkAvailability = async (
 ): Promise<{ available: boolean, reason?: string }> => {
     
     const now = new Date();
-    const proposedStart = new Date(`${date}T${time}`);
+    const proposedStart = parseVisualDateTime(`${date}T${time}`);
     const proposedEnd = new Date(proposedStart.getTime() + duration * 60000);
 
-    // if (proposedStart < now) {
-    //     return { available: false, reason: 'Não é possível agendar em datas ou horários passados.' };
-    // }
+    if (proposedStart < now) {
+        return { available: false, reason: 'Não é possível agendar em datas ou horários passados.' };
+    }
+
+    // 1. Verificar bloqueios da agenda (busca ampla com margem de 1 dia para cobrir fusos e multi-dias)
+    const [y, m, d] = date.split('-').map(Number);
+    const prevDateObj = new Date(y, m - 1, d - 1);
+    const nextDateObj = new Date(y, m - 1, d + 1);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const prevDateStr = `${prevDateObj.getFullYear()}-${pad(prevDateObj.getMonth() + 1)}-${pad(prevDateObj.getDate())}`;
+    const nextDateStr = `${nextDateObj.getFullYear()}-${pad(nextDateObj.getMonth() + 1)}-${pad(nextDateObj.getDate())}`;
 
     const { data: blocks } = await supabase
         .from('agenda_blocks')
         .select('*')
         .eq('professional_id', proId)
-        .gte('end_at', `${date}T00:00:00`)
-        .lte('start_at', `${date}T23:59:59`);
+        .gte('end_at', `${prevDateStr}T00:00:00`)
+        .lte('start_at', `${nextDateStr}T23:59:59`);
 
-    const hasBlock = blocks?.some(blk => {
-        // Parse dates manually to ensure we are comparing local times as they appear visually
-        // This avoids timezone issues where the DB might return UTC but the UI shows local
-        const bStartStr = blk.start_at.split('T')[1].substring(0, 5);
-        const bEndStr = blk.end_at.split('T')[1].substring(0, 5);
-        
-        // Construct Date objects using the APPOINTMENT date to ensure correct day comparison
-        // We assume blocks are for the specific day being checked (or we check overlap with the block's full date if needed)
-        // But since we query by day overlap, we need to be careful.
-        
-        // Better approach: Use the full ISO string but treat it as local time if possible, 
-        // OR just trust the string comparison if we are sure about the format.
-        
-        // Let's stick to the robust full date comparison but correct for the timezone offset issue
-        // by creating dates from the string parts explicitly.
-        
-        const bStartParts = blk.start_at.split(/[-T:]/);
-        const bEndParts = blk.end_at.split(/[-T:]/);
-        
-        const bStart = new Date(Number(bStartParts[0]), Number(bStartParts[1])-1, Number(bStartParts[2]), Number(bStartParts[3]), Number(bStartParts[4]));
-        const bEnd = new Date(Number(bEndParts[0]), Number(bEndParts[1])-1, Number(bEndParts[2]), Number(bEndParts[3]), Number(bEndParts[4]));
-
+    const hasBlock = (blocks || []).some(blk => {
+        const bStart = parseVisualDateTime(blk.start_at);
+        const bEnd = parseVisualDateTime(blk.end_at);
         return (proposedStart < bEnd && proposedEnd > bStart);
     });
 
@@ -546,7 +505,7 @@ export const checkAvailability = async (
         return { available: false, reason: 'Horário bloqueado pelo profissional.' };
     }
 
-    // Busca agendamentos do dia (busca genérica para filtrar no JS e evitar erro de coluna)
+    // 2. Busca agendamentos do dia (busca genérica para filtrar no JS e evitar erro de coluna)
     const { data: appointments } = await supabase
         .from('appointments')
         .select('*')
@@ -563,12 +522,10 @@ export const checkAvailability = async (
         );
 
         const hasConflict = proApts.some(apt => {
-            const aptStart = new Date(`${date}T${apt.time}`);
-            const aptEnd = aptStart.getTime() + (apt.duration || 30) * 60000;
-            const proposedEndTime = proposedEnd.getTime();
-            const proposedStartTime = proposedStart.getTime();
+            const aptStart = parseVisualDateTime(`${apt.date}T${apt.time}`);
+            const aptEnd = new Date(aptStart.getTime() + (apt.duration || 30) * 60000);
             
-            return (proposedStartTime < aptEnd && proposedEndTime > aptStart.getTime());
+            return (proposedStart < aptEnd && proposedEnd > aptStart);
         });
 
         if (hasConflict) {
@@ -617,7 +574,8 @@ export const getAvailableSlotsForPro = async (proId: string, dateStr: string, se
     const settings = await getSettings();
     const interval = settings.slotInterval || 15;
     
-    const dateObj = new Date(dateStr + 'T12:00:00');
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const dateObj = new Date(y, m - 1, d, 12, 0, 0);
     const daysMap = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
     const currentDayName = daysMap[dateObj.getDay()];
 
@@ -640,13 +598,31 @@ export const getAvailableSlotsForPro = async (proId: string, dateStr: string, se
         .filter(a => a.professionalId === proId && !['Desmarcou', 'Cancelaram'].includes(a.status) && a.id !== excludeAptId) 
         : [];
 
+    const prevDateObj = new Date(y, m - 1, d - 1);
+    const nextDateObj = new Date(y, m - 1, d + 1);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const prevDateStr = `${prevDateObj.getFullYear()}-${pad(prevDateObj.getMonth() + 1)}-${pad(prevDateObj.getDate())}`;
+    const nextDateStr = `${nextDateObj.getFullYear()}-${pad(nextDateObj.getMonth() + 1)}-${pad(nextDateObj.getDate())}`;
+
     const { data: blocks } = await supabase
       .from('agenda_blocks')
-      .select('start_at, end_at')
+      .select('*')
       .eq('professional_id', proId)
-      .filter('start_at', 'gte', `${dateStr}T00:00:00`)
-      .filter('start_at', 'lte', `${dateStr}T23:59:59`);
+      .gte('end_at', `${prevDateStr}T00:00:00`)
+      .lte('start_at', `${nextDateStr}T23:59:59`);
 
+    const parsedBlocks = (blocks || []).map(b => ({
+      start: parseVisualDateTime(b.start_at),
+      end: parseVisualDateTime(b.end_at)
+    }));
+
+    const parsedAppointments = appointments.map(apt => {
+      const aptStart = parseVisualDateTime(`${apt.date}T${apt.time}`);
+      const aptEnd = new Date(aptStart.getTime() + (apt.duration || 30) * 60000);
+      return { start: aptStart, end: aptEnd };
+    });
+
+    const now = new Date();
     const availableSlots: string[] = [];
 
     attendanceHours.forEach(range => {
@@ -658,35 +634,32 @@ export const getAvailableSlotsForPro = async (proId: string, dateStr: string, se
 
         for (let currentMinutes = rangeStartMinutes; currentMinutes < rangeEndMinutes; currentMinutes += interval) {
             const h = Math.floor(currentMinutes / 60);
-            const m = currentMinutes % 60;
-            const timeStr = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+            const min = currentMinutes % 60;
+            const timeStr = `${h.toString().padStart(2, '0')}:${min.toString().padStart(2, '0')}`;
             
-            const slotStart = currentMinutes;
-            const slotEnd = currentMinutes + serviceDuration;
+            const slotStart = parseVisualDateTime(`${dateStr}T${timeStr}`);
+            const slotEnd = new Date(slotStart.getTime() + serviceDuration * 60000);
 
-            const slotDateTime = new Date(`${dateStr}T${timeStr}`);
-            if (slotDateTime < new Date()) continue;
+            // Não exibir horários que já passaram hoje
+            if (slotStart <= now) continue;
 
-            if (slotEnd > rangeEndMinutes) continue;
+            // Não permitir que o serviço termine após o horário de atendimento
+            const slotEndMinutes = currentMinutes + serviceDuration;
+            if (slotEndMinutes > rangeEndMinutes) continue;
 
-            const hasAptConflict = appointments.some(apt => {
-                const [ah, am] = apt.time.split(':').map(Number);
-                const aptStart = ah * 60 + am;
-                const aptEnd = aptStart + apt.duration;
-                return (slotStart < aptEnd && slotEnd > aptStart);
-            });
+            // Conflito com agendamentos
+            const hasAptConflict = parsedAppointments.some(apt => 
+                (slotStart < apt.end && slotEnd > apt.start)
+            );
+            if (hasAptConflict) continue;
 
-            const hasBlockConflict = blocks?.some(blk => {
-                const bStart = new Date(blk.start_at);
-                const bEnd = new Date(blk.end_at);
-                const bStartMin = bStart.getHours() * 60 + bStart.getMinutes();
-                const bEndMin = bEnd.getHours() * 60 + bEnd.getMinutes();
-                return (slotStart < bEndMin && slotEnd > bStartMin);
-            });
+            // Conflito com bloqueios da agenda (mesma regra do checkAvailability)
+            const hasBlockConflict = parsedBlocks.some(blk => 
+                (slotStart < blk.end && slotEnd > blk.start)
+            );
+            if (hasBlockConflict) continue;
 
-            if (!hasAptConflict && !hasBlockConflict) {
-                availableSlots.push(timeStr);
-            }
+            availableSlots.push(timeStr);
         }
     });
 

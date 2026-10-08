@@ -7,11 +7,10 @@ import {
   MessageCircle, Coins, Tag, PlusCircle, Percent
 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { getAppointmentById, updateAppointment, Appointment, deleteAppointment, transferAppointment, getSettings, saveSettings } from '../data/agendaData';
+import { getAppointments, updateAppointment, Appointment, deleteAppointment, transferAppointment, getSettings, saveSettings } from '../data/agendaData';
 import { syncAppointmentTransactions } from '../data/transactions'; 
 import { addNotification } from '../data/notifications';
 import { db, supabase } from '../supabase';
-import { parseCurrencyBR } from '../format';
 
 const AppointmentCheckout: React.FC = () => {
   const navigate = useNavigate();
@@ -102,9 +101,10 @@ const AppointmentCheckout: React.FC = () => {
             // Removido auto-seleção para forçar escolha manual
             // if (methods.length > 0) setPaymentMethod(methods[0].name);
 
-            // Carregar Agendamento (busca direta por ID, sem depender de trazer a tabela inteira)
-            const apt = id ? await getAppointmentById(id) : null;
-
+            // Carregar Agendamento
+            const appointments = await getAppointments();
+            const apt = appointments.find(a => a.id === id);
+            
             if (apt) {
                 setAppointment(apt);
                 
@@ -171,19 +171,19 @@ const AppointmentCheckout: React.FC = () => {
   const totals = useMemo(() => {
     const sTotal = selectedServices.reduce((sum, s) => sum + s.price, 0);
     const pTotal = selectedProducts.reduce((sum, p) => sum + (p.price * p.quantity), 0);
-    const oTotal = parseCurrencyBR(othersValue);
-
+    const oTotal = parseFloat(othersValue.replace(',', '.')) || 0;
+    
     const subtotal = sTotal + pTotal + oTotal;
-
-    const dVal = parseCurrencyBR(discountValue);
+    
+    const dVal = parseFloat(discountValue.replace(',', '.')) || 0;
     let discountAmount = 0;
     if (discountType === 'fixed') {
         discountAmount = dVal;
     } else {
         discountAmount = subtotal * (dVal / 100);
     }
-
-    const tip = parseCurrencyBR(tipValue);
+    
+    const tip = parseFloat(tipValue.replace(',', '.')) || 0;
     
     return { 
         services: sTotal, 
@@ -385,9 +385,10 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
         return;
     }
 
-    const price = parseCurrencyBR(customItemPrice);
-
-    if (price <= 0) {
+    // Corrige o parsing do preço: substitui vírgula por ponto
+    const price = parseFloat(customItemPrice.replace(',', '.'));
+    
+    if (isNaN(price) || price < 0) {
         alert('Valor inválido.');
         return;
     }
@@ -442,7 +443,7 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
         async () => {
             setProcessing(true);
             try {
-                const finalValue = parseCurrencyBR(paymentValue);
+                const finalValue = parseFloat(paymentValue.replace(',', '.'));
                 
                 const finalPayments = showMultiPayment ? payments : [{ method: paymentMethod, value: totals.total }];
                 const totalPaid = finalPayments.reduce((acc, p) => acc + p.value, 0);
