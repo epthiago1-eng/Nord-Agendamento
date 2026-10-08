@@ -81,7 +81,7 @@ const ClientHistory: React.FC = () => {
   };
 
   const handleViewDetails = (item: any) => {
-    navigate(`/appointment-checkout/${item.id}`); // Redireciona para o checkout existente para ver detalhes
+    navigate(`/appointment-checkout/${item.id}`, { state: { appointment: item } }); // Redireciona para o checkout existente para ver detalhes
   };
 
   return (

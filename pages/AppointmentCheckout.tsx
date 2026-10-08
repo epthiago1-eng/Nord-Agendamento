@@ -6,8 +6,8 @@ import {
   ArrowRightLeft, AlertTriangle, X, Loader2, UserX, XCircle, LogOut,
   MessageCircle, Coins, Tag, PlusCircle, Percent
 } from 'lucide-react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { getAppointments, updateAppointment, Appointment, deleteAppointment, transferAppointment, getSettings, saveSettings } from '../data/agendaData';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
+import { getAppointmentById, getAppointments, updateAppointment, Appointment, deleteAppointment, transferAppointment, getSettings, saveSettings } from '../data/agendaData';
 import { syncAppointmentTransactions } from '../data/transactions'; 
 import { addNotification } from '../data/notifications';
 import { db, supabase } from '../supabase';
@@ -15,9 +15,11 @@ import { db, supabase } from '../supabase';
 const AppointmentCheckout: React.FC = () => {
   const navigate = useNavigate();
   const { id } = useParams();
+  const location = useLocation();
+  const stateAppointment: Appointment | null = (location.state as any)?.appointment || null;
   
   // Dados do Agendamento
-  const [appointment, setAppointment] = useState<Appointment | null>(null);
+  const [appointment, setAppointment] = useState<Appointment | null>(stateAppointment);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
 
@@ -101,15 +103,22 @@ const AppointmentCheckout: React.FC = () => {
             // Removido auto-seleção para forçar escolha manual
             // if (methods.length > 0) setPaymentMethod(methods[0].name);
 
-            // Carregar Agendamento
-            const appointments = await getAppointments();
-            const apt = appointments.find(a => a.id === id);
+            // Carregar Agendamento por ID direto (evita sobrecarga e supera o limite de paginação de 1000 registros)
+            let apt: Appointment | null = null;
+            if (id) {
+                apt = await getAppointmentById(id);
+            }
+
+            // Fallback caso venha pelo location.state
+            if (!apt && stateAppointment && stateAppointment.id === id) {
+                apt = stateAppointment;
+            }
             
             if (apt) {
                 setAppointment(apt);
                 
                 // Mapear serviços do agendamento
-                const initialServices = apt.services.map(sName => {
+                const initialServices = (apt.services || []).map(sName => {
                     // Verifica se é um serviço customizado com preço embutido (ex: "Corte Especial|50.00")
                     if (sName.includes('|')) {
                         const [name, priceStr] = sName.split('|');
@@ -832,7 +841,23 @@ Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é s�
   };
 
   if (loading) return <div className="flex h-screen items-center justify-center"><Loader2 className="animate-spin text-blue-900" size={40} /></div>;
-  if (!appointment) return <div className="p-8 text-center">Agendamento não encontrado.</div>;
+  if (!appointment) return (
+    <div className="min-h-screen bg-[#fcfaff] flex flex-col items-center justify-center p-6 text-center">
+      <div className="w-16 h-16 bg-red-50 border border-red-200 rounded-2xl flex items-center justify-center text-red-500 mb-4 shadow-sm">
+        <AlertTriangle size={32} />
+      </div>
+      <h2 className="text-xl font-black text-gray-900 mb-1">Agendamento não encontrado</h2>
+      <p className="text-gray-500 text-xs max-w-xs mb-6">
+        Não foi possível localizar este agendamento ou ele pode ter sido excluído recentemente.
+      </p>
+      <button 
+        onClick={() => navigate('/agenda')} 
+        className="bg-[#1e3a8a] text-white px-6 py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg active:scale-95 transition-transform"
+      >
+        Voltar para a Agenda
+      </button>
+    </div>
+  );
 
   const userRole = localStorage.getItem('user_role');
   const canDelete = localStorage.getItem('can_delete_appointments') === 'true';

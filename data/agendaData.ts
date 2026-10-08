@@ -152,9 +152,10 @@ const mapAppointmentFromDB = (data: any): Appointment => {
     };
 };
 
-export const getAppointments = async (filters?: { proId?: string, date?: string, startDate?: string, endDate?: string }): Promise<Appointment[]> => {
+export const getAppointments = async (filters?: { id?: string, proId?: string, date?: string, startDate?: string, endDate?: string }): Promise<Appointment[]> => {
   let query = supabase.from('appointments').select('*');
   
+  if (filters?.id) query = query.eq('id', filters.id);
   // Tenta filtrar por professionalId (camelCase como no banco, com aspas duplas implícitas pelo client)
   if (filters?.proId) query = query.eq('professionalId', filters.proId); 
   
@@ -172,6 +173,7 @@ export const getAppointments = async (filters?: { proId?: string, date?: string,
       const { data: allData } = await supabase.from('appointments').select('*');
       let result = allData ? allData.map(mapAppointmentFromDB) : [];
       
+      if (filters?.id) result = result.filter(a => a.id === filters.id);
       if (filters?.date) result = result.filter(a => a.date === filters.date);
       if (filters?.startDate && filters?.endDate) {
           result = result.filter(a => a.date >= filters.startDate! && a.date <= filters.endDate!);
@@ -186,6 +188,34 @@ export const getAppointments = async (filters?: { proId?: string, date?: string,
       return [];
   }
   return data ? data.map(mapAppointmentFromDB) : [];
+};
+
+export const getAppointmentById = async (id: string): Promise<Appointment | null> => {
+  if (!id) return null;
+  const cleanId = id.trim();
+  try {
+    const { data, error } = await supabase
+      .from('appointments')
+      .select('*')
+      .eq('id', cleanId)
+      .maybeSingle();
+
+    if (error) {
+      console.warn('Tentando busca alternativa de agendamento por ID:', error);
+      const list = await getAppointments({ id: cleanId });
+      return list.length > 0 ? list[0] : null;
+    }
+
+    if (!data) {
+      const list = await getAppointments({ id: cleanId });
+      return list.length > 0 ? list[0] : null;
+    }
+
+    return mapAppointmentFromDB(data);
+  } catch (err) {
+    console.error('Erro ao buscar agendamento por ID:', err);
+    return null;
+  }
 };
 
 export const getAppointmentsByPhone = async (phone: string): Promise<Appointment[]> => {
