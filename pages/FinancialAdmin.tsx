@@ -2163,7 +2163,7 @@ const FinancialAdmin: React.FC = () => {
                                             )}
                                         </div>
                                         <p className="text-[10px] text-gray-400 font-medium truncate">
-                                            {new Date(t.date).toLocaleDateString('pt-BR')} • {t.pro || 'Admin'}
+                                            {new Date(t.date + 'T12:00:00').toLocaleDateString('pt-BR')} • {t.pro || 'Admin'}
                                             {t.client_supplier && (
                                                 <span className="ml-2 text-blue-500 font-bold">• {t.client_supplier}</span>
                                             )}

@@ -32,6 +32,38 @@ const BookingConsult: React.FC = () => {
     return numbers;
   };
 
+  const formatAptDate = (dateStr: string) => {
+    if (!dateStr) return '';
+    try {
+      const cleanDate = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr;
+      const parts = cleanDate.split('-');
+      if (parts.length !== 3) return dateStr;
+      const [y, m, dNum] = parts;
+
+      const now = new Date();
+      const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      
+      const tom = new Date();
+      tom.setDate(now.getDate() + 1);
+      const tomorrowStr = `${tom.getFullYear()}-${String(tom.getMonth() + 1).padStart(2, '0')}-${String(tom.getDate()).padStart(2, '0')}`;
+
+      // Usa T12:00:00 para garantir que o fuso horário local não altere o dia
+      const d = new Date(`${cleanDate}T12:00:00`);
+      const weekday = d.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '');
+      const capitalizedWeekday = weekday.charAt(0).toUpperCase() + weekday.slice(1);
+
+      if (cleanDate === todayStr) {
+        return `Hoje (${capitalizedWeekday}), ${dNum}/${m}/${y}`;
+      }
+      if (cleanDate === tomorrowStr) {
+        return `Amanhã (${capitalizedWeekday}), ${dNum}/${m}/${y}`;
+      }
+      return `${capitalizedWeekday}, ${dNum}/${m}/${y}`;
+    } catch {
+      return dateStr.split('-').reverse().join('/');
+    }
+  };
+
   const handleSearch = async () => {
     if (!phone) return;
     setLoading(true);
@@ -46,6 +78,11 @@ const BookingConsult: React.FC = () => {
         
         const future = allAppointments.filter(a => a.date >= todayStr && !['Cancelaram', 'Atendimento Realizado'].includes(a.status));
         const past = allAppointments.filter(a => a.date < todayStr || ['Cancelaram', 'Atendimento Realizado'].includes(a.status));
+
+        // Ordena futuros: mais próximo primeiro
+        future.sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
+        // Ordena histórico: mais recente primeiro
+        past.sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`));
 
         setFutureAppointments(future);
         setPastAppointments(past);
@@ -130,7 +167,7 @@ const BookingConsult: React.FC = () => {
             <div>
                 <div className={`flex items-center gap-2 ${isFuture ? 'text-blue-900' : 'text-gray-600'} mb-1`}>
                     <Calendar size={14} />
-                    <span className="text-sm font-black">{new Date(apt.date).toLocaleDateString('pt-BR')}</span>
+                    <span className="text-sm font-black">{formatAptDate(apt.date)}</span>
                 </div>
                 <div className="flex items-center gap-2 text-gray-400">
                     <Clock size={14} />
@@ -259,7 +296,7 @@ const BookingConsult: React.FC = () => {
               </div>
               <h3 className="text-xl font-black text-gray-900">Cancelar Agendamento?</h3>
               <p className="text-gray-600 font-medium leading-relaxed">
-                Tem certeza que deseja cancelar seu horário de {appointmentToCancel.date.split('-').reverse().join('/')} às {appointmentToCancel.time}?
+                Tem certeza que deseja cancelar seu horário de {formatAptDate(appointmentToCancel.date)} às {appointmentToCancel.time}?
               </p>
               <div className="flex gap-3 w-full mt-2">
                 <button 

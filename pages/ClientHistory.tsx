@@ -140,7 +140,7 @@ const ClientHistory: React.FC = () => {
                         <span className="text-[11px] font-bold text-gray-800 block mb-0.5">Profissional:</span>
                         <span className="text-[13px] font-bold text-gray-900 uppercase">{h.professionalName}</span>
                     </div>
-                    <span className="text-[11px] text-gray-400 font-medium">{new Date(h.date).toLocaleDateString('pt-BR')}</span>
+                    <span className="text-[11px] text-gray-400 font-medium">{new Date(h.date + 'T12:00:00').toLocaleDateString('pt-BR')}</span>
                 </div>
 
                 {/* Timeline Body */}

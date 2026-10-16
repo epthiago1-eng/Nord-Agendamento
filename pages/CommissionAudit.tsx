@@ -234,7 +234,7 @@ const CommissionAudit: React.FC = () => {
                                     <div>
                                         <p className="text-xs font-bold text-gray-800 line-clamp-1">{t.item}</p>
                                         <p className="text-[9px] text-gray-400 uppercase">
-                                            {new Date(t.date).toLocaleDateString('pt-BR')} • {t.category} • {t.rateLabel}
+                                            {new Date(t.date + 'T12:00:00').toLocaleDateString('pt-BR')} • {t.category} • {t.rateLabel}
                                         </p>
                                     </div>
                                 </div>

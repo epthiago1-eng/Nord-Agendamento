@@ -12,8 +12,18 @@ const BookingSchedule: React.FC = () => {
   const selectedServices = location.state?.selectedServices || [];
   const editingAppointment = location.state?.editingAppointment; // Recebe o agendamento original se for edição
   
+  const initialDate = useMemo(() => {
+    if (editingAppointment?.date) {
+      const parts = editingAppointment.date.split('T')[0].split('-');
+      if (parts.length === 3) {
+        return new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+      }
+    }
+    return new Date();
+  }, [editingAppointment]);
+
   const [settings, setSettings] = useState<EstablishmentSettings | null>(null);
-  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [selectedDate, setSelectedDate] = useState(initialDate);
   const [showCalendar, setShowCalendar] = useState(false);
   const [pickerMonth, setPickerMonth] = useState(new Date());
   const [proSlots, setProSlots] = useState<Record<string, string[]>>({});
@@ -107,12 +117,15 @@ const BookingSchedule: React.FC = () => {
         return;
       }
 
+      const [y, m, d] = dateStr.split('-');
+      const formattedDateBR = `${d}/${m}/${y}`;
+
       navigate('/booking/form', { 
           state: { 
               selectedServices, 
               professional: pro, 
               time, 
-              date: selectedDate.toLocaleDateString('pt-BR'),
+              date: formattedDateBR,
               dateIso: dateStr,
               editingAppointment // Repassa o objeto de edição
           } 

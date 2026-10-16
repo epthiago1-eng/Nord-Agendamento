@@ -62,6 +62,16 @@ const BookingConfirmation: React.FC = () => {
     window.open(url, '_blank');
   };
 
+  const getFormattedDateDisplay = () => {
+    if (dateDisplay && dateDisplay.includes('/')) return dateDisplay;
+    if (appointment?.date) {
+      const clean = appointment.date.split('T')[0];
+      const parts = clean.split('-');
+      if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    }
+    return dateDisplay || '';
+  };
+
   return (
     <div className="min-h-screen bg-white flex flex-col font-sans animate-in fade-in duration-700">
       {/* Black Top Header */}
@@ -88,7 +98,7 @@ const BookingConfirmation: React.FC = () => {
             <div className="flex justify-between items-start">
                 <div>
                     <span className="text-[10px] font-black text-blue-900 uppercase tracking-widest block mb-1">Quando</span>
-                    <p className="text-gray-800 font-black text-sm">{dateDisplay} às {appointment.time}</p>
+                    <p className="text-gray-800 font-black text-sm">{getFormattedDateDisplay()} às {appointment.time}</p>
                 </div>
                 <div className="text-right">
                     <span className="text-[10px] font-black text-blue-900 uppercase tracking-widest block mb-1">Profissional</span>

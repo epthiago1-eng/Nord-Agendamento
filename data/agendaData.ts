@@ -219,18 +219,22 @@ export const getAppointmentById = async (id: string): Promise<Appointment | null
 };
 
 export const getAppointmentsByPhone = async (phone: string): Promise<Appointment[]> => {
+  const cleanPhone = phone.replace(/\D/g, '');
   const { data, error } = await supabase
     .from('appointments')
     .select('*')
-    //.eq('clientPhone', phone) // Tentativa direta
-    // .gte('date', new Date().toISOString().split('T')[0]) // REMOVIDO: Queremos todo o histórico
-    .order('date', { ascending: false }); // Ordena do mais recente para o mais antigo
+    .order('date', { ascending: false })
+    .limit(2000);
 
   if (error) throw error;
   
-  // Filtragem no cliente para garantir match independente do nome da coluna
+  // Filtragem no cliente para garantir match independente do nome da coluna ou formatação
   const mapped = data ? data.map(mapAppointmentFromDB) : [];
-  return mapped.filter(a => a.clientPhone === phone);
+  return mapped.filter(a => {
+    if (!a.clientPhone) return false;
+    const cleanApt = a.clientPhone.replace(/\D/g, '');
+    return a.clientPhone === phone || (cleanPhone && cleanApt === cleanPhone);
+  });
 };
 
 export const checkClientSpam = async (phone: string, date: string): Promise<{ allowed: boolean, reason?: string }> => {
