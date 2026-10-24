@@ -3,12 +3,13 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { 
   ChevronLeft, ChevronRight, Calendar as CalendarIcon, Plus, 
   CalendarPlus, Loader2, RotateCcw, Users, User, Trash2, Edit2, X, Clock,
-  Bell
+  Bell, LayoutDashboard
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getBlocks, getAppointments, AgendaBlock, Appointment, deleteBlock, updateBlock } from '../data/agendaData';
 import { getUnreadCount } from '../data/notifications';
 import { supabase, db } from '../supabase';
+import { AgendaDashboard } from '../components/AgendaDashboard';
 
 const Agenda: React.FC = () => {
   const navigate = useNavigate();
@@ -19,6 +20,7 @@ const Agenda: React.FC = () => {
   const gridContainerRef = useRef<HTMLDivElement>(null);
   const dayStripRef = useRef<HTMLDivElement>(null);
 
+  const [viewMode, setViewMode] = useState<'grid' | 'dashboard'>('grid');
   const [loading, setLoading] = useState(true);
   const [professionalsList, setProfessionalsList] = useState<any[]>([]);
   const [selectedPros, setSelectedPros] = useState<string[]>([]);
@@ -149,9 +151,17 @@ const Agenda: React.FC = () => {
     const channel = supabase.channel('agenda_changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' }, fetchData)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'agenda_blocks' }, fetchData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, fetchData)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [selectedDate]);
+
+  const handleNavigateToGrid = (proId?: string) => {
+    if (proId) {
+      setSelectedPros([proId]);
+    }
+    setViewMode('grid');
+  };
 
   const togglePro = (proId: string) => {
     if (selectedPros.includes(proId)) {

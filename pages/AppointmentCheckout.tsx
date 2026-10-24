@@ -172,7 +172,10 @@ const AppointmentCheckout: React.FC = () => {
   // Helper de Data Segura
   const formatDateSafe = (dateStr: string) => {
       if (!dateStr) return '--/--/----';
-      const [y, m, d] = dateStr.split('-');
+      const clean = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr;
+      const parts = clean.split('-');
+      if (parts.length !== 3) return dateStr;
+      const [y, m, d] = parts;
       return `${d}/${m}/${y}`;
   };
 
@@ -340,21 +343,59 @@ const AppointmentCheckout: React.FC = () => {
     const phoneParam = cleanPhone.length >= 10 && cleanPhone.length <= 11 ? `55${cleanPhone}` : cleanPhone;
     
     // Pega o primeiro nome
-    const firstName = appointment.clientName.split(' ')[0];
-    const dateFormatted = formatDateSafe(appointment.date);
+    const firstName = appointment.clientName ? appointment.clientName.trim().split(' ')[0] : 'Cliente';
+    
+    // Data limpa no formato YYYY-MM-DD
+    const aptDateStr = appointment.date ? (appointment.date.includes('T') ? appointment.date.split('T')[0] : appointment.date) : '';
+    const dateFormatted = formatDateSafe(aptDateStr);
+
+    // Calcular data atual e de amanhã no fuso local
+    const now = new Date();
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    
+    const tom = new Date();
+    tom.setDate(now.getDate() + 1);
+    const tomorrowStr = `${tom.getFullYear()}-${String(tom.getMonth() + 1).padStart(2, '0')}-${String(tom.getDate()).padStart(2, '0')}`;
+
+    // Obter dia da semana em português seguro usando meio-dia (T12:00:00)
+    let weekdayStr = '';
+    if (aptDateStr) {
+      try {
+        const dObj = new Date(`${aptDateStr}T12:00:00`);
+        const w = dObj.toLocaleDateString('pt-BR', { weekday: 'long' });
+        weekdayStr = w.charAt(0).toUpperCase() + w.slice(1);
+      } catch (e) {
+        weekdayStr = '';
+      }
+    }
+
+    let timeContextPhrase = '';
+    let dateLine = `📅 Data: ${dateFormatted}`;
+
+    if (aptDateStr === todayStr) {
+      timeContextPhrase = 'sobre seu horário hoje:';
+      dateLine = `📅 Data: ${dateFormatted} (Hoje${weekdayStr ? ` - ${weekdayStr}` : ''})`;
+    } else if (aptDateStr === tomorrowStr) {
+      timeContextPhrase = 'sobre seu horário amanhã:';
+      dateLine = `📅 Data: ${dateFormatted} (Amanhã${weekdayStr ? ` - ${weekdayStr}` : ''})`;
+    } else {
+      timeContextPhrase = `sobre seu horário agendado:`;
+      dateLine = `📅 Data: ${dateFormatted}${weekdayStr ? ` (${weekdayStr})` : ''}`;
+    }
+
     const servicesText = selectedServices.map(s => s.name).join(' / ');
 
     const message = `💈 E aí, ${firstName}! Tudo bem?
 
-Passando aqui pra dar aquele toque sobre seu horário amanhã:
-📅 Data: ${dateFormatted}
+Passando aqui pra dar aquele toque ${timeContextPhrase}
+${dateLine}
 ⏰ Hora: ${appointment.time}
 🪑 Serviço: ${servicesText || 'Corte'}
 ✂️ Profissional: ${appointment.professionalName}
 
 Confirma pra gente que a cadeira já está separada? Se precisar remarcar, é só nos avisar. 😉
 
-👊 ${establishmentName}`;
+👊 ${establishmentName || 'Nord Barbershop'}`;
 
     const url = `https://wa.me/${phoneParam}?text=${encodeURIComponent(message)}`;
     window.open(url, '_blank');
