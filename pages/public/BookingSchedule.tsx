@@ -210,8 +210,15 @@ const BookingSchedule: React.FC = () => {
   return (
     <div className="min-h-screen bg-white flex flex-col font-sans">
       <div className="h-16 w-full relative shrink-0" style={{ backgroundColor: settings.secondaryColor }}>
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-0 w-32 h-32 rounded-full border-4 border-white bg-white overflow-hidden shadow-xl z-10 translate-y-[-20%]">
-          <img src={settings.logoUrl || "https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png"} alt={settings.name} className="w-full h-full object-contain p-1" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-0 w-32 h-32 rounded-full border-4 border-white bg-white overflow-hidden shadow-xl z-10 translate-y-[-20%] flex items-center justify-center">
+          <img 
+            src={settings.logoUrl || "https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png"} 
+            alt={settings.name} 
+            className="w-full h-full object-cover object-center scale-105 rounded-full" 
+            onError={(e) => {
+              (e.currentTarget as HTMLImageElement).src = "https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png";
+            }}
+          />
         </div>
       </div>
 

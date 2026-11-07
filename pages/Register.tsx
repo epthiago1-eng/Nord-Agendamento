@@ -99,7 +99,7 @@ const Register: React.FC = () => {
              <img 
               src={logoUrl} 
               alt="Logo" 
-              className="w-full h-full object-cover p-1"
+              className="w-full h-full object-cover scale-105"
             />
           </div>
           <h1 className="text-white text-xl font-black uppercase tracking-widest">Nova Conta</h1>

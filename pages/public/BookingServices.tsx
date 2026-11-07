@@ -110,7 +110,7 @@ const BookingServices: React.FC = () => {
           <img 
             src={settings.logoUrl || "https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png"} 
             alt={settings.name} 
-            className="w-full h-full object-contain p-1 rounded-full" 
+            className="w-full h-full object-cover object-center scale-105 rounded-full" 
             onError={(e) => {
               (e.currentTarget as HTMLImageElement).src = "https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png";
             }}

@@ -1,12 +1,20 @@
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { ChevronLeft, Copy } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { getSettings } from '../../data/agendaData';
 
 const BookingLocation: React.FC = () => {
   const navigate = useNavigate();
   const address = "Rodovia Amaral Peixoto A, Br 106 (Tamoios) , 500 - Orla";
   const phone = "(22) 98133-3755";
+  const [logoUrl, setLogoUrl] = useState("https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png");
+
+  useEffect(() => {
+    getSettings().then(s => {
+      if (s?.logoUrl) setLogoUrl(s.logoUrl);
+    });
+  }, []);
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -17,8 +25,15 @@ const BookingLocation: React.FC = () => {
     <div className="min-h-screen bg-white flex flex-col font-sans">
       {/* Black Top Header */}
       <div className="bg-black h-16 w-full relative shrink-0">
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-0 w-32 h-32 rounded-full border-4 border-white bg-white overflow-hidden shadow-xl z-10 translate-y-[-20%]">
-          <img src="https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png" alt="Nord Barbershop" className="w-full h-full object-contain p-1" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-0 w-32 h-32 rounded-full border-4 border-white bg-white overflow-hidden shadow-xl z-10 translate-y-[-20%] flex items-center justify-center">
+          <img 
+            src={logoUrl || "https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png"} 
+            alt="Nord Barbershop" 
+            className="w-full h-full object-cover object-center scale-105 rounded-full" 
+            onError={(e) => {
+              (e.currentTarget as HTMLImageElement).src = "https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png";
+            }}
+          />
         </div>
       </div>
 

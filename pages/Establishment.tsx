@@ -331,7 +331,7 @@ const Establishment: React.FC = () => {
                    <img 
                     src={settings.logoUrl} 
                     alt="Logo da Unidade" 
-                    className="w-full h-full object-contain" 
+                    className="w-full h-full object-cover rounded-lg" 
                    />
                 </div>
               ) : (
