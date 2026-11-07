@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   ChevronLeft, Copy, MapPin, Upload, ChevronRight, 
-  Globe, Check, X, Home, Clock, Loader2, Eye
+  Globe, Check, X, Home, Clock, Loader2, Eye, Trash2
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getSettings, saveSettings } from '../data/agendaData';
@@ -63,44 +63,154 @@ const Establishment: React.FC = () => {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const fileToCompressedDataUrl = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Erro ao ler arquivo da imagem'));
+      reader.onload = (e) => {
+        const result = e.target?.result as string;
+        if (!result) {
+          return reject(new Error('Conteúdo do arquivo vazio'));
+        }
+
+        // Se for SVG, não precisa de redimensionamento via canvas
+        if (file.type === 'image/svg+xml' || file.name.toLowerCase().endsWith('.svg')) {
+          return resolve(result);
+        }
+
+        const img = new Image();
+        img.onerror = () => resolve(result); // Fallback para data URL original
+        img.onload = () => {
+          try {
+            const maxDim = 600;
+            let { width, height } = img;
+            if (width > maxDim || height > maxDim) {
+              if (width > height) {
+                height = Math.round((height * maxDim) / width);
+                width = maxDim;
+              } else {
+                width = Math.round((width * maxDim) / height);
+                height = maxDim;
+              }
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+              return resolve(result);
+            }
+
+            ctx.drawImage(img, 0, 0, width, height);
+            const compressed = canvas.toDataURL(file.type === 'image/jpeg' ? 'image/jpeg' : 'image/png', 0.9);
+            resolve(compressed);
+          } catch {
+            resolve(result);
+          }
+        };
+        img.src = result;
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
   const handleLogoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    // Limpa o input para permitir selecionar o mesmo arquivo novamente
+    e.target.value = '';
+
     if (!file) return;
 
-    // Limite de 5MB
-    if (file.size > 5 * 1024 * 1024) {
-      alert("A imagem deve ter no máximo 5MB.");
+    if (file.size === 0) {
+      alert("O arquivo selecionado está vazio.");
       return;
     }
 
+    // Limite de 8MB
+    if (file.size > 8 * 1024 * 1024) {
+      alert("A imagem deve ter no máximo 8MB.");
+      return;
+    }
+
+    setUploading(true);
+
     try {
-      setUploading(true);
-      
-      // Gera nome único para evitar cache ou sobreposição
-      const fileExt = file.name.split('.').pop();
-      const fileName = `logo-${Date.now()}.${fileExt}`;
-      const filePath = `${fileName}`;
+      // 1. Gera ArrayBuffer e sanitiza extensão e MIME
+      const arrayBuffer = await file.arrayBuffer();
+      if (!arrayBuffer || arrayBuffer.byteLength === 0) {
+        throw new Error("Arquivo vazio ou ilegível.");
+      }
 
-      // 1. Upload para o Supabase Storage
-      const { error: uploadError } = await supabase.storage
-        .from('establishment')
-        .upload(filePath, file);
+      const rawExt = file.name.split('.').pop() || 'png';
+      const cleanExt = rawExt.toLowerCase().replace(/[^a-z0-9]/g, '') || 'png';
+      const mimeType = file.type || (cleanExt === 'jpg' || cleanExt === 'jpeg' ? 'image/jpeg' : cleanExt === 'webp' ? 'image/webp' : 'image/png');
+      const fileName = `logo-${Date.now()}.${cleanExt}`;
 
-      if (uploadError) throw uploadError;
+      let finalLogoUrl = '';
 
-      // 2. Pegar URL Pública
-      const { data } = supabase.storage
-        .from('establishment')
-        .getPublicUrl(filePath);
+      // 2. Upload para o Supabase Storage com ArrayBuffer e contentType explícito
+      try {
+        const { error: uploadError } = await supabase.storage
+          .from('establishment')
+          .upload(fileName, arrayBuffer, {
+            contentType: mimeType,
+            upsert: true
+          });
 
-      // 3. Atualizar estado local
-      setSettings({ ...settings, logoUrl: data.publicUrl });
-      
+        if (uploadError) {
+          console.warn('Upload via Supabase Storage falhou, aplicando fallback de imagem:', uploadError);
+          throw uploadError;
+        }
+
+        const { data: publicData } = supabase.storage
+          .from('establishment')
+          .getPublicUrl(fileName);
+
+        if (publicData?.publicUrl) {
+          finalLogoUrl = publicData.publicUrl;
+        }
+      } catch (storageError) {
+        console.warn('Usando processamento local de imagem otimizada:', storageError);
+        // Fallback resiliente: converte a imagem em Data URL compactada
+        finalLogoUrl = await fileToCompressedDataUrl(file);
+      }
+
+      if (!finalLogoUrl) {
+        throw new Error("Não foi possível gerar a imagem da logo.");
+      }
+
+      // 3. Atualizar estado local e persistir no banco imediatamente
+      const updatedSettings = { ...settings, logoUrl: finalLogoUrl };
+      setSettings(updatedSettings);
+
+      try {
+        await saveSettings(updatedSettings);
+      } catch (saveError) {
+        console.warn('Aviso ao persistir automaticamente:', saveError);
+      }
+
+      alert('✅ Logo atualizada com sucesso!');
     } catch (error: any) {
-      console.error('Erro no upload:', error);
-      alert('Erro ao fazer upload da logo: ' + error.message);
+      console.error('Erro no upload da logo:', error);
+      alert('Erro ao fazer upload da logo: ' + (error.message || 'Falha ao processar arquivo'));
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleRemoveLogo = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm('Deseja remover a logo do estabelecimento?')) return;
+
+    try {
+      const updatedSettings = { ...settings, logoUrl: '' };
+      setSettings(updatedSettings);
+      await saveSettings(updatedSettings);
+      alert('✅ Logo removida com sucesso!');
+    } catch (err: any) {
+      console.error(err);
+      alert('Erro ao remover logo: ' + err.message);
     }
   };
 
@@ -201,32 +311,57 @@ const Establishment: React.FC = () => {
             <ChevronRight className="text-gray-300" size={20} />
           </button>
 
-          <button 
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
-            className="w-full bg-white border border-gray-100 p-5 rounded-2xl shadow-sm flex items-center justify-between active:bg-gray-50 transition-colors"
-          >
-            <div className="flex items-center gap-4">
+          <div className="w-full bg-white border border-gray-100 p-5 rounded-2xl shadow-sm flex items-center justify-between">
+            <div 
+              onClick={() => !uploading && fileInputRef.current?.click()}
+              className="flex items-center gap-4 flex-1 cursor-pointer"
+            >
               {uploading ? (
-                <div className="w-11 h-11 rounded-xl flex items-center justify-center bg-gray-50"><Loader2 className="animate-spin text-blue-900" size={20} /></div>
+                <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-blue-50 border border-blue-100">
+                  <Loader2 className="animate-spin text-blue-900" size={22} />
+                </div>
               ) : settings.logoUrl ? (
-                <div className="w-11 h-11 rounded-xl overflow-hidden border border-gray-100 shadow-inner bg-white">
+                <div className="w-12 h-12 rounded-xl overflow-hidden border border-gray-200 shadow-xs bg-white flex items-center justify-center p-0.5">
                    <img 
                     src={settings.logoUrl} 
-                    alt="Logo" 
-                    className="w-full h-full object-cover scale-110" 
+                    alt="Logo da Unidade" 
+                    className="w-full h-full object-contain" 
                    />
                 </div>
               ) : (
-                <div className="bg-gray-50 p-2.5 rounded-xl text-gray-500"><Upload size={22} /></div>
+                <div className="bg-gray-50 p-3 rounded-xl text-gray-500 border border-gray-100">
+                  <Upload size={22} />
+                </div>
               )}
               <div className="text-left">
                 <span className="text-gray-700 font-bold text-sm block leading-none mb-1">Logo da Unidade</span>
-                <span className="text-[10px] text-gray-400 font-medium">{uploading ? 'Enviando imagem...' : (settings.logoUrl ? 'Logo carregada' : 'Nenhuma logo definida')}</span>
+                <span className="text-[10px] text-gray-400 font-medium">
+                  {uploading ? 'Processando e enviando...' : (settings.logoUrl ? 'Toque para alterar imagem' : 'Toque para escolher uma imagem (JPG, PNG)')}
+                </span>
               </div>
             </div>
-            <ChevronRight className="text-gray-300" size={20} />
-          </button>
+
+            <div className="flex items-center gap-2">
+              {settings.logoUrl && !uploading && (
+                <button
+                  type="button"
+                  onClick={handleRemoveLogo}
+                  title="Remover logo"
+                  className="p-2 text-rose-500 hover:bg-rose-50 rounded-xl transition-colors active:scale-90"
+                >
+                  <Trash2 size={18} />
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => !uploading && fileInputRef.current?.click()}
+                disabled={uploading}
+                className="p-2 text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <ChevronRight size={20} />
+              </button>
+            </div>
+          </div>
           <input 
             type="file" 
             ref={fileInputRef} 
