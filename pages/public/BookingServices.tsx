@@ -106,11 +106,14 @@ const BookingServices: React.FC = () => {
       {/* Header com a cor secundária ou preto padrão */}
       <div className="h-24 w-full relative shrink-0" style={{ backgroundColor: settings.secondaryColor }}>
         {/* Logo Redonda Centralizada */}
-        <div className="absolute -bottom-12 left-1/2 -translate-x-1/2 w-32 h-32 rounded-full border-4 border-white bg-white overflow-hidden shadow-xl z-20">
+        <div className="absolute -bottom-12 left-1/2 -translate-x-1/2 w-32 h-32 rounded-full border-4 border-white bg-white overflow-hidden shadow-xl z-20 flex items-center justify-center">
           <img 
             src={settings.logoUrl || "https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png"} 
             alt={settings.name} 
-            className="w-full h-full object-cover p-0.5 rounded-full" 
+            className="w-full h-full object-contain p-1 rounded-full" 
+            onError={(e) => {
+              (e.currentTarget as HTMLImageElement).src = "https://agendamento.igic.com.br/assets/logos/nord_barbershop_logo.png";
+            }}
           />
         </div>
       </div>

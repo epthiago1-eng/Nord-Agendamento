@@ -40,7 +40,13 @@ const Establishment: React.FC = () => {
 
   // Carrega as configurações do banco ao montar o componente
   useEffect(() => {
-    getSettings().then(setSettings);
+    getSettings().then(data => {
+      setSettings(data);
+      // Garante sincronização da logo mais recente no banco com o token do admin
+      if (data.logoUrl) {
+        saveSettings(data).catch(e => console.warn('Aviso de auto-sync de logo:', e));
+      }
+    });
   }, []);
 
   useEffect(() => {

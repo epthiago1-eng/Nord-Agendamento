@@ -16,56 +16,140 @@ export interface AgendaBlock {
 // --- CONFIGURAÇÕES ---
 
 export const getSettings = async (): Promise<EstablishmentSettings & { id?: number }> => {
-  const { data, error } = await supabase
-    .from('settings')
-    .select('id, primary_color, secondary_color, name, logo_url, slot_interval, cash_balance, bank_balance, pix_balance, card_balance')
-    .single();
+  let settingsData: any = null;
 
-  if (error || !data) {
-    return {
-      primaryColor: '#1e3a8a',
-      secondaryColor: '#000000',
-      name: 'Nord Barbershop',
-      logoUrl: '',
-      slotInterval: 15,
-      cash_balance: 0,
-      bank_balance: 0,
-      pix_balance: 0,
-      card_balance: 0
-    };
+  try {
+    // 1. Tenta buscar todos os campos (funciona quando o usuário é admin/autenticado)
+    const { data, error } = await supabase
+      .from('settings')
+      .select('id, primary_color, secondary_color, name, logo_url, slot_interval, cash_balance, bank_balance, pix_balance, card_balance')
+      .single();
+
+    if (!error && data) {
+      settingsData = data;
+    } else {
+      // 2. Se deu erro (ex: permissão negada nas colunas financeiras para visitantes públicos),
+      // busca apenas os campos públicos da identidade visual e estabelecimento:
+      const { data: publicData, error: publicError } = await supabase
+        .from('settings')
+        .select('id, primary_color, secondary_color, name, logo_url, slot_interval')
+        .single();
+
+      if (!publicError && publicData) {
+        settingsData = publicData;
+      }
+    }
+  } catch (err) {
+    console.warn('Aviso ao carregar configurações do banco:', err);
+  }
+
+  // 3. Determina a URL da logo:
+  let finalLogoUrl = settingsData?.logo_url || '';
+
+  // Se a logo no banco estiver vazia ou apontando para arquivo antigo, checa o arquivo mais recente no storage
+  try {
+    const { data: files } = await supabase.storage.from('establishment').list('', {
+      limit: 10,
+      sortBy: { column: 'created_at', order: 'desc' }
+    });
+
+    const recentLogos = (files || []).filter(f => f.name.startsWith('logo-') && !f.name.includes('test'));
+    if (recentLogos.length > 0) {
+      const latestFile = recentLogos[0];
+      const { data: urlData } = supabase.storage.from('establishment').getPublicUrl(latestFile.name);
+      if (urlData?.publicUrl) {
+        // Se no banco a logo estiver vazia ou for de versão antiga:
+        if (!finalLogoUrl || finalLogoUrl.includes('1772810111827')) {
+          finalLogoUrl = urlData.publicUrl;
+        }
+      }
+    }
+  } catch (storageErr) {
+    console.warn('Aviso ao buscar arquivos recentes de logo:', storageErr);
+  }
+
+  // Fallback para cache local se ainda estiver sem URL
+  if (!finalLogoUrl && typeof localStorage !== 'undefined') {
+    finalLogoUrl = localStorage.getItem('nord_cached_logo_url') || '';
+  }
+
+  if (finalLogoUrl && typeof localStorage !== 'undefined') {
+    localStorage.setItem('nord_cached_logo_url', finalLogoUrl);
   }
 
   return {
-      id: data.id,
-      primaryColor: data.primary_color || '#1e3a8a',
-      secondaryColor: data.secondary_color || '#000000',
-      name: data.name || 'Nord Barbershop',
-      logoUrl: data.logo_url || '',
-      slotInterval: data.slot_interval || 15,
-      cash_balance: data.cash_balance || 0,
-      bank_balance: data.bank_balance || 0,
-      pix_balance: data.pix_balance || 0,
-      card_balance: data.card_balance || 0
+    id: settingsData?.id || 1,
+    primaryColor: settingsData?.primary_color || '#1e3a8a',
+    secondaryColor: settingsData?.secondary_color || '#000000',
+    name: settingsData?.name || 'Nord Barbershop',
+    logoUrl: finalLogoUrl,
+    slotInterval: settingsData?.slot_interval || 15,
+    cash_balance: settingsData?.cash_balance || 0,
+    bank_balance: settingsData?.bank_balance || 0,
+    pix_balance: settingsData?.pix_balance || 0,
+    card_balance: settingsData?.card_balance || 0
   };
 };
 
 export const saveSettings = async (settings: EstablishmentSettings & { id?: number }) => {
-  // BANCO: table 'settings' usa snake_case
-  const payload = {
-      id: settings.id || 1, 
-      primary_color: settings.primaryColor,
-      secondary_color: settings.secondaryColor,
-      name: settings.name,
-      logo_url: settings.logoUrl,
-      slot_interval: settings.slotInterval,
-      cash_balance: settings.cash_balance || 0,
-      bank_balance: settings.bank_balance || 0,
-      pix_balance: settings.pix_balance || 0,
-      card_balance: settings.card_balance || 0
+  const targetId = settings.id || 1;
+
+  // 1. Tenta atualizar os campos visuais do estabelecimento primeiro (sem forçar colunas restritas)
+  const visualPayload: any = {
+    primary_color: settings.primaryColor,
+    secondary_color: settings.secondaryColor,
+    name: settings.name,
+    logo_url: settings.logoUrl,
+    slot_interval: settings.slotInterval
   };
 
-  const { error } = await supabase.from('settings').upsert(payload);
-  if (error) throw error;
+  const fullPayload: any = {
+    id: targetId,
+    ...visualPayload
+  };
+  if (settings.cash_balance !== undefined) fullPayload.cash_balance = settings.cash_balance;
+  if (settings.bank_balance !== undefined) fullPayload.bank_balance = settings.bank_balance;
+  if (settings.pix_balance !== undefined) fullPayload.pix_balance = settings.pix_balance;
+  if (settings.card_balance !== undefined) fullPayload.card_balance = settings.card_balance;
+
+  // Se foram informados saldos explicitamente (como na tela de financeiro), tenta update completo primeiro
+  if (settings.cash_balance !== undefined || settings.bank_balance !== undefined) {
+    const { error: fullUpdateError } = await supabase
+      .from('settings')
+      .update(fullPayload)
+      .eq('id', targetId);
+
+    if (!fullUpdateError) {
+      if (settings.logoUrl && typeof localStorage !== 'undefined') {
+        localStorage.setItem('nord_cached_logo_url', settings.logoUrl);
+      }
+      return;
+    }
+  }
+
+  // Atualização dos campos de identidade visual do estabelecimento
+  const { error: visualUpdateError } = await supabase
+    .from('settings')
+    .update(visualPayload)
+    .eq('id', targetId);
+
+  if (!visualUpdateError) {
+    if (settings.logoUrl && typeof localStorage !== 'undefined') {
+      localStorage.setItem('nord_cached_logo_url', settings.logoUrl);
+    }
+    return;
+  }
+
+  // Fallback: upsert
+  const { error: upsertError } = await supabase.from('settings').upsert({ id: targetId, ...visualPayload });
+  if (upsertError) {
+    console.error('Erro ao salvar settings via upsert:', upsertError);
+    throw upsertError;
+  }
+
+  if (settings.logoUrl && typeof localStorage !== 'undefined') {
+    localStorage.setItem('nord_cached_logo_url', settings.logoUrl);
+  }
 };
 
 // --- BLOQUEIOS ---
